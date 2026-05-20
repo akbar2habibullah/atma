@@ -1,8 +1,27 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 from inference.utils.context import get_context
+
+
+def _load_fa3():
+    if not torch.cuda.is_available():
+        return None
+    try:
+        major, _ = torch.cuda.get_device_capability()
+        if major != 9:
+            return None
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        from kernels import get_kernel
+        return get_kernel('kernels-community/flash-attn3').flash_attn_interface
+    except Exception:
+        print("FA3 not available, falling back to PyTorch's scaled_dot_product_attention")
+        return None
+
+
+_fa3 = _load_fa3()
 
 
 def store_kvcache(

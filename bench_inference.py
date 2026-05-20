@@ -7,14 +7,14 @@ _WARMUP_PASSES = 3  # passes per batch size to let torch.compile finish before t
 
 def main():
     print("Initializing inference engine for performance benchmark...")
-    llm = LLM(model="gpt2", kvcache_block_size=16)
+    llm = LLM(model="gpt2", kvcache_block_size=256)
 
     use_cuda = torch.cuda.is_available()
 
     # Benchmarking different batch sizes
     batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
     prompt = "Artificial Intelligence and Machine Learning are transforming modern technology by enabling computers to"
-    max_tokens = 50
+    max_tokens = 1024
 
     print(f"\nBenchmark Configuration:")
     print(f"- Model Architecture: Atma ({llm.engine.config.hf_config.num_hidden_layers} layers, {llm.engine.config.hf_config.hidden_size} model dim, causal conv + attention + LFM2)")
