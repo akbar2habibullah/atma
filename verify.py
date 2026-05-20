@@ -85,6 +85,7 @@ def _ctx_prefill(seq: Sequence, seqlen: int):
         max_seqlen_q=seqlen, max_seqlen_k=seqlen,
         slot_mapping=slots,
         block_tables=None,
+        seqlens_q=[seqlen],
     )
     get_context().seqs = [seq]
 
@@ -95,6 +96,7 @@ def _ctx_decode(seq: Sequence, decode_slot: int, context_len: int, block_tables:
         slot_mapping=torch.tensor([decode_slot], dtype=torch.int32),
         context_lens=torch.tensor([context_len], dtype=torch.int32),
         block_tables=block_tables,
+        context_lens_list=[context_len],
     )
     get_context().seqs = [seq]
 
