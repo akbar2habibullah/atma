@@ -7,7 +7,7 @@ def main():
     llm = LLM(model="gpt2", kvcache_block_size=16)
 
     # Benchmarking different batch sizes
-    batch_sizes = [1, 4, 8, 16, 32, 64]
+    batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
     prompt = "Artificial Intelligence and Machine Learning are transforming modern technology by enabling computers to"
     max_tokens = 50
 
