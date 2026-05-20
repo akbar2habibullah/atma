@@ -114,6 +114,26 @@ class ModelRunner:
                     self.run(decode_seqs, is_prefill=False)
             else:
                 raise
+
+        # Warm up decode at typical batch sizes so torch.compile finishes
+        # compilation before the first timed benchmark run.
+        warmup_batch_sizes = [1, 4, 8, 16, 32]
+        for bs in warmup_batch_sizes:
+            _, decode_seqs = self._make_warmup_seqs(seq_len)
+            # Replicate the single decode seq to reach the target batch size
+            extra_seqs = []
+            for j in range(bs - 1):
+                _, extra = self._make_warmup_seqs(seq_len)
+                extra_seqs.extend(extra)
+            batch_decode_seqs = decode_seqs + extra_seqs
+            try:
+                with torch.inference_mode():
+                    self.run(batch_decode_seqs, is_prefill=False)
+            except Exception:
+                pass  # skip if KV cache is too small for this batch
+
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
         print("Warmup complete!")
 
     def allocate_kv_cache(self):
@@ -222,12 +242,16 @@ class ModelRunner:
         if cu_seqlens_k[-1] > cu_seqlens_q[-1] and seqs and seqs[0].block_table:
             block_tables = self.prepare_block_tables(seqs)
 
+        # Derive per-sequence lengths as Python ints before tensor conversion to
+        # avoid Tensor.item() calls inside torch.compile (which cause graph breaks).
+        seqlens_q = [cu_seqlens_q[i + 1] - cu_seqlens_q[i] for i in range(len(cu_seqlens_q) - 1)]
+
         input_ids = torch.tensor(input_ids, dtype=torch.int64, device=self.device)
         positions = torch.tensor(positions, dtype=torch.int64, device=self.device)
-        
+
         cu_seqlens_q = torch.tensor(cu_seqlens_q, dtype=torch.int32, device=self.device)
         cu_seqlens_k = torch.tensor(cu_seqlens_k, dtype=torch.int32, device=self.device)
-        
+
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, device=self.device)
         if block_tables is not None:
             block_tables = block_tables.to(self.device)
@@ -240,6 +264,7 @@ class ModelRunner:
             max_seqlen_k=max_seqlen_k,
             slot_mapping=slot_mapping,
             block_tables=block_tables,
+            seqlens_q=seqlens_q,
         )
         get_context().seqs = seqs
         return input_ids, positions
@@ -256,11 +281,13 @@ class ModelRunner:
             context_lens.append(len(seq))
             slot_mapping.append(seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1)
 
+        context_lens_list = list(context_lens)  # Python ints before tensor conversion
+
         input_ids = torch.tensor(input_ids, dtype=torch.int64, device=self.device)
         positions = torch.tensor(positions, dtype=torch.int64, device=self.device)
         slot_mapping = torch.tensor(slot_mapping, dtype=torch.int32, device=self.device)
         context_lens = torch.tensor(context_lens, dtype=torch.int32, device=self.device)
-        
+
         block_tables = self.prepare_block_tables(seqs).to(self.device)
 
         set_context(
@@ -268,6 +295,7 @@ class ModelRunner:
             slot_mapping=slot_mapping,
             context_lens=context_lens,
             block_tables=block_tables,
+            context_lens_list=context_lens_list,
         )
         get_context().seqs = seqs
         return input_ids, positions

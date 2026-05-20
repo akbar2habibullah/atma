@@ -27,6 +27,7 @@ def causal_conv1d_fallback(x: torch.Tensor, weight: torch.Tensor, bias=None) -> 
     return out
 
 
+@torch.compiler.disable
 def prefill_causal_conv1d(
     layer_id: str,
     seq: Sequence,
@@ -146,8 +147,7 @@ class AtmaAttention(AtmaAttnBase):
             # Per-sequence causal conv + attention (variable lengths and paged KV require seq loop)
             y_parts = []
             start = 0
-            for i in range(len(context.cu_seqlens_q) - 1):
-                seqlen = context.cu_seqlens_q[i + 1].item() - context.cu_seqlens_q[i].item()
+            for i, seqlen in enumerate(context.seqlens_q):
                 seq = context.seqs[i]
 
                 qi = q_all[start : start + seqlen].reshape(seqlen, -1)
@@ -211,7 +211,7 @@ class AtmaAttention(AtmaAttnBase):
                 seq = context.seqs[i]
                 slot_i = context.slot_mapping[i : i + 1] if context.slot_mapping is not None else None
                 block_table_i = context.block_tables[i] if context.block_tables is not None else None
-                seq_len_i = context.context_lens[i].item() if context.context_lens is not None else len(seq)
+                seq_len_i = context.context_lens_list[i] if context.context_lens_list else len(seq)
 
                 yi = self.attn(
                     q_attn[i],
@@ -246,8 +246,7 @@ class AtmaLFM2Conv(AtmaConvBase):
             # Per-sequence causal conv (variable lengths and state saving require seq loop)
             y_parts = []
             start = 0
-            for i in range(len(context.cu_seqlens_q) - 1):
-                seqlen = context.cu_seqlens_q[i + 1].item() - context.cu_seqlens_q[i].item()
+            for i, seqlen in enumerate(context.seqlens_q):
                 seq = context.seqs[i]
 
                 x_gated_i = x_gated_all[start : start + seqlen]

@@ -11,6 +11,8 @@ class Context:
         slot_mapping = None,
         context_lens = None,
         block_tables = None,
+        seqlens_q: list = None,
+        context_lens_list: list = None,
     ):
         self.is_prefill = is_prefill
         self.cu_seqlens_q = cu_seqlens_q
@@ -20,6 +22,9 @@ class Context:
         self.slot_mapping = slot_mapping
         self.context_lens = context_lens
         self.block_tables = block_tables
+        # Python int lists to avoid Tensor.item() graph breaks inside torch.compile
+        self.seqlens_q = seqlens_q or []
+        self.context_lens_list = context_lens_list or []
 
 
 _local = threading.local()
@@ -34,6 +39,8 @@ def set_context(
     slot_mapping = None,
     context_lens = None,
     block_tables = None,
+    seqlens_q: list = None,
+    context_lens_list: list = None,
 ):
     _local.context = Context(
         is_prefill=is_prefill,
@@ -44,6 +51,8 @@ def set_context(
         slot_mapping=slot_mapping,
         context_lens=context_lens,
         block_tables=block_tables,
+        seqlens_q=seqlens_q,
+        context_lens_list=context_lens_list,
     )
 
 

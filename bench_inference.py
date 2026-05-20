@@ -1,10 +1,15 @@
 import time
+import torch
 from inference import LLM, SamplingParams
+
+_WARMUP_PASSES = 3  # passes per batch size to let torch.compile finish before timing
 
 
 def main():
     print("Initializing inference engine for performance benchmark...")
     llm = LLM(model="gpt2", kvcache_block_size=16)
+
+    use_cuda = torch.cuda.is_available()
 
     # Benchmarking different batch sizes
     batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -22,22 +27,29 @@ def main():
         sampling_params = SamplingParams(
             temperature=1.0,
             max_tokens=max_tokens,
-            ignore_eos=True, # force it to generate exactly max_tokens
+            ignore_eos=True,  # force it to generate exactly max_tokens
         )
 
-        # Warmup pass
-        llm.generate(prompts, sampling_params, use_tqdm=False)
+        # Multiple warmup passes to ensure torch.compile finishes compilation
+        # before the timed run (first pass triggers JIT, subsequent passes verify it's done).
+        for _ in range(_WARMUP_PASSES):
+            llm.generate(prompts, sampling_params, use_tqdm=False)
+
+        if use_cuda:
+            torch.cuda.synchronize()
 
         # Timed benchmark pass
         t0 = time.perf_counter()
         outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
+        if use_cuda:
+            torch.cuda.synchronize()
         elapsed = time.perf_counter() - t0
 
         total_tokens = bs * max_tokens
         throughput = total_tokens / elapsed
 
-        print(f"Batch Size: {bs:2d} | Generated: {total_tokens:3d} tokens | "
-              f"Time: {elapsed:5.2f}s | Throughput: {throughput:6.2f} tok/s")
+        print(f"Batch Size: {bs:4d} | Generated: {total_tokens:5d} tokens | "
+              f"Time: {elapsed:7.2f}s | Throughput: {throughput:7.2f} tok/s")
 
 
 if __name__ == "__main__":
