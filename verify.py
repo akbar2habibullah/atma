@@ -355,7 +355,12 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
     # ── train ──
     try:
         from train.model import Block as TrainBlock
-        train_block = TrainBlock(dim, attention=is_attn)
+        train_block = TrainBlock(
+            dim, attention=is_attn,
+            head_dim=config.head_dim,
+            attn_kernel_size=config.attn_kernel_size,
+            conv_kernel_size=config.conv_kernel_size,
+        )
         _copy(ref_block, train_block)
         with torch.no_grad():
             y_train, _ = train_block(x)   # Block returns (x, reg_loss)

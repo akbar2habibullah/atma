@@ -373,9 +373,22 @@ class CausalSelfAttention(AtmaAttnBase):
 
 
 class Block(nn.Module):
-    def __init__(self, dim: int, attention: bool = True, reg_mode: str = "baseline", sketch_dim: int = 64):
+    def __init__(
+        self,
+        dim: int,
+        attention: bool = True,
+        reg_mode: str = "baseline",
+        sketch_dim: int = 64,
+        head_dim: int = 128,
+        attn_kernel_size: int = 4,
+        conv_kernel_size: int = 3,
+    ):
         super().__init__()
-        self.attn = CausalSelfAttention(dim) if attention else LFM2Conv(dim)
+        self.attn = (
+            CausalSelfAttention(dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            if attention
+            else LFM2Conv(dim, kernel_size=conv_kernel_size)
+        )
         self.mlp = MLP(dim, linear_cls=Linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
@@ -394,8 +407,15 @@ class Model(nn.Module):
         super().__init__()
         self.embed = nn.Embedding(config.vocab_size, config.hidden_size).bfloat16()
         self.blocks = nn.ModuleList([
-            Block(config.hidden_size, attention=True, reg_mode=reg_mode, sketch_dim=sketch_dim) if i % 4 == 2
-            else Block(config.hidden_size, attention=False, reg_mode=reg_mode, sketch_dim=sketch_dim)
+            Block(
+                config.hidden_size,
+                attention=(i % 4 == 2),
+                reg_mode=reg_mode,
+                sketch_dim=sketch_dim,
+                head_dim=config.head_dim,
+                attn_kernel_size=config.attn_kernel_size,
+                conv_kernel_size=config.conv_kernel_size,
+            )
             for i in range(config.num_hidden_layers)
         ])
         self.proj = Linear(config.hidden_size, config.vocab_size)
