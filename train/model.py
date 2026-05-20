@@ -4,7 +4,7 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 from types import SimpleNamespace
 
-import reg
+from train.reg import sigreg
 from kernels import get_kernel
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
@@ -375,7 +375,7 @@ class Block(nn.Module):
     def forward(self, x: Tensor):
         x = x + self.attn(self.norm1(x))
         x = x + self.mlp(self.norm2(x))
-        reg_loss = reg.sigreg(x, self.reg_mode, self.sigr_alpha)
+        reg_loss = sigreg(x, self.reg_mode, self.sigr_alpha)
         return x, reg_loss
 
 
