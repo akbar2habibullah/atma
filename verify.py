@@ -298,7 +298,12 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
     dim = config.hidden_size
     prefill_len = SEQ_LEN - 1
 
-    ref_block = ref_mod.Block(dim, attention=is_attn)
+    ref_block = ref_mod.Block(
+        dim, attention=is_attn,
+        head_dim=config.head_dim,
+        attn_kernel_size=config.attn_kernel_size,
+        conv_kernel_size=config.conv_kernel_size,
+    )
     infer_block = InferBlock(
         layer_idx, dim, attention=is_attn,
         head_dim=config.head_dim,
