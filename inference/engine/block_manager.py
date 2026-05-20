@@ -50,7 +50,7 @@ class BlockManager:
             # Fallback to standard hashlib if xxhash is not installed
             h = hashlib.sha256()
             if prefix != -1:
-                h.update(prefix.to_bytes(8, "little", signed=True))
+                h.update(prefix.to_bytes(8, "little"))
             h.update(np.array(token_ids).tobytes())
             # Convert first 8 bytes of sha256 to integer
             return int.from_bytes(h.digest()[:8], "little")
