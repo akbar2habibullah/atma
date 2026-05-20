@@ -58,10 +58,11 @@ mbs = 8
 val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens))
 
 REG_MODE = 'baseline'
+SKETCH_DIM = 64
 SIGR_ALPHA = 0.0
 
 atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=12, hidden_size=768)
-model = Model(atma_config, reg_mode=REG_MODE, sigr_alpha=SIGR_ALPHA).to(device)
+model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
 
 print0(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", console=True)

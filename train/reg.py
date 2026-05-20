@@ -62,19 +62,19 @@ def sigreg_strong_loss(x, sketch_dim=64):
     loss = torch.trapz(err, t, dim=1) * N
     return loss.mean()
 
-def sigreg(x, REG_MODE):
+def sigreg(x, REG_MODE, sketch_dim=64):
     reg_loss = torch.tensor(0.0, device=x.device)
     
     if REG_MODE != 'baseline':
         batch_size, seq_len, hidden_dim = x.shape
         flat_rep = x.reshape(-1, hidden_dim)
         if REG_MODE == 'weak':
-            reg_loss = sigreg.sigreg_weak_loss(flat_rep, sketch_dim=64)
+            reg_loss = sigreg.sigreg_weak_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'strong':
-            reg_loss = sigreg.sigreg_strong_loss(flat_rep, sketch_dim=64)
+            reg_loss = sigreg.sigreg_strong_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'discrete':
-            reg_loss = sigreg.sireg_discrete_loss(flat_rep, sketch_dim=64)
+            reg_loss = sigreg.sireg_discrete_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'zipfian':
-            reg_loss = sigreg.zipf_orthogonal_est(flat_rep, sketch_dim=64)
+            reg_loss = sigreg.zipf_orthogonal_est(flat_rep, sketch_dim=sketch_dim)
     
     return reg_loss

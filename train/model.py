@@ -373,29 +373,29 @@ class CausalSelfAttention(AtmaAttnBase):
 
 
 class Block(nn.Module):
-    def __init__(self, dim: int, attention: bool = True, reg_mode: str = "baseline", sigr_alpha: float = 0.0):
+    def __init__(self, dim: int, attention: bool = True, reg_mode: str = "baseline", sketch_dim: int = 64):
         super().__init__()
         self.attn = CausalSelfAttention(dim) if attention else LFM2Conv(dim)
         self.mlp = MLP(dim, linear_cls=Linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         self.reg_mode = reg_mode
-        self.sigr_alpha = sigr_alpha
+        self.sketch_dim = sketch_dim
 
     def forward(self, x: Tensor):
         x = x + self.attn(self.norm1(x))
         x = x + self.mlp(self.norm2(x))
-        reg_loss = sigreg(x, self.reg_mode, self.sigr_alpha)
+        reg_loss = sigreg(x, self.reg_mode, self.sketch_dim)
         return x, reg_loss
 
 
 class Model(nn.Module):
-    def __init__(self, config: AtmaConfig, reg_mode: str = "baseline", sigr_alpha: float = 0.0):
+    def __init__(self, config: AtmaConfig, reg_mode: str = "baseline", sketch_dim: int = 64):
         super().__init__()
         self.embed = nn.Embedding(config.vocab_size, config.hidden_size).bfloat16()
         self.blocks = nn.ModuleList([
-            Block(config.hidden_size, attention=True, reg_mode=reg_mode, sigr_alpha=sigr_alpha) if i % 4 == 2
-            else Block(config.hidden_size, attention=False, reg_mode=reg_mode, sigr_alpha=sigr_alpha)
+            Block(config.hidden_size, attention=True, reg_mode=reg_mode, sketch_dim=sketch_dim) if i % 4 == 2
+            else Block(config.hidden_size, attention=False, reg_mode=reg_mode, sketch_dim=sketch_dim)
             for i in range(config.num_hidden_layers)
         ])
         self.proj = Linear(config.hidden_size, config.vocab_size)
