@@ -55,7 +55,7 @@ def prefill_causal_conv1d(
     seqlen = x_seq.shape[0]
     x_input = x_seq.transpose(0, 1).unsqueeze(0)  # (1, hdim, seqlen)
 
-    if causal_conv1d_fn is not None:
+    if causal_conv1d_fn is not None and x_input.is_cuda:
         out, final_state = causal_conv1d_fn(x_input, weight, bias, return_final_states=True)
         seq.conv_states[layer_id] = final_state.squeeze(0)  # (hdim, kernel_size-1)
         out = out.squeeze(0).transpose(0, 1)  # (seqlen, hdim)
@@ -90,7 +90,7 @@ def step_causal_conv1d(
 
     state = seq.conv_states[layer_id]  # (hdim, kernel_size-1)
 
-    if causal_conv1d_update is not None:
+    if causal_conv1d_update is not None and new_val.is_cuda:
         state_b = state.unsqueeze(0)  # (1, hdim, kernel_size-1)
         out = causal_conv1d_update(new_val.unsqueeze(0), state_b, weight, bias)  # (1, hdim)
         seq.conv_states[layer_id] = state_b.squeeze(0)  # updated in-place
@@ -124,7 +124,7 @@ def batch_step_causal_conv1d(
         for seq in seqs
     ])  # (batch, hdim, kernel_size-1)
 
-    if causal_conv1d_update is not None:
+    if causal_conv1d_update is not None and new_vals.is_cuda:
         out = causal_conv1d_update(new_vals, states, weight)  # (batch, hdim), states updated in-place
         for i, seq in enumerate(seqs):
             seq.conv_states[layer_id] = states[i]
