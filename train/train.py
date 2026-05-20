@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 import src.matmul
 from src.optimizer import Muon
-from src.model import GPT
+from src.model import Model
 
 from src.data import get_data, data_generator
 
@@ -60,7 +60,7 @@ val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bi
 REG_MODE = 'baseline'
 SIGR_ALPHA = 0.0
 
-model = GPT(vocab_size=50304, num_layers=12, model_dim=768, reg_mode=REG_MODE, sigr_alpha=SIGR_ALPHA).to(device)
+model = Model(vocab_size=50304, num_layers=12, model_dim=768, reg_mode=REG_MODE, sigr_alpha=SIGR_ALPHA).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
 
 print0(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", console=True)

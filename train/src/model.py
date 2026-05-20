@@ -244,7 +244,7 @@ class MLP(nn.Module):
         return x
 
 class Block(nn.Module):
-    def __init__(self, dim: int, reg_mode: str = "baseline", sigr_alpha: float = 0.0):
+    def __init__(self, dim: int, attention: bool = True, reg_mode: str = "baseline", sigr_alpha: float = 0.0):
         super().__init__()
         self.attn = CausalSelfAttention(dim) if attention else LFM2Conv(dim)
         self.mlp = MLP(dim)
@@ -261,7 +261,7 @@ class Block(nn.Module):
 
         return x, reg_loss
 
-class GPT(nn.Module):
+class Model(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, model_dim: int, reg_mode: str = "baseline", sigr_alpha: float = 0.0):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, model_dim).bfloat16() # float() if using Linear16
