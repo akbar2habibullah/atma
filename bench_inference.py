@@ -40,7 +40,7 @@ def main():
 
         # Timed benchmark pass
         t0 = time.perf_counter()
-        outputs = llm.generate(prompts, sampling_params, use_tqdm=False)
+        outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
         if use_cuda:
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - t0
