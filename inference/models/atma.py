@@ -89,6 +89,36 @@ def step_causal_conv1d(
     return out
 
 
+def batch_step_causal_conv1d(
+    layer_id: str,
+    seqs: list,
+    new_vals: torch.Tensor,
+    weight: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Batched O(1) causal convolution step across all decode sequences in parallel.
+    new_vals: (batch, hdim)
+    weight: (hdim, kernel_size)
+    Returns: (batch, hdim)
+    """
+    batch, hdim = new_vals.shape
+    kernel_size = weight.shape[1]
+
+    states = torch.stack([
+        seq.conv_states.get(layer_id, torch.zeros(hdim, kernel_size - 1, dtype=new_vals.dtype, device=new_vals.device))
+        for seq in seqs
+    ])  # (batch, hdim, kernel_size-1)
+
+    full_window = torch.cat([states, new_vals.unsqueeze(2)], dim=2)  # (batch, hdim, kernel_size)
+    out = (full_window * weight.unsqueeze(0)).sum(dim=2)  # (batch, hdim)
+
+    new_state = full_window[:, :, 1:]
+    for i, seq in enumerate(seqs):
+        seq.conv_states[layer_id] = new_state[i].clone()
+
+    return out
+
+
 class AtmaAttention(nn.Module):
 
     def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, kernel_size: int = 4):
@@ -115,42 +145,40 @@ class AtmaAttention(nn.Module):
         context = get_context()
 
         if context.is_prefill:
-            # Prefill: process each sequence independently
-            outputs = []
+            # Linear projections and QK-norm over ALL packed tokens at once
+            total = x.shape[0]
+            q_gate = self.q(x).view(total, self.num_heads, self.head_dim * 2)
+            q_all, gate_all = torch.chunk(q_gate, 2, dim=-1)
+            k_all = self.k(x).view(total, self.num_heads, self.head_dim)
+            v_all = self.v(x).view(total, self.num_heads, self.head_dim)
+
+            q_all = F.rms_norm(q_all, (self.head_dim,))
+            k_all = F.rms_norm(k_all, (self.head_dim,))
+
+            w_q = self.canon_q.weight.squeeze(1)
+            w_k = self.canon_k.weight.squeeze(1)
+            w_v = self.canon_v.weight.squeeze(1)
+
+            # Per-sequence causal conv + attention (variable lengths and paged KV require seq loop)
+            y_parts = []
             start = 0
             for i in range(len(context.cu_seqlens_q) - 1):
                 seqlen = context.cu_seqlens_q[i + 1].item() - context.cu_seqlens_q[i].item()
-                xi = x[start : start + seqlen]
                 seq = context.seqs[i]
 
-                # Projections
-                q_gate = self.q(xi).view(seqlen, self.num_heads, self.head_dim * 2)
-                qi, gatei = torch.chunk(q_gate, 2, dim=-1)
-                ki = self.k(xi).view(seqlen, self.num_heads, self.head_dim)
-                vi = self.v(xi).view(seqlen, self.num_heads, self.head_dim)
+                qi = q_all[start : start + seqlen].reshape(seqlen, -1)
+                ki = k_all[start : start + seqlen].reshape(seqlen, -1)
+                vi = v_all[start : start + seqlen].reshape(seqlen, -1)
+                gatei = gate_all[start : start + seqlen].reshape(seqlen, -1)
 
-                # QK-Norm
-                qi = F.rms_norm(qi, (self.head_dim,))
-                ki = F.rms_norm(ki, (self.head_dim,))
-
-                # Prefill Causal Convolutions
-                qi_flat = qi.reshape(seqlen, -1)
-                ki_flat = ki.reshape(seqlen, -1)
-                vi_flat = vi.reshape(seqlen, -1)
-
-                w_q = self.canon_q.weight.squeeze(1)
-                w_k = self.canon_k.weight.squeeze(1)
-                w_v = self.canon_v.weight.squeeze(1)
-
-                qi_conv = qi_flat + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi_flat, w_q)
-                ki_conv = ki_flat + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki_flat, w_k)
-                vi_conv = vi_flat + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi_flat, w_v)
+                qi_conv = qi + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi, w_q)
+                ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k)
+                vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v)
 
                 qi_attn = qi_conv.view(seqlen, self.num_heads, self.head_dim)
                 ki_attn = ki_conv.view(seqlen, self.num_heads, self.head_dim)
                 vi_attn = vi_conv.view(seqlen, self.num_heads, self.head_dim)
 
-                # Scaled Dot-Product Attention with Paged KV Cache
                 slot_i = context.slot_mapping[start : start + seqlen] if (context.slot_mapping is not None and context.slot_mapping.numel() > 0) else None
                 block_table_i = context.block_tables[i] if context.block_tables is not None else None
                 yi = self.attn(
@@ -161,65 +189,61 @@ class AtmaAttention(nn.Module):
                     block_table=block_table_i,
                     seq_len=seq.num_cached_tokens + seqlen,
                 )
-                yi = yi.reshape(seqlen, -1)
-                yi = yi * torch.sigmoid(gatei.reshape(seqlen, -1))
-                outputs.append(self.proj(yi))
-
+                yi = yi.reshape(seqlen, -1) * torch.sigmoid(gatei)
+                y_parts.append(yi)
                 start += seqlen
 
-            return torch.cat(outputs, dim=0)
+            # Output projection batched over all sequences at once
+            return self.proj(torch.cat(y_parts, dim=0))
 
         else:
-            # Decode: batch size = number of active sequences, each has exactly 1 token
+            # Decode: linear projections, QK-norm, and causal conv math all batched across sequences
             batch_size = x.shape[0]
-            outputs = []
 
+            q_gate = self.q(x).view(batch_size, self.num_heads, self.head_dim * 2)
+            q_all, gate_all = torch.chunk(q_gate, 2, dim=-1)
+            k_all = self.k(x).view(batch_size, self.num_heads, self.head_dim)
+            v_all = self.v(x).view(batch_size, self.num_heads, self.head_dim)
+
+            q_all = F.rms_norm(q_all, (self.head_dim,))
+            k_all = F.rms_norm(k_all, (self.head_dim,))
+
+            q_flat = q_all.reshape(batch_size, -1)  # (batch, hdim)
+            k_flat = k_all.reshape(batch_size, -1)
+            v_flat = v_all.reshape(batch_size, -1)
+
+            w_q = self.canon_q.weight.squeeze(1)
+            w_k = self.canon_k.weight.squeeze(1)
+            w_v = self.canon_v.weight.squeeze(1)
+
+            q_conv = q_flat + batch_step_causal_conv1d(f"attn_{self.layer_idx}_q", context.seqs, q_flat, w_q)
+            k_conv = k_flat + batch_step_causal_conv1d(f"attn_{self.layer_idx}_k", context.seqs, k_flat, w_k)
+            v_conv = v_flat + batch_step_causal_conv1d(f"attn_{self.layer_idx}_v", context.seqs, v_flat, w_v)
+
+            q_attn = q_conv.view(batch_size, self.num_heads, self.head_dim)
+            k_attn = k_conv.view(batch_size, self.num_heads, self.head_dim)
+            v_attn = v_conv.view(batch_size, self.num_heads, self.head_dim)
+
+            # Per-sequence attention loop: paged KV cache needs per-seq block tables
+            y_parts = []
             for i in range(batch_size):
-                xi = x[i]
                 seq = context.seqs[i]
-
-                q_gate = self.q(xi).view(self.num_heads, self.head_dim * 2)
-                qi, gatei = torch.chunk(q_gate, 2, dim=-1)
-                ki = self.k(xi).view(self.num_heads, self.head_dim)
-                vi = self.v(xi).view(self.num_heads, self.head_dim)
-
-                qi = F.rms_norm(qi, (self.head_dim,))
-                ki = F.rms_norm(ki, (self.head_dim,))
-
-                qi_flat = qi.reshape(-1)
-                ki_flat = ki.reshape(-1)
-                vi_flat = vi.reshape(-1)
-
-                w_q = self.canon_q.weight.squeeze(1)
-                w_k = self.canon_k.weight.squeeze(1)
-                w_v = self.canon_v.weight.squeeze(1)
-
-                # Decode constant-time causal convolution steps
-                qi_conv = qi_flat + step_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi_flat, w_q)
-                ki_conv = ki_flat + step_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki_flat, w_k)
-                vi_conv = vi_flat + step_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi_flat, w_v)
-
-                qi_attn = qi_conv.view(self.num_heads, self.head_dim)
-                ki_attn = ki_conv.view(self.num_heads, self.head_dim)
-                vi_attn = vi_conv.view(self.num_heads, self.head_dim)
-
                 slot_i = context.slot_mapping[i : i + 1] if context.slot_mapping is not None else None
                 block_table_i = context.block_tables[i] if context.block_tables is not None else None
                 seq_len_i = context.context_lens[i].item() if context.context_lens is not None else len(seq)
 
                 yi = self.attn(
-                    qi_attn,
-                    ki_attn,
-                    vi_attn,
+                    q_attn[i],
+                    k_attn[i],
+                    v_attn[i],
                     slot_mapping=slot_i,
                     block_table=block_table_i,
                     seq_len=seq_len_i,
                 )
-                yi = yi.reshape(-1)
-                yi = yi * torch.sigmoid(gatei.reshape(-1))
-                outputs.append(self.proj(yi))
+                yi = yi.reshape(-1) * torch.sigmoid(gate_all[i].reshape(-1))
+                y_parts.append(yi)
 
-            return torch.stack(outputs, dim=0)
+            return self.proj(torch.stack(y_parts, dim=0))
 
 
 class AtmaLFM2Conv(nn.Module):
@@ -245,49 +269,42 @@ class AtmaLFM2Conv(nn.Module):
         context = get_context()
 
         if context.is_prefill:
-            outputs = []
+            # Input projection and first gating over ALL packed tokens at once
+            projected = self.in_proj(x)  # (total_tokens, 3*hidden_size)
+            B_all, C_all, x_proj_all = projected.chunk(3, dim=-1)
+            x_gated_all = B_all * x_proj_all
+
+            w_conv = self.conv.weight.squeeze(1)
+
+            # Per-sequence causal conv (variable lengths and state saving require seq loop)
+            y_parts = []
             start = 0
             for i in range(len(context.cu_seqlens_q) - 1):
                 seqlen = context.cu_seqlens_q[i + 1].item() - context.cu_seqlens_q[i].item()
-                xi = x[start : start + seqlen]
                 seq = context.seqs[i]
 
-                projected = self.in_proj(xi)
-                B, C, x_proj = projected.chunk(3, dim=-1)
+                x_gated_i = x_gated_all[start : start + seqlen]
+                C_i = C_all[start : start + seqlen]
 
-                x_gated = B * x_proj
-
-                # Causal conv1d on gated input
-                w_conv = self.conv.weight.squeeze(1)
-                x_conv = prefill_causal_conv1d(f"conv_{self.layer_idx}_gated", seq, x_gated, w_conv)
-
-                x_gated_2 = C * x_conv
-                outputs.append(self.out_proj(x_gated_2))
-
+                x_conv_i = prefill_causal_conv1d(f"conv_{self.layer_idx}_gated", seq, x_gated_i, w_conv)
+                y_parts.append(C_i * x_conv_i)
                 start += seqlen
 
-            return torch.cat(outputs, dim=0)
+            # Output projection batched over all sequences at once
+            return self.out_proj(torch.cat(y_parts, dim=0))
 
         else:
-            batch_size = x.shape[0]
-            outputs = []
+            # Decode: all ops batched across sequences
+            projected = self.in_proj(x)  # (batch, 3*hidden_size)
+            B_all, C_all, x_proj_all = projected.chunk(3, dim=-1)
+            x_gated = B_all * x_proj_all  # (batch, hidden_size)
 
-            for i in range(batch_size):
-                xi = x[i]
-                seq = context.seqs[i]
+            w_conv = self.conv.weight.squeeze(1)
+            x_conv = batch_step_causal_conv1d(
+                f"conv_{self.layer_idx}_gated", context.seqs, x_gated, w_conv
+            )
 
-                projected = self.in_proj(xi)
-                B, C, x_proj = projected.chunk(3, dim=-1)
-
-                x_gated = B * x_proj
-
-                w_conv = self.conv.weight.squeeze(1)
-                x_conv = step_causal_conv1d(f"conv_{self.layer_idx}_gated", seq, x_gated, w_conv)
-
-                x_gated_2 = C * x_conv
-                outputs.append(self.out_proj(x_gated_2))
-
-            return torch.stack(outputs, dim=0)
+            return self.out_proj(C_all * x_conv)
 
 
 class AtmaMLP(nn.Module):
