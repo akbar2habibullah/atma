@@ -10,8 +10,18 @@ from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
 from model.blocks import AtmaConvBase, AtmaAttnBase
 
-kernel_module = get_kernel("kernels-community/causal-conv1d")
-causal_conv1d_fn = kernel_module.causal_conv1d_fn
+def _causal_conv1d_fallback(x: Tensor, weight: Tensor) -> Tensor:
+    """Pure PyTorch depthwise causal conv1d. x: (B, H, L), weight: (H, k)."""
+    k = weight.shape[1]
+    x_padded = F.pad(x, (k - 1, 0))
+    return F.conv1d(x_padded, weight.unsqueeze(1), groups=weight.shape[0])
+
+try:
+    kernel_module = get_kernel("kernels-community/causal-conv1d")
+    causal_conv1d_fn = kernel_module.causal_conv1d_fn
+except Exception:
+    print("causal-conv1d kernel not available, using PyTorch fallback")
+    causal_conv1d_fn = _causal_conv1d_fallback
 
 
 def _load_fa3():
