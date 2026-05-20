@@ -27,7 +27,7 @@ class ModelRunner:
         torch.set_default_dtype(hf_config.dtype)
         
         # Initialize inference optimized Atma model
-        self.model = Atma(hf_config.vocab_size, hf_config.num_hidden_layers, hf_config.hidden_size)
+        self.model = Atma(hf_config)
         self.model = self.model.to(self.device)
         
         # Load weights if config.model points to a valid file

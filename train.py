@@ -18,6 +18,7 @@ import torch.nn.functional as F
 import train.matmul
 from train.optimizer import Muon
 from train.model import Model
+from model.config import AtmaConfig
 
 from train.data import get_data, data_generator
 
@@ -60,7 +61,8 @@ val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bi
 REG_MODE = 'baseline'
 SIGR_ALPHA = 0.0
 
-model = Model(vocab_size=50304, num_layers=12, model_dim=768, reg_mode=REG_MODE, sigr_alpha=SIGR_ALPHA).to(device)
+atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=12, hidden_size=768)
+model = Model(atma_config, reg_mode=REG_MODE, sigr_alpha=SIGR_ALPHA).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
 
 print0(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", console=True)
@@ -69,7 +71,7 @@ print0(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f
 num_params = sum(p.numel() for p in model.parameters())
 seq_len = 1024
 # Standard formulation (6 * N + 12 * L * H * Q * T) derived from PaLM Appendix B
-flops_per_token = 6 * num_params + 12 * 12 * 768 * seq_len
+flops_per_token = 6 * num_params + 12 * atma_config.num_hidden_layers * atma_config.hidden_size * seq_len
 flops_per_step = flops_per_token * batch_size
 
 peak_flops = 65e12 # default T4 fallback

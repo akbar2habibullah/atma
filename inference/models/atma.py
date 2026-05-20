@@ -1,16 +1,19 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from functools import partial
 
-from inference.layers.layernorm import RMSNorm
-from inference.layers.linear import ReplicatedLinear, RowParallelLinear
+from model.config import AtmaConfig
+from model.layers import RMSNorm, MLP
+from model.blocks import AtmaConvBase, AtmaAttnBase
+from inference.layers.linear import ReplicatedLinear
 from inference.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
 from inference.layers.attention import Attention
 from inference.utils.context import get_context
 from inference.engine.sequence import Sequence
 
 
-def causal_conv1d_fallback(x: torch.Tensor, weight: torch.Tensor, bias = None) -> torch.Tensor:
+def causal_conv1d_fallback(x: torch.Tensor, weight: torch.Tensor, bias=None) -> torch.Tensor:
     """
     Pure PyTorch causal 1D depthwise convolution fallback.
     x: (B, hdim, T)
@@ -18,10 +21,8 @@ def causal_conv1d_fallback(x: torch.Tensor, weight: torch.Tensor, bias = None) -
     bias: (hdim,) or None
     """
     kernel_size = weight.shape[1]
-    # Pad left with kernel_size - 1 zeros to maintain causality
     x_padded = F.pad(x, (kernel_size - 1, 0))
-    # Depthwise Conv1d (groups = hdim)
-    w = weight.unsqueeze(1) # (hdim, 1, kernel_size)
+    w = weight.unsqueeze(1)  # (hdim, 1, kernel_size)
     out = F.conv1d(x_padded, w, bias, stride=1, padding=0, groups=x.shape[1])
     return out
 
@@ -31,7 +32,7 @@ def prefill_causal_conv1d(
     seq: Sequence,
     x_seq: torch.Tensor,
     weight: torch.Tensor,
-    bias = None,
+    bias=None,
 ) -> torch.Tensor:
     """
     Runs causal convolution over a full prefill sequence, then seeds the sequence's conv_state cache.
@@ -41,10 +42,9 @@ def prefill_causal_conv1d(
     hdim, kernel_size = weight.shape
     seqlen = x_seq.shape[0]
 
-    # Input: (1, hdim, seqlen)
     x_input = x_seq.transpose(0, 1).unsqueeze(0)
     out = causal_conv1d_fallback(x_input, weight, bias)
-    out = out.squeeze(0).transpose(0, 1) # (seqlen, hdim)
+    out = out.squeeze(0).transpose(0, 1)  # (seqlen, hdim)
 
     # Save the final (kernel_size - 1) states as seed for decode steps
     if seqlen < kernel_size - 1:
@@ -62,7 +62,7 @@ def step_causal_conv1d(
     seq: Sequence,
     new_val: torch.Tensor,
     weight: torch.Tensor,
-    bias = None,
+    bias=None,
 ) -> torch.Tensor:
     """
     Performs constant-time O(1) causal convolution step for a single token during decode phase.
@@ -76,15 +76,11 @@ def step_causal_conv1d(
 
     state = seq.conv_states[layer_id]
 
-    # Concat past state with current token to get the full convolution window
-    full_window = torch.cat([state, new_val.unsqueeze(1)], dim=1) # (hdim, kernel_size)
-
-    # Depthwise convolution dot product
+    full_window = torch.cat([state, new_val.unsqueeze(1)], dim=1)  # (hdim, kernel_size)
     out = (full_window * weight).sum(dim=1)
     if bias is not None:
         out = out + bias
 
-    # Shift history window by 1 step
     seq.conv_states[layer_id] = full_window[:, 1:].clone()
     return out
 
@@ -119,33 +115,21 @@ def batch_step_causal_conv1d(
     return out
 
 
-class AtmaAttention(nn.Module):
+def _infer_linear(in_f, out_f):
+    return ReplicatedLinear(in_f, out_f, bias=True)
+
+
+class AtmaAttention(AtmaAttnBase):
 
     def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, kernel_size: int = 4):
-        super().__init__()
+        super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, kernel_size=kernel_size)
         self.layer_idx = layer_idx
-        self.num_heads = dim // head_dim
-        self.head_dim = head_dim
-        hdim = self.num_heads * self.head_dim
-        self.hdim = hdim
-        self.kernel_size = kernel_size
-
-        self.q = ReplicatedLinear(dim, hdim * 2, bias=True)
-        self.k = ReplicatedLinear(dim, hdim, bias=True)
-        self.v = ReplicatedLinear(dim, hdim, bias=True)
-
-        self.canon_q = nn.Conv1d(hdim, hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=hdim, bias=False)
-        self.canon_k = nn.Conv1d(hdim, hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=hdim, bias=False)
-        self.canon_v = nn.Conv1d(hdim, hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=hdim, bias=False)
-
-        self.proj = ReplicatedLinear(hdim, dim, bias=True)
         self.attn = Attention(self.num_heads, self.head_dim, self.head_dim ** -0.5, self.num_heads)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         context = get_context()
 
         if context.is_prefill:
-            # Linear projections and QK-norm over ALL packed tokens at once
             total = x.shape[0]
             q_gate = self.q(x).view(total, self.num_heads, self.head_dim * 2)
             q_all, gate_all = torch.chunk(q_gate, 2, dim=-1)
@@ -193,11 +177,9 @@ class AtmaAttention(nn.Module):
                 y_parts.append(yi)
                 start += seqlen
 
-            # Output projection batched over all sequences at once
             return self.proj(torch.cat(y_parts, dim=0))
 
         else:
-            # Decode: linear projections, QK-norm, and causal conv math all batched across sequences
             batch_size = x.shape[0]
 
             q_gate = self.q(x).view(batch_size, self.num_heads, self.head_dim * 2)
@@ -208,7 +190,7 @@ class AtmaAttention(nn.Module):
             q_all = F.rms_norm(q_all, (self.head_dim,))
             k_all = F.rms_norm(k_all, (self.head_dim,))
 
-            q_flat = q_all.reshape(batch_size, -1)  # (batch, hdim)
+            q_flat = q_all.reshape(batch_size, -1)
             k_flat = k_all.reshape(batch_size, -1)
             v_flat = v_all.reshape(batch_size, -1)
 
@@ -224,7 +206,6 @@ class AtmaAttention(nn.Module):
             k_attn = k_conv.view(batch_size, self.num_heads, self.head_dim)
             v_attn = v_conv.view(batch_size, self.num_heads, self.head_dim)
 
-            # Per-sequence attention loop: paged KV cache needs per-seq block tables
             y_parts = []
             for i in range(batch_size):
                 seq = context.seqs[i]
@@ -246,30 +227,16 @@ class AtmaAttention(nn.Module):
             return self.proj(torch.stack(y_parts, dim=0))
 
 
-class AtmaLFM2Conv(nn.Module):
+class AtmaLFM2Conv(AtmaConvBase):
 
     def __init__(self, layer_idx: int, dim: int, kernel_size: int = 3):
-        super().__init__()
+        super().__init__(dim, linear_cls=_infer_linear, kernel_size=kernel_size)
         self.layer_idx = layer_idx
-        self.hidden_size = dim
-        self.kernel_size = kernel_size
-
-        self.in_proj = ReplicatedLinear(self.hidden_size, 3 * self.hidden_size, bias=True)
-        self.conv = nn.Conv1d(
-            self.hidden_size,
-            self.hidden_size,
-            kernel_size=self.kernel_size,
-            padding=self.kernel_size - 1,
-            groups=self.hidden_size,
-            bias=False,
-        )
-        self.out_proj = ReplicatedLinear(self.hidden_size, self.hidden_size, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         context = get_context()
 
         if context.is_prefill:
-            # Input projection and first gating over ALL packed tokens at once
             projected = self.in_proj(x)  # (total_tokens, 3*hidden_size)
             B_all, C_all, x_proj_all = projected.chunk(3, dim=-1)
             x_gated_all = B_all * x_proj_all
@@ -290,14 +257,12 @@ class AtmaLFM2Conv(nn.Module):
                 y_parts.append(C_i * x_conv_i)
                 start += seqlen
 
-            # Output projection batched over all sequences at once
             return self.out_proj(torch.cat(y_parts, dim=0))
 
         else:
-            # Decode: all ops batched across sequences
             projected = self.in_proj(x)  # (batch, 3*hidden_size)
             B_all, C_all, x_proj_all = projected.chunk(3, dim=-1)
-            x_gated = B_all * x_proj_all  # (batch, hidden_size)
+            x_gated = B_all * x_proj_all
 
             w_conv = self.conv.weight.squeeze(1)
             x_conv = batch_step_causal_conv1d(
@@ -307,66 +272,56 @@ class AtmaLFM2Conv(nn.Module):
             return self.out_proj(C_all * x_conv)
 
 
-class AtmaMLP(nn.Module):
-
-    def __init__(self, dim: int):
-        super().__init__()
-        hdim = 4 * dim
-        self.fc = ReplicatedLinear(dim, hdim * 2, bias=True)
-        self.proj = ReplicatedLinear(hdim, dim, bias=True)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_gate = self.fc(x)
-        x, gate = torch.chunk(x_gate, 2, dim=-1)
-        # Activation function identical to training loop: gate * relu(x)^2
-        x = gate * x.relu().square()
-        return self.proj(x)
-
-
 class AtmaDecoderBlock(nn.Module):
 
-    def __init__(self, layer_idx: int, dim: int, attention: bool = True):
+    def __init__(
+        self,
+        layer_idx: int,
+        dim: int,
+        attention: bool = True,
+        head_dim: int = 128,
+        attn_kernel_size: int = 4,
+        conv_kernel_size: int = 3,
+    ):
         super().__init__()
-        self.attn = AtmaAttention(layer_idx, dim) if attention else AtmaLFM2Conv(layer_idx, dim)
-        self.mlp = AtmaMLP(dim)
+        self.attn = (
+            AtmaAttention(layer_idx, dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            if attention
+            else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
+        )
+        self.mlp = MLP(dim, linear_cls=_infer_linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # attention/convolution branch
-        normed_x = self.norm1(x)
-        x = x + self.attn(normed_x)
-
-        # MLP branch
-        normed_x2 = self.norm2(x)
-        x = x + self.mlp(normed_x2)
+        x = x + self.attn(self.norm1(x))
+        x = x + self.mlp(self.norm2(x))
         return x
 
 
 class Atma(nn.Module):
 
-    def __init__(self, vocab_size: int, num_layers: int, model_dim: int):
+    def __init__(self, config: AtmaConfig):
         super().__init__()
-        self.embed = nn.Embedding(vocab_size, model_dim)
-        # Every 4th layer (specifically when i % 4 == 2) has self-attention, other layers have LFM2Conv
+        self.embed = VocabParallelEmbedding(config.vocab_size, config.hidden_size)
         self.blocks = nn.ModuleList([
-            AtmaDecoderBlock(i, model_dim, attention=True) if i % 4 == 2 
-            else AtmaDecoderBlock(i, model_dim, attention=False) 
-            for i in range(num_layers)
+            AtmaDecoderBlock(
+                i, config.hidden_size,
+                attention=(i % 4 == 2),
+                head_dim=config.head_dim,
+                attn_kernel_size=config.attn_kernel_size,
+                conv_kernel_size=config.conv_kernel_size,
+            )
+            for i in range(config.num_hidden_layers)
         ])
-        self.proj = ParallelLMHead(vocab_size, model_dim, bias=True)
-        self.norm = RMSNorm(model_dim)
+        self.proj = ParallelLMHead(config.vocab_size, config.hidden_size, bias=True)
+        self.norm = RMSNorm(config.hidden_size)
 
     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor = None) -> torch.Tensor:
-        # input_ids: (total_tokens,) flat tensor in prefill, or (batch_size,) in decode
         x = self.embed(input_ids)
         for block in self.blocks:
             x = block(x)
-            
         x_normed = self.norm(x)
         logits = self.proj(x_normed)
-        
-        # Apply the exact training-loop logit clamping and scaling
-        # logits = 15 * logits * (logits.square() + 15**2).rsqrt()
         logits = 15.0 * logits * (logits.square() + 225.0).rsqrt()
         return logits
