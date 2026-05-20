@@ -15,7 +15,6 @@ from torch import Tensor, nn
 from torch.optim import AdamW
 import torch.nn.functional as F
 
-from train.matmul import *
 from train.optimizer import Muon
 from train.model import Model
 from model.config import AtmaConfig
