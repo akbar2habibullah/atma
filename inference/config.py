@@ -7,11 +7,11 @@ from model.config import AtmaConfig
 class Config:
     model: str = "gpt2"
     tensor_parallel_size: int = 1
-    kvcache_block_size: int = 16
+    kvcache_block_size: int = 256
     gpu_memory_utilization: float = 0.9
-    max_num_seqs: int = 256
-    max_num_batched_tokens: int = 2048
-    max_model_len: int = 1024
+    max_num_seqs: int = 512
+    max_num_batched_tokens: int = 16384
+    max_model_len: int = 4096
     enforce_eager: bool = False
     eos: int = 50256
     num_kvcache_blocks: int = 0
