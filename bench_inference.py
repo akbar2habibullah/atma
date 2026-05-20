@@ -14,7 +14,7 @@ def main():
     # Benchmarking different batch sizes
     batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
     prompt = "Artificial Intelligence and Machine Learning are transforming modern technology by enabling computers to"
-    max_tokens = 1024
+    max_tokens = 256
 
     print(f"\nBenchmark Configuration:")
     print(f"- Model Architecture: Atma ({llm.engine.config.hf_config.num_hidden_layers} layers, {llm.engine.config.hf_config.hidden_size} model dim, causal conv + attention + LFM2)")
