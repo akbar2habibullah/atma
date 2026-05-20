@@ -15,11 +15,11 @@ from torch import Tensor, nn
 from torch.optim import AdamW
 import torch.nn.functional as F
 
-import src.matmul
-from src.optimizer import Muon
-from src.model import Model
+import train.matmul
+from train.optimizer import Muon
+from train.model import Model
 
-from src.data import get_data, data_generator
+from train.data import get_data, data_generator
 
 num_chunks = 1
 
