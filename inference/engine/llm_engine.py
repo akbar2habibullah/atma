@@ -16,21 +16,21 @@ class LLMEngine:
     def __init__(self, model: str, **kwargs):
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
-        config = Config(model, **config_kwargs)
-        Sequence.block_size = config.kvcache_block_size
+        self.config = Config(model, **config_kwargs)
+        Sequence.block_size = self.config.kvcache_block_size
         
-        self.model_runner = ModelRunner(config, 0)
+        self.model_runner = ModelRunner(self.config, 0)
         
         # Load fast tokenizer, falling back to 'gpt2' if local path fails
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.config.model, use_fast=True)
         except Exception:
-            print(f"Warning: Failed loading tokenizer from custom path '{config.model}'. "
+            print(f"Warning: Failed loading tokenizer from custom path '{self.config.model}'. "
                   f"Falling back to standard 'gpt2' tokenizer.")
             self.tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
             
-        config.eos = self.tokenizer.eos_token_id
-        self.scheduler = Scheduler(config)
+        self.config.eos = self.tokenizer.eos_token_id
+        self.scheduler = Scheduler(self.config)
         atexit.register(self.exit)
 
     def exit(self):

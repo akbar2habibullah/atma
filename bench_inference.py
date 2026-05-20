@@ -12,7 +12,7 @@ def main():
     max_tokens = 50
 
     print(f"\nBenchmark Configuration:")
-    print(f"- Model Architecture: Atma (12 layers, 768 model dim, causal conv + attention + LFM2)")
+    print(f"- Model Architecture: Atma ({llm.engine.config.hf_config.num_hidden_layers} layers, {llm.engine.config.hf_config.hidden_size} model dim, causal conv + attention + LFM2)")
     print(f"- Max Tokens to Generate: {max_tokens} per sequence")
     print(f"- Prompt Length: {len(prompt.split())} words")
 

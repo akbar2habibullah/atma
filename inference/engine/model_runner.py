@@ -40,6 +40,7 @@ class ModelRunner:
         self.model.eval()
 
         self.allocate_kv_cache()
+        self._try_compile_model()
         self.warmup_model()
 
         # Restore default dtype
@@ -55,20 +56,64 @@ class ModelRunner:
             raise AttributeError(f"ModelRunner has no method '{method_name}'")
         return method(*args)
 
+    def _try_compile_model(self):
+        """Wrap model with torch.compile; save original so warmup can fall back to eager."""
+        if self.config.enforce_eager:
+            print("enforce_eager=True, using eager mode.")
+            return
+        if not hasattr(torch, "compile"):
+            print("torch.compile unavailable (requires PyTorch >= 2.0), using eager mode.")
+            return
+        try:
+            self._orig_model = self.model
+            self.model = torch.compile(
+                self.model,
+                mode="reduce-overhead",
+                dynamic=True,
+                fullgraph=False,
+            )
+            print("torch.compile enabled (mode=reduce-overhead, dynamic=True).")
+        except Exception as e:
+            print(f"torch.compile setup failed ({e}), using eager mode.")
+            self.model = self._orig_model
+            del self._orig_model
+
+    def _make_warmup_seqs(self, seq_len: int):
+        """Build minimal prefill and decode sequences for warmup passes."""
+        prefill_seq = Sequence([0] * seq_len)
+        prefill_seq.num_scheduled_tokens = seq_len
+        num_blocks = (seq_len + self.block_size - 1) // self.block_size
+        prefill_seq.block_table = list(range(min(num_blocks, self.config.num_kvcache_blocks)))
+
+        decode_seq = Sequence([0])
+        decode_seq.num_scheduled_tokens = 1
+        decode_seq.block_table = [0]
+
+        return [prefill_seq], [decode_seq]
+
     def warmup_model(self):
-        """Warm up the model with a tiny forward pass to trace layers and compile optimizations."""
+        """Warm up with prefill and decode passes; falls back to eager if torch.compile fails."""
         print("Warming up model...")
-        max_num_batched_tokens = self.config.max_num_batched_tokens
-        max_model_len = self.config.max_model_len
-        seq_len = min(64, min(max_num_batched_tokens, max_model_len))
-        
-        # Create a single sequence for warmup
-        seqs = [Sequence([0] * seq_len)]
-        for seq in seqs:
-            seq.num_scheduled_tokens = seq_len
-            
-        with torch.inference_mode():
-            self.run(seqs, is_prefill=True)
+        seq_len = min(64, self.config.max_num_batched_tokens, self.config.max_model_len)
+
+        prefill_seqs, decode_seqs = self._make_warmup_seqs(seq_len)
+        try:
+            with torch.inference_mode():
+                self.run(prefill_seqs, is_prefill=True)
+                self.run(decode_seqs, is_prefill=False)
+            if hasattr(self, "_orig_model"):
+                del self._orig_model
+        except Exception as e:
+            if hasattr(self, "_orig_model"):
+                print(f"torch.compile warmup failed ({e}), falling back to eager mode.")
+                self.model = self._orig_model
+                del self._orig_model
+                prefill_seqs, decode_seqs = self._make_warmup_seqs(seq_len)
+                with torch.inference_mode():
+                    self.run(prefill_seqs, is_prefill=True)
+                    self.run(decode_seqs, is_prefill=False)
+            else:
+                raise
         print("Warmup complete!")
 
     def allocate_kv_cache(self):
