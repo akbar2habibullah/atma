@@ -61,7 +61,7 @@ REG_MODE = 'baseline'
 SKETCH_DIM = 64
 SIGR_ALPHA = 0.0
 
-atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=12, hidden_size=768)
+atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
 
