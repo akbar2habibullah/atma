@@ -49,7 +49,10 @@ class ModelRunner:
 
     def exit(self):
         if not self.enforce_eager and self.device.type == "cuda":
-            del self.graphs, self.graph_pool
+            if hasattr(self, "graphs"):
+                del self.graphs
+            if hasattr(self, "graph_pool"):
+                del self.graph_pool
         if self.device.type == "cuda":
             torch.cuda.synchronize()
 
