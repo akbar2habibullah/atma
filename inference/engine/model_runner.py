@@ -270,6 +270,8 @@ class ModelRunner:
     # ------------------------------------------------------------------
 
     def _to_cuda(self, t: torch.Tensor) -> torch.Tensor:
+        if t.is_cuda:
+            return t
         if self.device.type == "cuda":
             return t.pin_memory().cuda(non_blocking=True)
         return t.to(self.device)
