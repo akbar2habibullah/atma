@@ -52,9 +52,14 @@ class LLMEngine:
         
         # Call model runner to execute forward pass and return sampled token IDs
         token_ids = self.model_runner.call("run", seqs, is_prefill)
-        
+
         self.scheduler.postprocess(seqs, token_ids, is_prefill)
-        
+
+        # Release conv state slots for finished sequences
+        for seq in seqs:
+            if seq.is_finished and seq.seq_slot >= 0:
+                self.model_runner.free_seq_slot(seq)
+
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         return outputs, num_tokens
 
