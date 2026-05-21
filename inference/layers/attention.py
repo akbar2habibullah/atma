@@ -17,13 +17,10 @@ def _load_fa3():
     if not torch.cuda.is_available():
         return None
     try:
-        major, _ = torch.cuda.get_device_capability()
-        if major < 9:
-            return None
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
         from kernels import get_kernel
-        return get_kernel('kernels-community/flash-attn3').flash_attn_interface
+        return get_kernel('kernels-community/vllm-flash-attn3').flash_attn_interface
     except Exception:
         return None
 
