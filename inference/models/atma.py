@@ -143,10 +143,9 @@ class AtmaAttention(AtmaAttnBase):
                 store_kvcache(k_packed, v_packed, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
             if _fa3 is not None:
-                k_src = self.attn.k_cache if context.block_tables is not None else k_packed
-                v_src = self.attn.v_cache if context.block_tables is not None else v_packed
-                y = _fa3.flash_attn_varlen_func(
-                    q_packed, k_src, v_src,
+                # FA3 varlen has no page_table; always use packed K/V (already stored above)
+                y, _ = _fa3.flash_attn_varlen_func(
+                    q_packed, k_packed, v_packed,
                     context.cu_seqlens_q, context.cu_seqlens_k,
                     context.max_seqlen_q, context.max_seqlen_k,
                     softmax_scale=self.attn.scale, causal=True,
@@ -207,12 +206,11 @@ class AtmaAttention(AtmaAttnBase):
             store_kvcache(k_attn, v_attn, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
             if _fa3 is not None:
-                cache_seqlens = context.context_lens - 1
+                # Token already written via store_kvcache; pass full context_lens, use page_table
                 y = _fa3.flash_attn_with_kvcache(
                     q_attn.unsqueeze(1), self.attn.k_cache, self.attn.v_cache,
-                    k=k_attn.unsqueeze(1), v=v_attn.unsqueeze(1),
-                    cache_seqlens=cache_seqlens,
-                    block_table=context.block_tables,
+                    cache_seqlens=context.context_lens,
+                    page_table=context.block_tables,
                     softmax_scale=self.attn.scale,
                     causal=False,
                 ).squeeze(1).reshape(batch_size, -1)
