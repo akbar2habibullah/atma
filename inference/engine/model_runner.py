@@ -217,6 +217,11 @@ class ModelRunner:
 
     @torch.inference_mode()
     def capture_cudagraph(self):
+        from inference.layers.attention import HAS_FLASH_ATTN2, _fa3
+        if not HAS_FLASH_ATTN2 and _fa3 is None:
+            print("Skipping CUDA graph capture: neither FA2 nor FA3 available (SDPA path not graph-compatible).")
+            return
+
         hf = self.config.hf_config
         max_bs = min(self.config.max_num_seqs, 512)
         max_num_blocks = (self.config.max_model_len + self.block_size - 1) // self.block_size
