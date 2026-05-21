@@ -224,6 +224,10 @@ class ModelRunner:
         if not HAS_FLASH_ATTN2 and _fa3 is None:
             print("Skipping CUDA graph capture: neither FA2 nor FA3 available (SDPA path not graph-compatible).")
             return
+        if _fa3 is not None and not HAS_FLASH_ATTN2:
+            print("Skipping CUDA graph capture: FA3 flash_attn_with_kvcache is not CUDA-graph-compatible "
+                  "without external scheduler_metadata (FA2 not available).")
+            return
 
         hf = self.config.hf_config
         max_bs = min(self.config.max_num_seqs, 512)
