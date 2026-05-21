@@ -405,7 +405,10 @@ class ModelRunner:
         gv["slot_mapping"][:bs] = context.slot_mapping
         gv["context_lens"].zero_()
         gv["context_lens"][:bs] = context.context_lens
-        gv["block_tables"][:bs, :context.block_tables.size(1)] = context.block_tables
+        n_blocks = context.block_tables.size(1)
+        gv["block_tables"][:bs, :n_blocks] = context.block_tables
+        if n_blocks < gv["block_tables"].size(1):
+            gv["block_tables"][:bs, n_blocks:].zero_()
         gv["seq_slots"][:bs]    = context.seq_slots
 
         graph.replay()

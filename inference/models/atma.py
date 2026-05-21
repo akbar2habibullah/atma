@@ -206,13 +206,18 @@ class AtmaAttention(AtmaAttnBase):
             store_kvcache(k_attn, v_attn, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
             if _fa3 is not None:
-                # Token already written via store_kvcache; pass full context_lens, use page_table
+                # Token already written via store_kvcache; pass full context_lens, use page_table.
+                # num_splits=1 disables FA3's auto-split: with num_splits=0 the split decision is
+                # made in Python before the kernel launch, so capture (context_lens=0 → no split)
+                # and replay (context_lens>0 → split) choose different kernel paths, causing a
+                # workspace-pointer mismatch and an illegal memory access inside CUDA graphs.
                 y = _fa3.flash_attn_with_kvcache(
                     q_attn.unsqueeze(1), self.attn.k_cache, self.attn.v_cache,
                     cache_seqlens=context.context_lens,
                     page_table=context.block_tables,
                     softmax_scale=self.attn.scale,
                     causal=False,
+                    num_splits=1,
                 ).squeeze(1).reshape(batch_size, -1)
             elif HAS_FLASH_ATTN2:
                 y = flash_attn_with_kvcache(
