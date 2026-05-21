@@ -144,7 +144,7 @@ class AtmaAttention(AtmaAttnBase):
 
             if _fa3 is not None:
                 # FA3 varlen has no page_table; always use packed K/V (already stored above)
-                y, _ = _fa3.flash_attn_varlen_func(
+                y = _fa3.flash_attn_varlen_func(
                     q_packed, k_packed, v_packed,
                     context.cu_seqlens_q, context.cu_seqlens_k,
                     context.max_seqlen_q, context.max_seqlen_k,

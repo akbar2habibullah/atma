@@ -20,7 +20,7 @@ def _load_fa3():
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
         from kernels import get_kernel
-        return get_kernel('kernels-community/vllm-flash-attn3').flash_attn_interface
+        return get_kernel('kernels-community/sgl-flash-attn3').flash_attn_interface
     except Exception:
         return None
 
