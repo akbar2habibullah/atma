@@ -340,6 +340,8 @@ class Atma(nn.Module):
         self.norm = RMSNorm(config.hidden_size)
         self.proj = ParallelLMHead(config.vocab_size, config.hidden_size, bias=True)
 
+        print(f"Total parameters: {sum(p.numel() for p in self.parameters()) / 1e6:.2f}M")
+
     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor = None) -> torch.Tensor:
         """Returns hidden states. Call compute_logits() separately (required for CUDA graph)."""
         x = self.embed(input_ids)

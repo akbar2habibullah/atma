@@ -9,7 +9,7 @@ class Config:
     tensor_parallel_size: int = 1
     kvcache_block_size: int = 256
     gpu_memory_utilization: float = 0.9
-    max_num_seqs: int = 512
+    max_num_seqs: int = 2048
     max_num_batched_tokens: int = 16384 * 8
     max_model_len: int = 4096
     enforce_eager: bool = False

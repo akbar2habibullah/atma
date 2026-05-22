@@ -229,7 +229,7 @@ class ModelRunner:
             return
 
         hf = self.config.hf_config
-        max_bs = min(self.config.max_num_seqs, 512)
+        max_bs = max(self.config.max_num_seqs, 2048)
         max_num_blocks = (self.config.max_model_len + self.block_size - 1) // self.block_size
 
         input_ids    = torch.zeros(max_bs, dtype=torch.int64)
@@ -394,7 +394,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        if is_prefill or self.enforce_eager or not hasattr(self, "graphs") or input_ids.size(0) > 512:
+        if is_prefill or self.enforce_eager or not hasattr(self, "graphs") or input_ids.size(0) > self.config.max_num_seqs:
             return self.model.compute_logits(self.model(input_ids, positions))
 
         bs = input_ids.size(0)
