@@ -60,16 +60,16 @@ Production-grade inference engine featuring:
 
 ### Performance on NVIDIA L4
 
-| Batch Size | Throughput (tok/s) | Prefill (tok/s) | Decode (tok/s) |
-|---|---|---|---|
-| 1 | 189 | 9,218 | 178 |
-| 4 | 703 | 19,532 | 540 |
-| 8 | 1,314 | 24,051 | 767 |
-| 16 | 2,384 | 25,998 | 1,100 |
-| 32 | 3,951 | 26,854 | 1,369 |
-| 64 | 5,944 | 26,923 | 1,521 |
-| 128 | 7,874 | 26,107 | 1,631 |
-| 256 | **8,905** | 24,286 | 1,688 |
+| Batch Size | Throughput (tok/s) | Prefill (tok/s) |
+|---|---|---|
+| 1 | 189 | 9,218 |
+| 4 | 703 | 19,532 |
+| 8 | 1,314 | 24,051 |
+| 16 | 2,384 | 25,998 |
+| 32 | 3,951 | 26,854 |
+| 64 | 5,944 | 26,923 |
+| 128 | 7,874 | 26,107 |
+| 256 | **8,905** | 24,286 |
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words.
 
