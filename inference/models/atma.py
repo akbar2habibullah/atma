@@ -142,8 +142,10 @@ class AtmaAttention(AtmaAttnBase):
             if self.attn.k_cache.numel() > 0 and context.slot_mapping is not None and context.slot_mapping.numel() > 0:
                 store_kvcache(k_packed, v_packed, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
-            if _fa3 is not None:
-                # FA3 varlen has no page_table; always use packed K/V (already stored above)
+            if _fa3 is not None and context.block_tables is None:
+                # FA3 varlen has no block_table argument; when prefix cache is active,
+                # cu_seqlens_k > cu_seqlens_q but k_packed holds only new tokens —
+                # FA3 reads past k_packed and triggers an illegal memory access.
                 y = _fa3.flash_attn_varlen_func(
                     q_packed, k_packed, v_packed,
                     context.cu_seqlens_q, context.cu_seqlens_k,
