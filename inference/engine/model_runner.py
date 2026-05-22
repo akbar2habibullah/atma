@@ -394,7 +394,7 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool):
-        if is_prefill or self.enforce_eager or not hasattr(self, "graphs") or input_ids.size(0) > 512:
+        if is_prefill or self.enforce_eager or not hasattr(self, "graphs") or input_ids.size(0) > self.config.max_num_seqs:
             return self.model.compute_logits(self.model(input_ids, positions))
 
         bs = input_ids.size(0)

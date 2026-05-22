@@ -26,8 +26,9 @@ class Scheduler:
         scheduled_seqs = []
         num_batched_tokens = 0
 
-        # prefill phase
-        while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
+        # prefill phase — cap at remaining slot capacity so running never exceeds max_num_seqs
+        prefill_cap = self.max_num_seqs - len(self.running)
+        while self.waiting and len(scheduled_seqs) < prefill_cap:
             seq = self.waiting[0]
             remaining = self.max_num_batched_tokens - num_batched_tokens
             if remaining == 0:
