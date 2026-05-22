@@ -83,15 +83,24 @@ class LLMEngine:
             self.add_request(prompt, sp)
             
         outputs = {}
+        total_prefill_time = 0.0
+        total_decode_time = 0.0
+        total_prefill_tokens = 0
+        total_decode_tokens = 0
         prefill_throughput = decode_throughput = 0.
         
         while not self.is_finished():
             t = perf_counter()
             output, num_tokens = self.step()
+            elapsed = perf_counter() - t
             if num_tokens > 0:
-                prefill_throughput = num_tokens / (perf_counter() - t)
+                total_prefill_time += elapsed
+                total_prefill_tokens += num_tokens
+                prefill_throughput = num_tokens / elapsed
             elif num_tokens < 0:
-                decode_throughput = -num_tokens / (perf_counter() - t)
+                total_decode_time += elapsed
+                total_decode_tokens += -num_tokens
+                decode_throughput = -num_tokens / elapsed
                 
             pbar.set_postfix({
                 "Prefill": f"{int(prefill_throughput)}tok/s",
@@ -102,6 +111,15 @@ class LLMEngine:
                 pbar.update(1)
                 
         pbar.close()
+
+        self._last_metrics = {
+            "prefill_throughput": total_prefill_tokens / total_prefill_time if total_prefill_time > 0 else 0.,
+            "decode_throughput": total_decode_tokens / total_decode_time if total_decode_time > 0 else 0.,
+            "prefill_tokens": total_prefill_tokens,
+            "decode_tokens": total_decode_tokens,
+            "prefill_time": total_prefill_time,
+            "decode_time": total_decode_time,
+        }
         
         sorted_outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         decoded_outputs = [

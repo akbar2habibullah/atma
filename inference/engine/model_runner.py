@@ -210,6 +210,9 @@ class ModelRunner:
         with torch.inference_mode():
             self.run(prefill_seqs, is_prefill=True)
             self.run(decode_seqs, is_prefill=False)
+        for seq in prefill_seqs + decode_seqs:
+            if seq.seq_slot >= 0:
+                self.free_seq_slot(seq)
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         print("Warmup complete.")

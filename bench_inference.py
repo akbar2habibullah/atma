@@ -7,12 +7,12 @@ _WARMUP_PASSES = 3  # passes per batch size to let torch.compile finish before t
 
 def main():
     print("Initializing inference engine for performance benchmark...")
-    llm = LLM(model="gpt2", kvcache_block_size=256)
+    llm = LLM(model="gpt2", kvcache_block_size=64)
 
     use_cuda = torch.cuda.is_available()
 
     # Benchmarking different batch sizes
-    batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256]
+    batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512]
     prompt = """Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
 
 Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
@@ -56,8 +56,10 @@ Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapi
         total_tokens = bs * max_tokens
         throughput = total_tokens / elapsed
 
+        m = llm.last_metrics
         print(f"Batch Size: {bs:4d} | Generated: {total_tokens:5d} tokens | "
-              f"Time: {elapsed:7.2f}s | Throughput: {throughput:7.2f} tok/s")
+              f"Time: {elapsed:7.2f}s | Overall: {throughput:7.2f} tok/s | "
+              f"Prefill: {m['prefill_throughput']:7.0f} tok/s | Decode: {m['decode_throughput']:7.0f} tok/s")
 
 
 if __name__ == "__main__":

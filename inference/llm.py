@@ -7,6 +7,10 @@ class LLM:
     def __init__(self, model: str, **kwargs):
         self.engine = LLMEngine(model, **kwargs)
 
+    @property
+    def last_metrics(self) -> dict | None:
+        return getattr(self.engine, "_last_metrics", None)
+
     def generate(
         self,
         prompts: list[str] | list[list[int]],
