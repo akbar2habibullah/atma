@@ -229,7 +229,7 @@ class ModelRunner:
             return
 
         hf = self.config.hf_config
-        max_bs = min(self.config.max_num_seqs, 2048)
+        max_bs = max(self.config.max_num_seqs, 2048)
         max_num_blocks = (self.config.max_model_len + self.block_size - 1) // self.block_size
 
         input_ids    = torch.zeros(max_bs, dtype=torch.int64)
