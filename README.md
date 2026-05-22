@@ -78,14 +78,14 @@ Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 ena
 
 | Batch Size | Throughput (tok/s) |
 |------------|--------------------|
-| 1          | 197                |
-| 4          | 757                |
-| 8          | 1,447              |
-| 16         | 2,754              |
-| 32         | 4,906              |
-| 64         | 8,224              |
-| 128        | 12,534             |
-| 256        | 15,718             |
+| 1          | 438                |
+| 4          | 1,686              |
+| 8          | 3,211              |
+| 16         | 6,128              |
+| 32         | 11,785             |
+| 64         | 21,326             |
+| 128        | 36,120             |
+| 256        | 54,140             |
 | 512        | **73,018**         |
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
