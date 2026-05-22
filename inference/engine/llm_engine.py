@@ -1,6 +1,8 @@
 import atexit
 from dataclasses import fields
 from time import perf_counter
+
+import torch
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 
@@ -88,11 +90,23 @@ class LLMEngine:
         total_prefill_tokens = 0
         total_decode_tokens = 0
         prefill_throughput = decode_throughput = 0.
+
+        use_cuda = torch.cuda.is_available()
+        if use_cuda:
+            _t0 = torch.cuda.Event(enable_timing=True)
+            _t1 = torch.cuda.Event(enable_timing=True)
         
         while not self.is_finished():
-            t = perf_counter()
-            output, num_tokens = self.step()
-            elapsed = perf_counter() - t
+            if use_cuda:
+                _t0.record()
+                output, num_tokens = self.step()
+                _t1.record()
+                _t1.synchronize()
+                elapsed = _t0.elapsed_time(_t1) / 1000.0
+            else:
+                t = perf_counter()
+                output, num_tokens = self.step()
+                elapsed = perf_counter() - t
             if num_tokens > 0:
                 total_prefill_time += elapsed
                 total_prefill_tokens += num_tokens
