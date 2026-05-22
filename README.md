@@ -74,6 +74,22 @@ Production-grade inference engine featuring:
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 enabled and kvcache_block_size=64.
 
+### Performance on NVIDIA H100
+
+| Batch Size | Throughput (tok/s) |
+|------------|--------------------|
+| 1          | 197                |
+| 4          | 757                |
+| 8          | 1,447              |
+| 16         | 2,754              |
+| 32         | 4,906              |
+| 64         | 8,224              |
+| 128        | 12,534             |
+| 256        | 15,718             |
+| 512        | **73,018**         |
+
+Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
+
 ### Usage
 
 ```python
