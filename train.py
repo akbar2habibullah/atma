@@ -7,7 +7,9 @@ It was prepared as a simplified version of the speedrun for use in neural net op
 
 import os
 import uuid
+import json
 import time
+import dataclasses
 from pathlib import Path
 
 import torch
@@ -60,6 +62,8 @@ val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bi
 REG_MODE = 'baseline'
 SKETCH_DIM = 64
 SIGR_ALPHA = 0.0
+TOKENIZER_NAME = "gpt2"        # HF tokenizer id used to produce the training data
+CHECKPOINT_DIR = "checkpoints" # directory where the final checkpoint is written
 
 atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
@@ -89,6 +93,27 @@ if device.type == "cuda":
         peak_flops = 989e12
     elif "H200" in gpu_name:
         peak_flops = 989e12
+
+def save_checkpoint(model, config: AtmaConfig, tokenizer_name: str, out_dir: str,
+                    step: int, val_loss: float):
+    os.makedirs(out_dir, exist_ok=True)
+
+    # weights — strip torch.compile's _orig_mod. prefix so inference can load directly
+    clean_sd = {k.removeprefix("_orig_mod."): v.cpu() for k, v in model.state_dict().items()}
+    torch.save({"model": clean_sd}, os.path.join(out_dir, "weights.pt"))
+
+    # architecture config — torch.dtype is not JSON-serialisable, store as string
+    cfg = {f.name: getattr(config, f.name) for f in dataclasses.fields(config)}
+    cfg["dtype"] = str(config.dtype).split(".")[-1]  # e.g. "bfloat16"
+    with open(os.path.join(out_dir, "config.json"), "w") as f:
+        json.dump(cfg, f, indent=2)
+
+    # tokenizer — enough for AutoTokenizer.from_pretrained to reconstruct it
+    with open(os.path.join(out_dir, "tokenizer.json"), "w") as f:
+        json.dump({"tokenizer_name": tokenizer_name}, f, indent=2)
+
+    print0(f"Checkpoint saved → {out_dir}  (step={step}, val_loss={val_loss:.5f})", console=True)
+
 
 num_trials = 1
 
@@ -187,6 +212,8 @@ for _ in range(num_trials):
             t0 = time.perf_counter()
 
         if step == train_steps:
+            save_checkpoint(model, atma_config, TOKENIZER_NAME, CHECKPOINT_DIR,
+                            step=step, val_loss=val_loss)
             break
 
         # --------------- TRAINING SECTION -----------------
