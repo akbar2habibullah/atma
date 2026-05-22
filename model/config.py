@@ -5,8 +5,8 @@ import torch
 @dataclass
 class AtmaConfig:
     vocab_size: int = 50304
-    num_hidden_layers: int = 30
-    hidden_size: int = 2048
+    num_hidden_layers: int = 16
+    hidden_size: int = 1024
     head_dim: int = 128
     attn_kernel_size: int = 4
     conv_kernel_size: int = 3

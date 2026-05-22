@@ -98,53 +98,27 @@ outputs = llm.generate(["Hello, world!"], params)
 print(outputs[0]["text"])
 ```
 
-### Performance on NVIDIA L4
+### Inference Decoding Performance
 
-| Batch Size | Throughput (tok/s) |
-|------------|--------------------|
-| 1          | 197                |
-| 4          | 757                |
-| 8          | 1,447              |
-| 16         | 2,754              |
-| 32         | 4,906              |
-| 64         | 8,224              |
-| 128        | 12,534             |
-| 256        | 15,718             |
-| 512        | **17,142**         |
+Model Size: 376M Params (16 num_layers + 1024 hidden_dim)
 
-Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 enabled and kvcache_block_size=64.
+| Batch Size | NVIDIA L4  (tok/s) | NVIDIA H100 (tok/s) | NVIDIA T4 (tok/s)  |
+|------------|--------------------|---------------------|--------------------|
+| 1          | 197                | 438                 | 48                 |
+| 4          | 757                | 1,686               | 136                |
+| 8          | 1,447              | 3,211               | 233                |
+| 16         | 2,754              | 6,128               | 383                |
+| 32         | 4,906              | 11,785              | 561                |
+| 64         | 8,224              | 21,326              | 743                |
+| 128        | 12,534             | 36,120              | 799                |
+| 256        | 15,718             | 54,140              | OOM                |
+| 512        | 17,142             | **73,018**          | OOM                |
 
-### Performance on NVIDIA H100
+Measured at 256 generated tokens per sequence, prompt length ~320 words. 
 
-| Batch Size | Throughput (tok/s) |
-|------------|--------------------|
-| 1          | 438                |
-| 4          | 1,686              |
-| 8          | 3,211              |
-| 16         | 6,128              |
-| 32         | 11,785             |
-| 64         | 21,326             |
-| 128        | 36,120             |
-| 256        | 54,140             |
-| 512        | **73,018**         |
-
-Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
-
-### Performance on NVIDIA T4
-
-| Batch Size | Throughput (tok/s) |
-|------------|--------------------|
-| 1          | 48                 |
-| 4          | 136                |
-| 8          | 233                |
-| 16         | 383                |
-| 32         | 561                |
-| 64         | 743                |
-| 128        | 799                |
-| 256        | OOM                |
-| 512        | OOM                |
-
-Measured at 256 generated tokens per sequence, prompt length ~320 words. SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=64.
+- NVIDIA L4: FA3 enabled and kvcache_block_size=64.
+- NVIDIA H100: FA2 enabled and kvcache_block_size=256.
+- NVIDIA T4: SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=64.
 
 ### Comparison with vLLM (H100)
 
@@ -157,6 +131,26 @@ Throughput: 70.77 requests/s, 54350.30 total tokens/s, 18116.77 output tokens/s
 Total num prompt tokens:  262144
 Total num output tokens:  131072
 ``` 
+
+### Further Throughput Benchmark
+
+We also try larger model size 2249.97M (30 num_layers + 2048 hidden_dim) on H100 to test performance ceiling of Atma inference engine.
+
+| Batch Size | Decoding   (tok/s) |
+|------------|--------------------|
+| 1          | 177                |
+| 4          | 667                |
+| 8          | 1,296              |
+| 16         | 2,481              |
+| 32         | 4,591              |
+| 64         | 8,450              |
+| 128        | 13,864             |
+| 256        | 20,548             |
+| 512        | 25,826             |
+| 1024       | 26,714             |
+| 2048       | 28,830             |
+
+> Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
 
 ## Verification
 
