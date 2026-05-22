@@ -1,7 +1,6 @@
 from copy import copy
 from enum import Enum, auto
 from itertools import count
-import torch
 
 from inference.sampling_params import SamplingParams
 
@@ -32,10 +31,7 @@ class Sequence:
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
-        
-        # Sliding-window convolution state caches, indexed by layer_id
-        # Will store PyTorch tensors of past activations for O(1) causal convolutions.
-        self.conv_states = {}
+        self.seq_slot: int = -1  # index into ModelRunner.conv_state_tables
 
     def __len__(self):
         return self.num_tokens
@@ -79,20 +75,18 @@ class Sequence:
         self.last_token = token_id
         self.num_tokens += 1
 
-    def clean_conv_states(self):
-        """Clean up PyTorch tensors from GPU memory once the sequence is finished/deallocated."""
-        self.conv_states.clear()
-
     def __getstate__(self):
         last_state = self.last_token if not self.is_prefill else self.token_ids
-        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state)
+        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens,
+                self.num_scheduled_tokens, self.block_table, last_state, self.seq_slot)
 
     def __setstate__(self, state):
-        self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens, self.num_scheduled_tokens, self.block_table, last_state = state
+        (self.num_tokens, self.num_prompt_tokens, self.num_cached_tokens,
+         self.num_scheduled_tokens, self.block_table, last_state, *slot) = state
         if isinstance(last_state, list):
             self.token_ids = last_state
             self.last_token = self.token_ids[-1] if self.token_ids else 0
         else:
             self.token_ids = []
             self.last_token = last_state
-        self.conv_states = {}
+        self.seq_slot = slot[0] if slot else -1

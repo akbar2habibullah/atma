@@ -114,8 +114,6 @@ class BlockManager:
                 self._deallocate_block(block_id)
         seq.num_cached_tokens = 0
         seq.block_table.clear()
-        # Clean up the sequence's PyTorch conv states to prevent GPU memory leak
-        seq.clean_conv_states()
 
     def can_append(self, seq: Sequence) -> bool:
         return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)

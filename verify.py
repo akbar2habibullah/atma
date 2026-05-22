@@ -76,7 +76,7 @@ def _copy(src: torch.nn.Module, dst: torch.nn.Module):
 
 # ─── inference context helpers ───────────────────────────────────────────────
 
-def _ctx_prefill(seq: Sequence, seqlen: int):
+def _ctx_prefill(seq: Sequence, seqlen: int, conv_state_tables: dict = None):
     cu = torch.tensor([0, seqlen], dtype=torch.int32)
     slots = torch.arange(seqlen, dtype=torch.int32)
     set_context(
@@ -86,17 +86,21 @@ def _ctx_prefill(seq: Sequence, seqlen: int):
         slot_mapping=slots,
         block_tables=None,
         seqlens_q=[seqlen],
+        conv_state_tables=conv_state_tables,
     )
     get_context().seqs = [seq]
 
 
-def _ctx_decode(seq: Sequence, decode_slot: int, context_len: int, block_tables: torch.Tensor):
+def _ctx_decode(seq: Sequence, decode_slot: int, context_len: int, block_tables: torch.Tensor,
+                conv_state_tables: dict = None, seq_slots: torch.Tensor = None):
     set_context(
         is_prefill=False,
         slot_mapping=torch.tensor([decode_slot], dtype=torch.int32),
         context_lens=torch.tensor([context_len], dtype=torch.int32),
         block_tables=block_tables,
         context_lens_list=[context_len],
+        conv_state_tables=conv_state_tables,
+        seq_slots=seq_slots,
     )
     get_context().seqs = [seq]
 
@@ -115,7 +119,31 @@ def _fresh_seq(n_tokens: int) -> Sequence:
     seq = Sequence([0] * n_tokens)
     seq.num_scheduled_tokens = n_tokens
     seq.block_table = [0]
+    seq.seq_slot = 0
     return seq
+
+
+def _alloc_conv_state_tables(config: AtmaConfig, layers: list) -> dict:
+    """Allocate conv state tensors (1 seq slot).
+
+    layers: list of ints (uses i%4==2 to detect attn) or (layer_idx, is_attn) tuples.
+    """
+    tables = {}
+    for entry in layers:
+        if isinstance(entry, tuple):
+            i, is_attn = entry
+        else:
+            i, is_attn = entry, (entry % 4 == 2)
+        if is_attn:
+            for suffix in ("q", "k", "v"):
+                tables[f"attn_{i}_{suffix}"] = torch.zeros(
+                    1, config.hidden_size, config.attn_kernel_size - 1
+                )
+        else:
+            tables[f"conv_{i}_gated"] = torch.zeros(
+                1, config.hidden_size, config.conv_kernel_size - 1
+            )
+    return tables
 
 
 # ─── per-layer verifiers ─────────────────────────────────────────────────────
@@ -189,9 +217,12 @@ def verify_conv(config: AtmaConfig):
     with torch.no_grad():
         y_ref_all = ref_conv(x_ref).squeeze(0)   # (T, H)
 
+    cst = _alloc_conv_state_tables(config, [0])
+    seq_slots = torch.tensor([0])
+
     # ── prefill ──
     seq_p = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_p, prefill_len)
+    _ctx_prefill(seq_p, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         y_infer_prefill = infer_conv(x_prefill)  # (T-1, H)
     reset_context()
@@ -200,7 +231,7 @@ def verify_conv(config: AtmaConfig):
 
     # ── decode ── seed conv state via prefill, then step one token
     seq_d = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_d, prefill_len)
+    _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         _ = infer_conv(x_prefill)   # populate conv_states
     reset_context()
@@ -210,7 +241,8 @@ def verify_conv(config: AtmaConfig):
 
     # slot for new token: block_table[-1]*block_size + last_block_num_tokens - 1
     decode_slot = seq_d.block_table[-1] * Sequence.block_size + seq_d.last_block_num_tokens - 1
-    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32))
+    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32),
+                conv_state_tables=cst, seq_slots=seq_slots)
     with torch.no_grad():
         y_infer_decode = infer_conv(x_decode)   # (1, H)
     reset_context()
@@ -248,9 +280,12 @@ def verify_attention(config: AtmaConfig):
     with torch.no_grad():
         y_ref_all = ref_attn(x).squeeze(0)   # (T, H)
 
+    cst = _alloc_conv_state_tables(config, [(0, True)])
+    seq_slots = torch.tensor([0])
+
     # ── prefill ──
     seq_p = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_p, prefill_len)
+    _ctx_prefill(seq_p, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         y_infer_prefill = infer_attn(x_prefill)   # (T-1, H)
     reset_context()
@@ -260,7 +295,7 @@ def verify_attention(config: AtmaConfig):
     # ── decode ── re-seed via fresh prefill, then one decode step
     _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)   # fresh cache
     seq_d = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_d, prefill_len)
+    _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         _ = infer_attn(x_prefill)   # fill KV cache slots 0..T-2 + conv states
     reset_context()
@@ -268,7 +303,8 @@ def verify_attention(config: AtmaConfig):
     seq_d.num_cached_tokens = prefill_len
     seq_d.append_token(0)
     decode_slot = seq_d.block_table[-1] * Sequence.block_size + seq_d.last_block_num_tokens - 1
-    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32))
+    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32),
+                conv_state_tables=cst, seq_slots=seq_slots)
     with torch.no_grad():
         y_infer_decode = infer_attn(x_decode)   # (1, H)
     reset_context()
@@ -325,9 +361,12 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
     with torch.no_grad():
         y_ref_all = ref_block(x).squeeze(0)   # (T, H)
 
+    cst = _alloc_conv_state_tables(config, [(layer_idx, is_attn)])
+    seq_slots = torch.tensor([0])
+
     # ── prefill ──
     seq_p = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_p, prefill_len)
+    _ctx_prefill(seq_p, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         y_infer_prefill = infer_block(x_prefill)
     reset_context()
@@ -339,7 +378,7 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
         _alloc_kv(infer_block.attn, config, capacity=SEQ_LEN + 4)
 
     seq_d = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_d, prefill_len)
+    _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         _ = infer_block(x_prefill)
     reset_context()
@@ -347,7 +386,8 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
     seq_d.num_cached_tokens = prefill_len
     seq_d.append_token(0)
     decode_slot = seq_d.block_table[-1] * Sequence.block_size + seq_d.last_block_num_tokens - 1
-    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32))
+    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32),
+                conv_state_tables=cst, seq_slots=seq_slots)
     with torch.no_grad():
         y_infer_decode = infer_block(x_decode)
     reset_context()
@@ -387,6 +427,10 @@ def verify_model(config: AtmaConfig):
     for attn_mod in attn_modules:
         _alloc_kv(attn_mod, config, capacity=capacity)
 
+    all_layer_idxs = list(range(config.num_hidden_layers))
+    cst = _alloc_conv_state_tables(config, all_layer_idxs)
+    seq_slots = torch.tensor([0])
+
     input_ids = torch.randint(0, config.vocab_size, (SEQ_LEN,))
 
     # Reference: logits for all positions, take last
@@ -395,21 +439,22 @@ def verify_model(config: AtmaConfig):
 
     # ── infer prefill (returns only last-token logits) ──
     seq = _fresh_seq(SEQ_LEN)
-    _ctx_prefill(seq, SEQ_LEN)
+    _ctx_prefill(seq, SEQ_LEN, conv_state_tables=cst)
     with torch.no_grad():
-        y_infer_prefill = infer_model(input_ids)   # (1, vocab_size) — last token only
+        y_infer_prefill = infer_model.compute_logits(infer_model(input_ids))[-1:]   # (1, vocab_size)
     reset_context()
 
     _result("infer prefill logits == ref", y_ref, y_infer_prefill.squeeze(0))
 
     # ── infer decode: prefill on [0..T-2], decode on [T-1] ──
     print("\n── Full Model (decode) ──")
-    # Reset KV caches
+    # Reset KV caches and conv state tables
     for attn_mod in attn_modules:
         _alloc_kv(attn_mod, config, capacity=capacity)
+    cst = _alloc_conv_state_tables(config, all_layer_idxs)
 
     seq_d = _fresh_seq(prefill_len)
-    _ctx_prefill(seq_d, prefill_len)
+    _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
     with torch.no_grad():
         _ = infer_model(input_ids[:prefill_len])
     reset_context()
@@ -422,9 +467,10 @@ def verify_model(config: AtmaConfig):
         [seq_d.block_table + [-1] * (num_blocks_padded - len(seq_d.block_table))],
         dtype=torch.int32,
     )
-    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables)
+    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables,
+                conv_state_tables=cst, seq_slots=seq_slots)
     with torch.no_grad():
-        y_infer_decode = infer_model(input_ids[prefill_len:])   # (1, vocab_size)
+        y_infer_decode = infer_model.compute_logits(infer_model(input_ids[prefill_len:]))   # (1, vocab_size)
     reset_context()
 
     _result("infer decode logits == ref", y_ref, y_infer_decode.squeeze(0))
