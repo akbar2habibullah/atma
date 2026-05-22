@@ -142,7 +142,7 @@ class AtmaAttention(AtmaAttnBase):
             if self.attn.k_cache.numel() > 0 and context.slot_mapping is not None and context.slot_mapping.numel() > 0:
                 store_kvcache(k_packed, v_packed, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
-            if _fa3 is not None and context.block_tables is None:
+            if _fa3 is not None and context.block_tables is None and q_packed.is_cuda:
                 # FA3 varlen has no block_table argument; when prefix cache is active,
                 # cu_seqlens_k > cu_seqlens_q but k_packed holds only new tokens —
                 # FA3 reads past k_packed and triggers an illegal memory access.
@@ -207,7 +207,7 @@ class AtmaAttention(AtmaAttnBase):
 
             store_kvcache(k_attn, v_attn, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
-            if _fa3 is not None:
+            if _fa3 is not None and q_attn.is_cuda:
                 # Token already written via store_kvcache; pass full context_lens, use page_table.
                 # num_splits=1 disables FA3's auto-split: with num_splits=0 the split decision is
                 # made in Python before the kernel launch, so capture (context_lens=0 → no split)
