@@ -1,18 +1,21 @@
 import threading
 
+
 class Context:
     def __init__(
         self,
         is_prefill: bool,
-        cu_seqlens_q = None,
-        cu_seqlens_k = None,
+        cu_seqlens_q=None,
+        cu_seqlens_k=None,
         max_seqlen_q: int = 0,
         max_seqlen_k: int = 0,
-        slot_mapping = None,
-        context_lens = None,
-        block_tables = None,
+        slot_mapping=None,
+        context_lens=None,
+        block_tables=None,
         seqlens_q: list = None,
         context_lens_list: list = None,
+        conv_state_tables: dict = None,
+        seq_slots=None,
     ):
         self.is_prefill = is_prefill
         self.cu_seqlens_q = cu_seqlens_q
@@ -22,9 +25,12 @@ class Context:
         self.slot_mapping = slot_mapping
         self.context_lens = context_lens
         self.block_tables = block_tables
-        # Python int lists to avoid Tensor.item() graph breaks inside torch.compile
         self.seqlens_q = seqlens_q or []
         self.context_lens_list = context_lens_list or []
+        # Centralized GPU conv state tables — dict[str, Tensor(max_seqs, hdim, ks-1)]
+        self.conv_state_tables = conv_state_tables
+        # GPU tensor (bs,) of sequence slot indices for CUDA-graph-compatible conv state I/O
+        self.seq_slots = seq_slots
 
 
 _local = threading.local()
@@ -32,15 +38,17 @@ _local = threading.local()
 
 def set_context(
     is_prefill: bool,
-    cu_seqlens_q = None,
-    cu_seqlens_k = None,
+    cu_seqlens_q=None,
+    cu_seqlens_k=None,
     max_seqlen_q: int = 0,
     max_seqlen_k: int = 0,
-    slot_mapping = None,
-    context_lens = None,
-    block_tables = None,
+    slot_mapping=None,
+    context_lens=None,
+    block_tables=None,
     seqlens_q: list = None,
     context_lens_list: list = None,
+    conv_state_tables: dict = None,
+    seq_slots=None,
 ):
     _local.context = Context(
         is_prefill=is_prefill,
@@ -53,13 +61,15 @@ def set_context(
         block_tables=block_tables,
         seqlens_q=seqlens_q,
         context_lens_list=context_lens_list,
+        conv_state_tables=conv_state_tables,
+        seq_slots=seq_slots,
     )
 
 
 def get_context() -> Context:
     ctx = getattr(_local, "context", None)
     if ctx is None:
-        raise RuntimeError("No context has been set. Ensure set_context is called before running the model layers.")
+        raise RuntimeError("No context has been set. Call set_context before running model layers.")
     return ctx
 
 
