@@ -49,8 +49,9 @@ def _store_kvcache_kernel(
     offsets = tl.arange(0, D)
     key = tl.load(key_ptr + idx * key_stride + offsets)
     value = tl.load(value_ptr + idx * value_stride + offsets)
-    tl.store(k_cache_ptr + slot * D + offsets, key)
-    tl.store(v_cache_ptr + slot * D + offsets, value)
+    cache_offset = slot.to(tl.int64) * D + offsets
+    tl.store(k_cache_ptr + cache_offset, key)
+    tl.store(v_cache_ptr + cache_offset, value)
 
 
 def store_kvcache(
