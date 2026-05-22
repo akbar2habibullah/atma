@@ -441,7 +441,7 @@ def verify_model(config: AtmaConfig):
     seq = _fresh_seq(SEQ_LEN)
     _ctx_prefill(seq, SEQ_LEN, conv_state_tables=cst)
     with torch.no_grad():
-        y_infer_prefill = infer_model(input_ids)   # (1, vocab_size) — last token only
+        y_infer_prefill = infer_model.compute_logits(infer_model(input_ids))[-1:]   # (1, vocab_size)
     reset_context()
 
     _result("infer prefill logits == ref", y_ref, y_infer_prefill.squeeze(0))
@@ -470,7 +470,7 @@ def verify_model(config: AtmaConfig):
     _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables,
                 conv_state_tables=cst, seq_slots=seq_slots)
     with torch.no_grad():
-        y_infer_decode = infer_model(input_ids[prefill_len:])   # (1, vocab_size)
+        y_infer_decode = infer_model.compute_logits(infer_model(input_ids[prefill_len:]))   # (1, vocab_size)
     reset_context()
 
     _result("infer decode logits == ref", y_ref, y_infer_decode.squeeze(0))
