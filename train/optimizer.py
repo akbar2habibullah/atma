@@ -37,11 +37,10 @@ class Muon(torch.optim.Optimizer):
 
     @torch.no_grad()
     def step(self):
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
+        world_size = 1
+        rank = 0
         for group in self.param_groups:
             params = group["params"]
-            params_pad = params + [torch.empty_like(params[-1])] * (world_size - len(params) % world_size)
             for base_i in range(0, len(params), world_size):
                 if base_i + rank < len(params):
                     p = params[base_i + rank]
@@ -51,4 +50,3 @@ class Muon(torch.optim.Optimizer):
                     update = muon_update(p.grad, state["momentum"], mu=group["mu"])
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
-                dist.all_gather(params_pad[base_i:base_i + world_size], params_pad[base_i + rank])
