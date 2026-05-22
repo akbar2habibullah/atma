@@ -101,6 +101,22 @@ Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 ena
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
 
+### Performance on NVIDIA T4
+
+| Batch Size | Throughput (tok/s) |
+|------------|--------------------|
+| 1          | 48                 |
+| 4          | 136                |
+| 8          | 233                |
+| 16         | 383                |
+| 32         | 561                |
+| 64         | 743                |
+| 128        | 799                |
+| 256        | OOM                |
+| 512        | OOM                |
+
+Measured at 256 generated tokens per sequence, prompt length ~320 words. SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=64.
+
 ### Comparison with vLLM (H100)
 
 Using identical model [LiquidAI/LFM2.5-350M](https://huggingface.co/LiquidAI/LFM2.5-350M) with command:
