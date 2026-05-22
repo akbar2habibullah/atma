@@ -72,7 +72,7 @@ Production-grade inference engine featuring:
 | 256        | 15,718             |
 | 512        | **17,142**         |
 
-Measured at 256 generated tokens per sequence, prompt length ~320 words.
+Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 enabled and kvcache_block_size=64.
 
 ### Usage
 

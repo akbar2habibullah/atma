@@ -7,7 +7,7 @@ _WARMUP_PASSES = 3  # passes per batch size to let torch.compile finish before t
 
 def main():
     print("Initializing inference engine for performance benchmark...")
-    llm = LLM(model="gpt2", kvcache_block_size=64)
+    llm = LLM(model="gpt2", kvcache_block_size=256)
 
     use_cuda = torch.cuda.is_available()
 
