@@ -58,6 +58,17 @@ Production-grade inference engine featuring:
 - **Flash Attention 3/2** with Triton KV cache kernel and SDPA fallback
 - **Gumbel-max sampling**
 
+### Usage
+
+```python
+from inference import LLM, SamplingParams
+
+llm = LLM(model="path/to/weights.pt")
+params = SamplingParams(temperature=0.7, max_tokens=256)
+outputs = llm.generate(["Hello, world!"], params)
+print(outputs[0]["text"])
+```
+
 ### Performance on NVIDIA L4
 
 | Batch Size | Throughput (tok/s) |
@@ -90,16 +101,17 @@ Measured at 256 generated tokens per sequence, prompt length ~320 words. FA3 ena
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
 
-### Usage
+### Comparison with vLLM (H100)
 
-```python
-from inference import LLM, SamplingParams
+Using identical model [LiquidAI/LFM2.5-350M](https://huggingface.co/LiquidAI/LFM2.5-350M) with command:
 
-llm = LLM(model="path/to/weights.pt")
-params = SamplingParams(temperature=0.7, max_tokens=256)
-outputs = llm.generate(["Hello, world!"], params)
-print(outputs[0]["text"])
 ```
+> VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0 vllm bench throughput --model LiquidAI/LFM2.5-350M --random-input-len 512 --random-output-len 256 --num-prompts 512
+
+Throughput: 70.77 requests/s, 54350.30 total tokens/s, 18116.77 output tokens/s
+Total num prompt tokens:  262144
+Total num output tokens:  131072
+``` 
 
 ## Verification
 
