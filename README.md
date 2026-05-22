@@ -1,6 +1,17 @@
-# Atma
+```text
+  █████╗ ████████╗███╗   ███╗ █████╗ 
+ ██╔══██╗╚══██╔══╝████╗ ████║██╔══██╗
+ ███████║   ██║   ██╔████╔██║███████║
+ ██╔══██║   ██║   ██║╚██╔╝██║██╔══██║
+ ██║  ██║   ██║   ██║ ╚═╝ ██║██║  ██║
+ ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚═╝╚═╝  ╚═╝
+```
 
-A hybrid transformer-convolutional language model with three parallel forward implementations (reference, training, inference) — all numerically verified against each other.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PyTorch 2.1+](https://img.shields.io/badge/pytorch-2.1%2B-orange.svg)](https://pytorch.org/)
+[![Verify Status](https://img.shields.io/badge/numerical_verification-passed-success.svg)](verify.py)
+
+**Atma** is a hybrid transformer-convolutional language model that integrates three parallel forward implementations—**reference**, **training**, and **inference**—into a single repository. Because every layer is numerically cross-verified, implementing and testing new architectural variants is straightforward.
 
 ## Architecture
 
@@ -19,6 +30,24 @@ Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` follo
 | Layers | 16 (12 conv + 4 attn) |
 | Vocab | 50304 |
 | Sequence length | 1024 |
+
+### One-Codebase Workflow
+The repository maintains strict numerical equivalence across different optimized pipelines:
+
+```text
+             ┌───────────────────┐     ┌───────────────────┐
+             │ TRAINING PIPELINE │ ──> │  REFERENCE MODEL  │
+             │ (FP8/FP16, Muon)  │     │ (Pure PyTorch SDPA│
+             └───────────────────┘     └───────────────────┘
+                       │                         │
+                       └───────────┬─────────────┘
+                                   │ (verify.py atol=1e-4)
+                                   ▼
+             ┌─────────────────────────────────────────────┐
+             │              INFERENCE ENGINE               │
+             │ (Paged KV Cache, Centralized Conv State)    │
+             └─────────────────────────────────────────────┘
+```
 
 ## Training
 
