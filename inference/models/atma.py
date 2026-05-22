@@ -152,7 +152,7 @@ class AtmaAttention(AtmaAttnBase):
                     context.max_seqlen_q, context.max_seqlen_k,
                     softmax_scale=self.attn.scale, causal=True,
                 )
-            elif HAS_FLASH_ATTN2:
+            elif HAS_FLASH_ATTN2 and q_packed.is_cuda:
                 # With prefix cache, K/V come from paged cache via block_table.
                 # Without prefix cache, pass packed K/V directly (cache format mismatch).
                 k_src = self.attn.k_cache if context.block_tables is not None else k_packed
