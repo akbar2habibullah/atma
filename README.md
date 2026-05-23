@@ -231,21 +231,21 @@ Total num output tokens:  131072
 
 ### Further Throughput Benchmark
 
-We also try larger model size 2249.97M (30 num_layers + 2048 hidden_dim) on H100 to test performance ceiling of Atma inference engine.
+We also try larger model size 8937.41M parameters (32 num_layers + 4096 hidden_dim) on H100 to test performance ceiling of Atma inference engine.
 
-| Batch Size | Decoding   (tok/s) |
-|------------|--------------------|
-| 1          | 177                |
-| 4          | 667                |
-| 8          | 1,296              |
-| 16         | 2,481              |
-| 32         | 4,591              |
-| 64         | 8,450              |
-| 128        | 13,864             |
-| 256        | 20,548             |
-| 512        | 25,826             |
-| 1024       | 26,714             |
-| 2048       | 28,830             |
+| Batch Size | Decoding (tok/s) |
+|------------|------------------|
+| 1          | 91               |
+| 4          | 347              |
+| 8          | 688              |
+| 16         | 1,320            |
+| 32         | 2,557            |
+| 64         | 4,785            |
+| 128        | 8,329            |
+| 256        | 13,043           |
+| 512        | 16,981           |
+| 1024       | OOM              |
+| 2048       | OOM              |
 
 > Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
 
