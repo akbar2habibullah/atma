@@ -19,10 +19,10 @@ class AtmaConvBase(nn.Module):
 class AtmaAttnBase(nn.Module):
     """Shared __init__ for Canon-B attention block. Subclass must implement forward()."""
 
-    def __init__(self, dim: int, linear_cls, head_dim: int = 128, kernel_size: int = 4):
+    def __init__(self, dim: int, linear_cls, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
         super().__init__()
         self.num_heads = dim // head_dim
-        self.num_kv_heads = self.num_heads // 4  # GQA 1:4 ratio
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else self.num_heads // 4
         self.head_dim = head_dim
         self.hdim = self.num_heads * self.head_dim
         self.kv_hdim = self.num_kv_heads * self.head_dim

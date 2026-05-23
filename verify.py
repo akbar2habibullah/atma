@@ -39,8 +39,8 @@ from inference.utils.context import set_context, get_context, reset_context
 TEST_CONFIG = AtmaConfig(
     vocab_size=256,
     num_hidden_layers=4,   # layers 0,1,3 → conv, layer 2 → attn
-    hidden_size=128,
-    head_dim=64,           # 2 heads
+    hidden_size=256,
+    head_dim=64,           # 4 heads, 1 KV head (1:4 GQA)
     attn_kernel_size=4,
     conv_kernel_size=3,
 )
@@ -109,9 +109,9 @@ def _alloc_kv(attn_layer: InferAttn, config: AtmaConfig, capacity: int = 32):
     """Allocate a fresh KV cache (capacity slots) wired into attn_layer.attn."""
     block_size = 16
     num_blocks = (capacity + block_size - 1) // block_size
-    nh, hd = config.num_attention_heads, config.head_dim
-    attn_layer.attn.k_cache = torch.zeros(num_blocks, block_size, nh, hd)
-    attn_layer.attn.v_cache = torch.zeros(num_blocks, block_size, nh, hd)
+    nkv, hd = config.num_key_value_heads, config.head_dim
+    attn_layer.attn.k_cache = torch.zeros(num_blocks, block_size, nkv, hd)
+    attn_layer.attn.v_cache = torch.zeros(num_blocks, block_size, nkv, hd)
 
 
 def _fresh_seq(n_tokens: int) -> Sequence:
@@ -129,6 +129,7 @@ def _alloc_conv_state_tables(config: AtmaConfig, layers: list) -> dict:
     layers: list of ints (uses i%4==2 to detect attn) or (layer_idx, is_attn) tuples.
     """
     tables = {}
+    kv_hidden = config.num_key_value_heads * config.head_dim
     for entry in layers:
         if isinstance(entry, tuple):
             i, is_attn = entry
@@ -136,8 +137,9 @@ def _alloc_conv_state_tables(config: AtmaConfig, layers: list) -> dict:
             i, is_attn = entry, (entry % 4 == 2)
         if is_attn:
             for suffix in ("q", "k", "v"):
+                dim = config.hidden_size if suffix == "q" else kv_hidden
                 tables[f"attn_{i}_{suffix}"] = torch.zeros(
-                    1, config.hidden_size, config.attn_kernel_size - 1
+                    1, dim, config.attn_kernel_size - 1
                 )
         else:
             tables[f"conv_{i}_gated"] = torch.zeros(

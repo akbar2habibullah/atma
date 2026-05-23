@@ -97,8 +97,8 @@ def _gpu_conv_step(
 
 class AtmaAttention(AtmaAttnBase):
 
-    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, kernel_size: int = 4):
-        super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, kernel_size=kernel_size)
+    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
+        super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.layer_idx = layer_idx
         self.attn = Attention(self.num_heads, self.head_dim, self.head_dim ** -0.5, self.num_kv_heads)
 
@@ -308,12 +308,13 @@ class AtmaDecoderBlock(nn.Module):
         dim: int,
         attention: bool = True,
         head_dim: int = 128,
+        num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
     ):
         super().__init__()
         self.attn = (
-            AtmaAttention(layer_idx, dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            AtmaAttention(layer_idx, dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
             if attention
             else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
         )
@@ -337,6 +338,7 @@ class Atma(nn.Module):
                 i, config.hidden_size,
                 attention=(i % 4 == 2),
                 head_dim=config.head_dim,
+                num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
             )

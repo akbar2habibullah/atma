@@ -322,8 +322,8 @@ class LFM2Conv(AtmaConvBase):
 
 
 class CausalSelfAttention(AtmaAttnBase):
-    def __init__(self, dim: int, head_dim=128, kernel_size=4):
-        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, kernel_size=kernel_size)
+    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, kernel_size=4):
+        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
 
     def forward(self, x: torch.Tensor):
         B, T = x.size(0), x.size(1)
@@ -385,12 +385,13 @@ class Block(nn.Module):
         reg_mode: str = "baseline",
         sketch_dim: int = 64,
         head_dim: int = 128,
+        num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
     ):
         super().__init__()
         self.attn = (
-            CausalSelfAttention(dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -418,6 +419,7 @@ class Model(nn.Module):
                 reg_mode=reg_mode,
                 sketch_dim=sketch_dim,
                 head_dim=config.head_dim,
+                num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
             )
