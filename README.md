@@ -24,9 +24,10 @@ Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` follo
 
 | Config | Value |
 |---|---|
-| Parameters | 376.04M |
+| Parameters | 369.72M |
 | Hidden dim | 1024 |
 | Heads | 8 (head_dim=128) |
+| KV Heads | 2 (1:4 GQA Ratio) |
 | Layers | 16 (12 conv + 4 attn) |
 | Vocab | 50304 |
 | Sequence length | 1024 |
@@ -196,21 +197,23 @@ Model Size: 376M Params (16 num_layers + 1024 hidden_dim)
 
 | Batch Size | NVIDIA L4  (tok/s) | NVIDIA H100 (tok/s) | NVIDIA T4 (tok/s)  |
 |------------|--------------------|---------------------|--------------------|
-| 1          | 197                | 438                 | 48                 |
-| 4          | 757                | 1,686               | 136                |
-| 8          | 1,447              | 3,211               | 233                |
-| 16         | 2,754              | 6,128               | 383                |
-| 32         | 4,906              | 11,785              | 561                |
-| 64         | 8,224              | 21,326              | 743                |
-| 128        | 12,534             | 36,120              | 799                |
-| 256        | 15,718             | 54,140              | OOM                |
-| 512        | 17,142             | **73,018**          | OOM                |
+| 1          | 235                | 344                 | 55                 |
+| 4          | 906                | 1,432               | 136                |
+| 8          | 1,775              | 2,809               | 240                |
+| 16         | 3,454              | 5,269               | 386                |
+| 32         | 6,180              | 10,112              | 558                |
+| 64         | 10,859             | 18,548              | 723                |
+| 128        | 17,531             | 33,638              | OOM                |
+| 256        | 24,023             | 51,966              | OOM                |
+| 512        | 27,806             | 75,749              | OOM                |
+| 1024       | 27,912             | 92,941              | OOM                |
+| 2048       | 28,268             | **96,972**          | OOM                |
 
 Measured at 256 generated tokens per sequence, prompt length ~320 words. 
 
 - NVIDIA L4: FA3 enabled and kvcache_block_size=64.
 - NVIDIA H100: FA2 enabled and kvcache_block_size=256.
-- NVIDIA T4: SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=64.
+- NVIDIA T4: SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=32.
 
 ### Comparison with vLLM (H100)
 
