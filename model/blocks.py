@@ -19,19 +19,21 @@ class AtmaConvBase(nn.Module):
 class AtmaAttnBase(nn.Module):
     """Shared __init__ for Canon-B attention block. Subclass must implement forward()."""
 
-    def __init__(self, dim: int, linear_cls, head_dim: int = 128, kernel_size: int = 4):
+    def __init__(self, dim: int, linear_cls, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
         super().__init__()
         self.num_heads = dim // head_dim
+        self.num_kv_heads = num_kv_heads if num_kv_heads is not None else self.num_heads // 4
         self.head_dim = head_dim
         self.hdim = self.num_heads * self.head_dim
+        self.kv_hdim = self.num_kv_heads * self.head_dim
         self.kernel_size = kernel_size
 
         self.q = linear_cls(dim, self.hdim * 2)
-        self.k = linear_cls(dim, self.hdim)
-        self.v = linear_cls(dim, self.hdim)
-        self.canon_q = nn.Conv1d(self.hdim, self.hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=self.hdim, bias=False)
-        self.canon_k = nn.Conv1d(self.hdim, self.hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=self.hdim, bias=False)
-        self.canon_v = nn.Conv1d(self.hdim, self.hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=self.hdim, bias=False)
+        self.k = linear_cls(dim, self.kv_hdim)
+        self.v = linear_cls(dim, self.kv_hdim)
+        self.canon_q = nn.Conv1d(self.hdim,    self.hdim,    kernel_size=kernel_size, padding=kernel_size - 1, groups=self.hdim,    bias=False)
+        self.canon_k = nn.Conv1d(self.kv_hdim, self.kv_hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=self.kv_hdim, bias=False)
+        self.canon_v = nn.Conv1d(self.kv_hdim, self.kv_hdim, kernel_size=kernel_size, padding=kernel_size - 1, groups=self.kv_hdim, bias=False)
         self.proj = linear_cls(self.hdim, dim)
 
     def forward(self, x):

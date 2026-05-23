@@ -46,22 +46,22 @@ class LFM2Conv(AtmaConvBase):
 class CausalSelfAttention(AtmaAttnBase):
     """Reference Canon-B attention: pure SDPA, batch-first (B, T, H)."""
 
-    def __init__(self, dim: int, head_dim: int = 128, kernel_size: int = 4):
-        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, kernel_size=kernel_size)
+    def __init__(self, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
+        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, _ = x.shape
 
         q_gate = self.q(x).view(B, T, self.num_heads, self.head_dim * 2)
         q, gate = torch.chunk(q_gate, 2, dim=-1)
-        k = self.k(x).view(B, T, self.num_heads, self.head_dim)
-        v = self.v(x).view(B, T, self.num_heads, self.head_dim)
+        k = self.k(x).view(B, T, self.num_kv_heads, self.head_dim)
+        v = self.v(x).view(B, T, self.num_kv_heads, self.head_dim)
 
         q = F.rms_norm(q, (self.head_dim,))
         k = F.rms_norm(k, (self.head_dim,))
 
         q_in = q.reshape(B, T, -1).transpose(1, 2)  # (B, hdim, T)
-        k_in = k.reshape(B, T, -1).transpose(1, 2)
+        k_in = k.reshape(B, T, -1).transpose(1, 2)  # (B, kv_hdim, T)
         v_in = v.reshape(B, T, -1).transpose(1, 2)
 
         def _causal_conv1d(x_in: torch.Tensor, conv_mod: nn.Conv1d) -> torch.Tensor:
@@ -73,8 +73,13 @@ class CausalSelfAttention(AtmaAttnBase):
         v_out = v_in + _causal_conv1d(v_in, self.canon_v)
 
         q_attn = q_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        k_attn = k_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        v_attn = v_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
+        k_attn = k_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
+        v_attn = v_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
+
+        # Expand KV heads to match query heads for SDPA (GQA)
+        groups = self.num_heads // self.num_kv_heads
+        k_attn = k_attn.repeat_interleave(groups, dim=2)
+        v_attn = v_attn.repeat_interleave(groups, dim=2)
 
         y = F.scaled_dot_product_attention(
             q_attn.transpose(1, 2),
@@ -95,12 +100,13 @@ class Block(nn.Module):
         dim: int,
         attention: bool = True,
         head_dim: int = 128,
+        num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
     ):
         super().__init__()
         self.attn = (
-            CausalSelfAttention(dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -125,6 +131,7 @@ class ReferenceModel(nn.Module):
                 config.hidden_size,
                 attention=(i % 4 == 2),
                 head_dim=config.head_dim,
+                num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
             )

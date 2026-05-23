@@ -97,10 +97,10 @@ def _gpu_conv_step(
 
 class AtmaAttention(AtmaAttnBase):
 
-    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, kernel_size: int = 4):
-        super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, kernel_size=kernel_size)
+    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
+        super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.layer_idx = layer_idx
-        self.attn = Attention(self.num_heads, self.head_dim, self.head_dim ** -0.5, self.num_heads)
+        self.attn = Attention(self.num_heads, self.head_dim, self.head_dim ** -0.5, self.num_kv_heads)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         context = get_context()
@@ -112,8 +112,8 @@ class AtmaAttention(AtmaAttnBase):
             total = x.shape[0]
             q_gate = self.q(x).view(total, self.num_heads, self.head_dim * 2)
             q_all, gate_all = torch.chunk(q_gate, 2, dim=-1)
-            k_all = self.k(x).view(total, self.num_heads, self.head_dim)
-            v_all = self.v(x).view(total, self.num_heads, self.head_dim)
+            k_all = self.k(x).view(total, self.num_kv_heads, self.head_dim)
+            v_all = self.v(x).view(total, self.num_kv_heads, self.head_dim)
 
             q_all = F.rms_norm(q_all, (self.head_dim,))
             k_all = F.rms_norm(k_all, (self.head_dim,))
@@ -130,8 +130,8 @@ class AtmaAttention(AtmaAttnBase):
                 ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k, None, conv_state_tables)
                 vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v, None, conv_state_tables)
                 q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
-                k_parts.append(ki_conv.view(seqlen, self.num_heads, self.head_dim))
-                v_parts.append(vi_conv.view(seqlen, self.num_heads, self.head_dim))
+                k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
                 start += seqlen
 
             q_packed = torch.cat(q_parts, dim=0)
@@ -168,10 +168,11 @@ class AtmaAttention(AtmaAttnBase):
                     block_table=context.block_tables,
                 )
             else:
-                # SDPA fallback (no Python loop over sequences)
+                # SDPA fallback — expand KV heads for GQA
+                groups = self.num_heads // self.num_kv_heads
                 q_b = q_packed.unsqueeze(0).transpose(1, 2)
-                k_b = k_packed.unsqueeze(0).transpose(1, 2)
-                v_b = v_packed.unsqueeze(0).transpose(1, 2)
+                k_b = k_packed.unsqueeze(0).transpose(1, 2).repeat_interleave(groups, dim=1)
+                v_b = v_packed.unsqueeze(0).transpose(1, 2).repeat_interleave(groups, dim=1)
                 y = F.scaled_dot_product_attention(q_b, k_b, v_b, scale=self.attn.scale, is_causal=True)
                 y = y.transpose(1, 2).squeeze(0)
 
@@ -187,8 +188,8 @@ class AtmaAttention(AtmaAttnBase):
 
             q_gate = self.q(x).view(batch_size, self.num_heads, self.head_dim * 2)
             q_all, gate_all = torch.chunk(q_gate, 2, dim=-1)
-            k_all = self.k(x).view(batch_size, self.num_heads, self.head_dim)
-            v_all = self.v(x).view(batch_size, self.num_heads, self.head_dim)
+            k_all = self.k(x).view(batch_size, self.num_kv_heads, self.head_dim)
+            v_all = self.v(x).view(batch_size, self.num_kv_heads, self.head_dim)
 
             q_all = F.rms_norm(q_all, (self.head_dim,))
             k_all = F.rms_norm(k_all, (self.head_dim,))
@@ -201,8 +202,8 @@ class AtmaAttention(AtmaAttnBase):
             k_conv = k_flat + _gpu_conv_step(f"attn_{self.layer_idx}_k", seq_slots, conv_state_tables, k_flat, w_k)
             v_conv = v_flat + _gpu_conv_step(f"attn_{self.layer_idx}_v", seq_slots, conv_state_tables, v_flat, w_v)
 
-            k_attn = k_conv.view(batch_size, self.num_heads, self.head_dim)
-            v_attn = v_conv.view(batch_size, self.num_heads, self.head_dim)
+            k_attn = k_conv.view(batch_size, self.num_kv_heads, self.head_dim)
+            v_attn = v_conv.view(batch_size, self.num_kv_heads, self.head_dim)
             q_attn = q_conv.view(batch_size, self.num_heads, self.head_dim)
 
             store_kvcache(k_attn, v_attn, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
@@ -236,11 +237,15 @@ class AtmaAttention(AtmaAttnBase):
                 block_size = self.attn.k_cache.shape[1]
                 n_blocks = context.block_tables.shape[1]
                 k_full = self.attn.k_cache[context.block_tables.clamp(min=0)].reshape(
-                    batch_size, n_blocks * block_size, self.num_heads, self.head_dim
+                    batch_size, n_blocks * block_size, self.num_kv_heads, self.head_dim
                 )[:, :max_seqlen]
                 v_full = self.attn.v_cache[context.block_tables.clamp(min=0)].reshape(
-                    batch_size, n_blocks * block_size, self.num_heads, self.head_dim
+                    batch_size, n_blocks * block_size, self.num_kv_heads, self.head_dim
                 )[:, :max_seqlen]
+                # Expand KV heads for GQA
+                groups = self.num_heads // self.num_kv_heads
+                k_full = k_full.repeat_interleave(groups, dim=2)
+                v_full = v_full.repeat_interleave(groups, dim=2)
                 q_b = q_attn.unsqueeze(1).transpose(1, 2)
                 k_b = k_full.transpose(1, 2)
                 v_b = v_full.transpose(1, 2)
@@ -303,12 +308,13 @@ class AtmaDecoderBlock(nn.Module):
         dim: int,
         attention: bool = True,
         head_dim: int = 128,
+        num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
     ):
         super().__init__()
         self.attn = (
-            AtmaAttention(layer_idx, dim, head_dim=head_dim, kernel_size=attn_kernel_size)
+            AtmaAttention(layer_idx, dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
             if attention
             else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
         )
@@ -332,6 +338,7 @@ class Atma(nn.Module):
                 i, config.hidden_size,
                 attention=(i % 4 == 2),
                 head_dim=config.head_dim,
+                num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
             )
