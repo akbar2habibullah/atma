@@ -312,7 +312,7 @@ class LFM2Conv(AtmaConvBase):
         x_gated = B * x_proj
 
         x_conv_input = x_gated.transpose(1, 2)  # (B, H, L)
-        conv_weights = self.conv.weight.view(self.conv.weight.size(0), self.conv.weight.size(2))
+        conv_weights = self.conv.weight.view(self.conv.weight.size(0), self.conv.weight.size(2)).to(dtype=x_conv_input.dtype)
         x_conv = causal_conv1d_fn(x_conv_input.contiguous(), conv_weights)
         x_conv = x_conv.transpose(1, 2)  # (B, L, H)
 
@@ -343,9 +343,9 @@ class CausalSelfAttention(AtmaAttnBase):
         v_conv_in = v.reshape(B, T, -1).transpose(1, 2)
 
         # Extract weights for causal_conv1d_fn -> (hdim/kv_hdim, kernel_size)
-        w_q = self.canon_q.weight.squeeze(1)
-        w_k = self.canon_k.weight.squeeze(1)
-        w_v = self.canon_v.weight.squeeze(1)
+        w_q = self.canon_q.weight.squeeze(1).to(dtype=q_conv_in.dtype)
+        w_k = self.canon_k.weight.squeeze(1).to(dtype=k_conv_in.dtype)
+        w_v = self.canon_v.weight.squeeze(1).to(dtype=v_conv_in.dtype)
 
         # Apply Canon layer (Horizontal residual: h' = h + conv1d(h))
         q_conv_out = q_conv_in + causal_conv1d_fn(q_conv_in.contiguous(), w_q)

@@ -18,7 +18,7 @@
 Atma uses a **3:1 conv-to-attention ratio** across 16 decoder layers:
 
 - **LFM2 Gated Convolution** (12 layers): Inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
-- **Canon-B Attention** (4 layers): Multi-head attention with horizontal residual convolutions on Q/K/V, QK-norm, and learned adversarial gating (`output * sigmoid(gate)`).
+- **Canon-B Attention** (4 layers): Group Query Attention with horizontal residual convolutions on Q/K/V, QK-norm, and learned adversarial gating (`output * sigmoid(gate)`).
 
 Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` followed by `x = x + MLP(norm(x))`. The MLP uses squared ReLU gating with 4x hidden expansion.
 
@@ -59,14 +59,16 @@ Training pipeline (based on NanoGPT speedrun methodology) with dual optimizers:
 
 Supports FP16 (safe scaled matmul) and FP8 (E4M3/E5M2) custom ops.
 
-### Performance on NVIDIA L4 (100M tokens, 190 steps)
+### Training Performance
 
-| Metric | Value |
-|---|---|
-| Model FLOPs Utilization (MFU) | **36.2%** |
-| Step time (steady state) | ~28.3s |
-| Loss at step 190 | 4.19 |
-| Batch size | 524,288 tokens (8 × 64K microbatches) |
+- Total steps: 190
+- Total training tokens: 100M~
+- Batch size: 524,288 tokens (8 × 64K microbatches)
+
+| GPU         | Avg Step Time | Train Time | Model FLOPs Utilization (MFU) |
+|-------------|---------------|------------|-------------------------------|
+| NVIDIA L4   | 28.64s        | 5485.82s   | 36.6%                         |
+| NVIDIA H100 | 2.84s         | 605.11s    | 45.1%                         |
 
 ### Training on more data
 
@@ -193,7 +195,7 @@ print(outputs[0]["text"])
 
 ### Inference Decoding Performance
 
-Model Size: 376M Params (16 num_layers + 1024 hidden_dim)
+Model Size: 369.72M Params (16 num_layers + 1024 hidden_dim)
 
 | Batch Size | NVIDIA L4  (tok/s) | NVIDIA H100 (tok/s) | NVIDIA T4 (tok/s)  |
 |------------|--------------------|---------------------|--------------------|
