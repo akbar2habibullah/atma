@@ -18,7 +18,7 @@
 Atma uses a **3:1 conv-to-attention ratio** across 16 decoder layers:
 
 - **LFM2 Gated Convolution** (12 layers): Inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
-- **Canon-B Attention** (4 layers): Multi-head attention with horizontal residual convolutions on Q/K/V, QK-norm, and learned adversarial gating (`output * sigmoid(gate)`).
+- **Canon-B Attention** (4 layers): Group Query Attention with horizontal residual convolutions on Q/K/V, QK-norm, and learned adversarial gating (`output * sigmoid(gate)`).
 
 Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` followed by `x = x + MLP(norm(x))`. The MLP uses squared ReLU gating with 4x hidden expansion.
 
