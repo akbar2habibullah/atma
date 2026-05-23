@@ -54,14 +54,14 @@ class CausalSelfAttention(AtmaAttnBase):
 
         q_gate = self.q(x).view(B, T, self.num_heads, self.head_dim * 2)
         q, gate = torch.chunk(q_gate, 2, dim=-1)
-        k = self.k(x).view(B, T, self.num_heads, self.head_dim)
-        v = self.v(x).view(B, T, self.num_heads, self.head_dim)
+        k = self.k(x).view(B, T, self.num_kv_heads, self.head_dim)
+        v = self.v(x).view(B, T, self.num_kv_heads, self.head_dim)
 
         q = F.rms_norm(q, (self.head_dim,))
         k = F.rms_norm(k, (self.head_dim,))
 
         q_in = q.reshape(B, T, -1).transpose(1, 2)  # (B, hdim, T)
-        k_in = k.reshape(B, T, -1).transpose(1, 2)
+        k_in = k.reshape(B, T, -1).transpose(1, 2)  # (B, kv_hdim, T)
         v_in = v.reshape(B, T, -1).transpose(1, 2)
 
         def _causal_conv1d(x_in: torch.Tensor, conv_mod: nn.Conv1d) -> torch.Tensor:
@@ -73,8 +73,13 @@ class CausalSelfAttention(AtmaAttnBase):
         v_out = v_in + _causal_conv1d(v_in, self.canon_v)
 
         q_attn = q_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        k_attn = k_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        v_attn = v_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
+        k_attn = k_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
+        v_attn = v_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
+
+        # Expand KV heads to match query heads for SDPA (GQA)
+        groups = self.num_heads // self.num_kv_heads
+        k_attn = k_attn.repeat_interleave(groups, dim=2)
+        v_attn = v_attn.repeat_interleave(groups, dim=2)
 
         y = F.scaled_dot_product_attention(
             q_attn.transpose(1, 2),

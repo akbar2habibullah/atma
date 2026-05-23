@@ -21,4 +21,4 @@ class AtmaConfig:
 
     @property
     def num_key_value_heads(self) -> int:
-        return self.num_attention_heads
+        return self.num_attention_heads // 4  # GQA 1:4 ratio

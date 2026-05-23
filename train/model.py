@@ -330,19 +330,19 @@ class CausalSelfAttention(AtmaAttnBase):
 
         q_gate = self.q(x).view(B, T, self.num_heads, self.head_dim * 2)
         q, gate = torch.chunk(q_gate, 2, dim=-1)
-        k = self.k(x).view(B, T, self.num_heads, self.head_dim)
-        v = self.v(x).view(B, T, self.num_heads, self.head_dim)
+        k = self.k(x).view(B, T, self.num_kv_heads, self.head_dim)
+        v = self.v(x).view(B, T, self.num_kv_heads, self.head_dim)
 
         # QK-Norm (Per head)
         q = F.rms_norm(q, (self.head_dim,))
         k = F.rms_norm(k, (self.head_dim,))
 
-        # Reshape to (B, hdim, T) safely using transpose
-        q_conv_in = q.reshape(B, T, -1).transpose(1, 2)
-        k_conv_in = k.reshape(B, T, -1).transpose(1, 2)
+        # Reshape to (B, hdim/kv_hdim, T) safely using transpose
+        q_conv_in = q.reshape(B, T, -1).transpose(1, 2)  # (B, hdim, T)
+        k_conv_in = k.reshape(B, T, -1).transpose(1, 2)  # (B, kv_hdim, T)
         v_conv_in = v.reshape(B, T, -1).transpose(1, 2)
 
-        # Extract weights for causal_conv1d_fn -> (hdim, kernel_size)
+        # Extract weights for causal_conv1d_fn -> (hdim/kv_hdim, kernel_size)
         w_q = self.canon_q.weight.squeeze(1)
         w_k = self.canon_k.weight.squeeze(1)
         w_v = self.canon_v.weight.squeeze(1)
@@ -352,14 +352,19 @@ class CausalSelfAttention(AtmaAttnBase):
         k_conv_out = k_conv_in + causal_conv1d_fn(k_conv_in.contiguous(), w_k)
         v_conv_out = v_conv_in + causal_conv1d_fn(v_conv_in.contiguous(), w_v)
 
-        # Reshape to (B, T, num_heads, head_dim) for FA3
+        # Reshape to (B, T, num_heads/num_kv_heads, head_dim) for attention
         q_attn = q_conv_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        k_attn = k_conv_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        v_attn = v_conv_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
+        k_attn = k_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
+        v_attn = v_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
 
         if _fa3 is None:
-            y = F.scaled_dot_product_attention(q_attn.transpose(1, 2), k_attn.transpose(1, 2), v_attn.transpose(1, 2), is_causal=True).transpose(1, 2)
+            # SDPA requires equal head counts — expand KV heads for GQA
+            groups = self.num_heads // self.num_kv_heads
+            k_sdpa = k_attn.repeat_interleave(groups, dim=2)
+            v_sdpa = v_attn.repeat_interleave(groups, dim=2)
+            y = F.scaled_dot_product_attention(q_attn.transpose(1, 2), k_sdpa.transpose(1, 2), v_sdpa.transpose(1, 2), is_causal=True).transpose(1, 2)
         else:
+            # FA3 supports GQA natively
             y = flash_attn.flash_attn_func(
                 q_attn, k_attn, v_attn,
                 causal=True

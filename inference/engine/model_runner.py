@@ -101,11 +101,13 @@ class ModelRunner:
                 )
                 for i in range(hf_config.num_hidden_layers) if i % 4 != 2
             }
+            kv_hidden = hf_config.num_key_value_heads * hf_config.head_dim
             for i in range(hf_config.num_hidden_layers):
                 if i % 4 == 2:
                     for s in ("q", "k", "v"):
+                        dim = hf_config.hidden_size if s == "q" else kv_hidden
                         dummy_cst[f"attn_{i}_{s}"] = torch.zeros(
-                            1, hf_config.hidden_size, hf_config.attn_kernel_size - 1, device="cuda"
+                            1, dim, hf_config.attn_kernel_size - 1, device="cuda"
                         )
             seqlens_q = [seq_len] * num_seqs
             set_context(True,
@@ -155,13 +157,15 @@ class ModelRunner:
         conv_ks = hf.conv_kernel_size
         max_seqs = self.config.max_num_seqs
 
+        kv_hidden = hf.num_key_value_heads * hf.head_dim
         self.conv_state_tables: dict[str, torch.Tensor] = {}
         for i in range(hf.num_hidden_layers):
             if i % 4 == 2:  # attention layer
                 for suffix in ("q", "k", "v"):
                     key = f"attn_{i}_{suffix}"
+                    dim = hidden if suffix == "q" else kv_hidden
                     self.conv_state_tables[key] = torch.zeros(
-                        max_seqs, hidden, attn_ks - 1, dtype=hf.dtype,
+                        max_seqs, dim, attn_ks - 1, dtype=hf.dtype,
                     )
             else:            # LFM2 conv layer
                 key = f"conv_{i}_gated"
