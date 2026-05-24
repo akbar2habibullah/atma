@@ -78,6 +78,26 @@ python train.py
 
 Downloads FineWebEdu-10B (GPT-2 tokenized), memory-maps shards, and trains with gradient accumulation.
 
+### Distractor Alignment for Length Extrapolation
+
+Canon-B Attention layers include an optional **distractor alignment loss** designed to improve length extrapolation. During each training forward pass, `num_random_keys` random keys and values are prepended to the real key/value sequence. The model is then penalised (MSE) for producing a different attention output than it would without the distractors — teaching queries to ignore irrelevant context tokens.
+
+The custom attention mask ensures all queries attend freely to all distractor keys while retaining causal access to real tokens. The distractor path is skipped at inference time to avoid the O(T²) memory cost from the non-causal mask.
+
+**Early ablation (190 steps, ~100M tokens, H100):**
+
+| Context length | Baseline (no distractor) | Distractor (`num_random_keys=1024`) | Delta |
+|---|---|---|---|
+| 1× — 1024 (train) | **4.16992** | 4.19138 | −0.021 |
+| 2× — 2048 | 4.20399 | 4.24547 | −0.041 |
+| 4× — 4096 | 4.21872 | 4.23431 | −0.016 |
+| 8× — 8192 | 4.33573 | **4.31175** | +0.024 |
+| 16× — 16384 | 4.49874 | **4.45639** | +0.042 |
+| 32× — 32768 | 4.62993 | **4.56829** | +0.061 |
+| 64× — 65536 | 4.71693 | **4.66272** | +0.054 |
+
+The architecture already extrapolates well out-of-the-box (conv-based mixing + QK-norm). The alignment loss narrows the gap at 32K–64K and likely beyond, at the cost of ~16% lower MFU per step (44.8% → 37.5%) and a slight in-distribution penalty. The crossover where alignment starts helping is around 8×.
+
 ### Loading a checkpoint for inference
 
 After training completes, `train.py` writes three files to `checkpoints/`:
