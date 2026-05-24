@@ -65,6 +65,8 @@ SIGR_ALPHA = 0.0
 TOKENIZER_NAME = "gpt2"        # HF tokenizer id used to produce the training data
 CHECKPOINT_DIR = "checkpoints" # directory where the final checkpoint is written
 
+DIST_ALIGN_LOSS_WEIGHT = 0.01
+
 atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
@@ -195,7 +197,7 @@ for _ in range(num_trials):
             with torch.no_grad():
                 assert len(val_inputs) % mbs == 0
                 for i in range(len(val_inputs) // mbs):
-                    val_loss_step, _ = model(val_inputs[i*mbs:(i+1)*mbs], val_targets[i*mbs:(i+1)*mbs])
+                    val_loss_step, _, _ = model(val_inputs[i*mbs:(i+1)*mbs], val_targets[i*mbs:(i+1)*mbs])
                     val_loss += val_loss_step.item()
             val_loss /= val_tokens
 
@@ -223,10 +225,10 @@ for _ in range(num_trials):
         # Microbatch (mbs) gradient accumulation runs successfully over batches
         assert len(inputs) % mbs == 0
         for i in range(len(inputs) // mbs):
-            loss_step, reg_loss = model(inputs[i*mbs:(i+1)*mbs], targets[i*mbs:(i+1)*mbs])
+            loss_step, reg_loss, align_loss = model(inputs[i*mbs:(i+1)*mbs], targets[i*mbs:(i+1)*mbs])
             train_loss += loss_step.item()
 
-            loss = (1 - SIGR_ALPHA) * loss_step + (SIGR_ALPHA * reg_loss)
+            loss = (1 - SIGR_ALPHA) * loss_step + (SIGR_ALPHA * reg_loss) + (DIST_ALIGN_LOSS_WEIGHT * align_loss)
             loss.backward()
 
         train_loss /= batch_size

@@ -36,10 +36,10 @@ Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` follo
 The repository maintains strict numerical equivalence across different optimized pipelines:
 
 ```text
-             ┌───────────────────┐     ┌───────────────────┐
-             │ TRAINING PIPELINE │ ──> │  REFERENCE MODEL  │
-             │ (FP8/FP16, Muon)  │     │ (Pure PyTorch SDPA│
-             └───────────────────┘     └───────────────────┘
+             ┌───────────────────┐     ┌─────────────────────┐
+             │ TRAINING PIPELINE │ ──> │  REFERENCE MODEL    │
+             │ (FP8/FP16, Muon)  │     │ (Pure PyTorch SDPA) │
+             └───────────────────┘     └─────────────────────┘
                        │                         │
                        └───────────┬─────────────┘
                                    │ (verify.py atol=1e-4)

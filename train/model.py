@@ -318,15 +318,17 @@ class LFM2Conv(AtmaConvBase):
 
         x_gated_2 = C * x_conv
 
-        return self.out_proj(x_gated_2)
+        return self.out_proj(x_gated_2), torch.tensor(0.0, device=x.device)
 
 
 class CausalSelfAttention(AtmaAttnBase):
     def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, kernel_size=4):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
 
+        self.num_random_keys = 1024
+
     def forward(self, x: torch.Tensor):
-        B, T = x.size(0), x.size(1)
+        B, T, D = x.shape
 
         q_gate = self.q(x).view(B, T, self.num_heads, self.head_dim * 2)
         q, gate = torch.chunk(q_gate, 2, dim=-1)
@@ -370,11 +372,46 @@ class CausalSelfAttention(AtmaAttnBase):
                 causal=True
             )
 
+        align_loss = torch.tensor(0.0, device=x.device)
+        
+        if self.num_random_keys > 0:
+            R = self.num_random_keys
+            # Random input in the original model dimension
+            rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
+            # Project through the same K and V linear layers (detach!)
+            k_rand = self.k(rand_input).view(B, R, self.num_kv_heads, self.head_dim).detach()
+            v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, self.head_dim).detach()
+
+            k_dist = torch.cat([k_rand, k_attn], dim=1)
+            v_dist = torch.cat([v_rand, v_attn], dim=1)
+
+            # All queries attend freely to all R distractors; causal only over
+            # the T real keys. is_causal=True would wrongly gate distractor
+            # visibility by query position (query t sees only min(t,R) distractors).
+            dist_mask = torch.zeros(T, R + T, device=x.device, dtype=q_attn.dtype)
+            dist_mask[:, R:] = torch.triu(
+                torch.full((T, T), float('-inf'), device=x.device, dtype=q_attn.dtype),
+                diagonal=1,
+            )
+
+            # Always use SDPA here — FA3 doesn't support arbitrary attn masks
+            groups = self.num_heads // self.num_kv_heads
+            k_sdpa = k_dist.repeat_interleave(groups, dim=2)
+            v_sdpa = v_dist.repeat_interleave(groups, dim=2)
+            y_dist = F.scaled_dot_product_attention(
+                q_attn.transpose(1, 2),
+                k_sdpa.transpose(1, 2),
+                v_sdpa.transpose(1, 2),
+                attn_mask=dist_mask,
+            ).transpose(1, 2)
+
+            align_loss = F.mse_loss(y_dist, y)
+
         # Post-process, apply gating
         y = y.reshape(B, T, self.num_heads * self.head_dim)
         y = y * torch.sigmoid(gate.reshape(B, T, -1))
 
-        return self.proj(y)
+        return self.proj(y), align_loss
 
 
 class Block(nn.Module):
@@ -402,10 +439,11 @@ class Block(nn.Module):
         self.sketch_dim = sketch_dim
 
     def forward(self, x: Tensor):
-        x = x + self.attn(self.norm1(x))
+        x_attn, align_loss = self.attn(self.norm1(x))
+        x = x + x_attn
         x = x + self.mlp(self.norm2(x))
         reg_loss = sigreg(x, self.reg_mode, self.sketch_dim)
-        return x, reg_loss
+        return x, reg_loss, align_loss
 
 
 class Model(nn.Module):
@@ -431,9 +469,11 @@ class Model(nn.Module):
     def forward(self, inputs: Tensor, targets: Tensor):
         x = self.embed(inputs)
         total_reg_loss = 0.0
+        total_align_loss = 0.0
         for block in self.blocks:
-            x, reg_loss = block(x)
+            x, reg_loss, align_loss = block(x)
             total_reg_loss += reg_loss
+            total_align_loss += align_loss
         logits = self.proj(self.norm(x)).float()
         logits = 15 * logits * (logits.square() + 15**2).rsqrt()
-        return F.cross_entropy(logits.view(targets.numel(), -1), targets.view(-1), reduction="sum"), (total_reg_loss / len(self.blocks))
+        return F.cross_entropy(logits.view(targets.numel(), -1), targets.view(-1), reduction="sum"), (total_reg_loss / len(self.blocks)), (total_align_loss / len(self.blocks))
