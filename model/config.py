@@ -14,6 +14,7 @@ class AtmaConfig:
     rms_norm_eps: float = 1e-6
     dtype: torch.dtype = torch.bfloat16
     tie_word_embeddings: bool = False
+    num_random_keys: int = 0
 
     @property
     def num_attention_heads(self) -> int:
