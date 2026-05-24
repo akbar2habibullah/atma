@@ -322,10 +322,10 @@ class LFM2Conv(AtmaConvBase):
 
 
 class CausalSelfAttention(AtmaAttnBase):
-    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, kernel_size=4):
+    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
 
-        self.num_random_keys = 1024
+        self.num_random_keys = num_random_keys
 
     def forward(self, x: torch.Tensor):
         B, T, D = x.shape
@@ -374,7 +374,7 @@ class CausalSelfAttention(AtmaAttnBase):
 
         align_loss = torch.tensor(0.0, device=x.device)
         
-        if self.num_random_keys > 0:
+        if self.num_random_keys > 0 and self.training:  # skip during eval: custom mask forces O(T²) memory
             R = self.num_random_keys
             # Random input in the original model dimension
             rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
@@ -423,12 +423,13 @@ class Block(nn.Module):
         sketch_dim: int = 64,
         head_dim: int = 128,
         num_kv_heads: int = None,
+        num_random_keys: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
     ):
         super().__init__()
         self.attn = (
-            CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
+            CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys, kernel_size=attn_kernel_size)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -458,6 +459,7 @@ class Model(nn.Module):
                 sketch_dim=sketch_dim,
                 head_dim=config.head_dim,
                 num_kv_heads=config.num_key_value_heads,
+                num_random_keys=config.num_random_keys,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
             )
@@ -465,6 +467,7 @@ class Model(nn.Module):
         ])
         self.proj = Linear(config.hidden_size, config.vocab_size)
         self.norm = RMSNorm(config.hidden_size)
+        self.num_attn_layers = sum(1 for block in self.blocks if isinstance(block.attn, CausalSelfAttention))
 
     def forward(self, inputs: Tensor, targets: Tensor):
         x = self.embed(inputs)
@@ -476,4 +479,4 @@ class Model(nn.Module):
             total_align_loss += align_loss
         logits = self.proj(self.norm(x)).float()
         logits = 15 * logits * (logits.square() + 15**2).rsqrt()
-        return F.cross_entropy(logits.view(targets.numel(), -1), targets.view(-1), reduction="sum"), (total_reg_loss / len(self.blocks)), (total_align_loss / len(self.blocks))
+        return F.cross_entropy(logits.view(targets.numel(), -1), targets.view(-1), reduction="sum"), (total_reg_loss / len(self.blocks)), (total_align_loss / self.num_attn_layers)

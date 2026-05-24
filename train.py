@@ -59,6 +59,20 @@ batch_size = 8 * 64 * 1024
 mbs = 8
 val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens))
 
+BASE_SEQ_LEN = 1024
+EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64]
+EXTRAP_NUM_SEQS = 4  # sequences per length — small but gives a directional signal
+
+extrap_val_data = {}
+for _mult in EXTRAP_MULTIPLIERS:
+    _ext_seq_len = BASE_SEQ_LEN * _mult
+    _ext_inputs, _ext_targets = next(
+        data_generator("finewebedu10B/finewebedu_val_*.bin",
+                       EXTRAP_NUM_SEQS * _ext_seq_len,
+                       seq_len=_ext_seq_len)
+    )
+    extrap_val_data[_mult] = (_ext_inputs, _ext_targets)
+
 REG_MODE = 'baseline'
 SKETCH_DIM = 64
 SIGR_ALPHA = 0.0
@@ -67,7 +81,7 @@ CHECKPOINT_DIR = "checkpoints" # directory where the final checkpoint is written
 
 DIST_ALIGN_LOSS_WEIGHT = 0.01
 
-atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024)
+atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024, num_random_keys=1024)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
 model = torch.compile(model, dynamic=False, fullgraph=True)
 
@@ -201,6 +215,16 @@ for _ in range(num_trials):
                     val_loss += val_loss_step.item()
             val_loss /= val_tokens
 
+            extrap_losses = {}
+            for _mult, (_ext_inputs, _ext_targets) in extrap_val_data.items():
+                _ext_loss = 0
+                _ext_tokens = _ext_inputs.numel()
+                with torch.no_grad():
+                    for _i in range(len(_ext_inputs)):  # microbatch=1 to bound memory at long lengths
+                        _loss_step, _, _ = model(_ext_inputs[_i:_i+1], _ext_targets[_i:_i+1])
+                        _ext_loss += _loss_step.item()
+                extrap_losses[_mult] = _ext_loss / _ext_tokens
+
             mfu_str = ""
             if step > 0 and device.type == "cuda" and step_avg > 0:
                 achieved_flops = flops_per_step / step_avg
@@ -209,6 +233,8 @@ for _ in range(num_trials):
 
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.5f} train_time:{training_time:.3f}s"
                    + f" step_avg:{1000*step_avg:.2f}ms{mfu_str}", console=True)
+            print0("step:{} ".format(step) +
+                   " ".join(f"extrap_{m}x:{l:.5f}" for m, l in extrap_losses.items()), console=True)
             model.train()
             # start the clock again
             t0 = time.perf_counter()
