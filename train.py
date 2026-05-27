@@ -61,7 +61,7 @@ val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bi
 
 BASE_SEQ_LEN = 1024
 EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64]
-EXTRAP_NUM_SEQS = 4  # sequences per length — small but gives a directional signal
+EXTRAP_NUM_SEQS = 4  # sequences per length
 
 extrap_val_data = {}
 for _mult in EXTRAP_MULTIPLIERS:
@@ -81,9 +81,9 @@ CHECKPOINT_DIR = "checkpoints" # directory where the final checkpoint is written
 
 DIST_ALIGN_LOSS_WEIGHT = 0.01
 
-atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024, num_random_keys=1024)
+atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024, num_random_keys=0)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
-model = torch.compile(model, dynamic=False, fullgraph=True)
+model = torch.compile(model)
 
 print0(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M", console=True)
 
@@ -111,7 +111,7 @@ if device.type == "cuda":
         peak_flops = 989e12
 
 def save_checkpoint(model, config: AtmaConfig, tokenizer_name: str, out_dir: str,
-                    step: int, val_loss: float):
+                    step: int):
     os.makedirs(out_dir, exist_ok=True)
 
     # weights — strip torch.compile's _orig_mod. prefix so inference can load directly
@@ -128,7 +128,7 @@ def save_checkpoint(model, config: AtmaConfig, tokenizer_name: str, out_dir: str
     with open(os.path.join(out_dir, "tokenizer.json"), "w") as f:
         json.dump({"tokenizer_name": tokenizer_name}, f, indent=2)
 
-    print0(f"Checkpoint saved → {out_dir}  (step={step}, val_loss={val_loss:.5f})", console=True)
+    print0(f"Checkpoint saved → {out_dir}  (step={step})", console=True)
 
 
 num_trials = 1
@@ -192,6 +192,8 @@ for _ in range(num_trials):
 
     train_loader = data_generator("finewebedu10B/finewebedu_train_*.bin", batch_size)
 
+    train_loss = None
+    
     # start the clock
     training_time = 0
     last_val_step = 0
@@ -215,15 +217,7 @@ for _ in range(num_trials):
                     val_loss += val_loss_step.item()
             val_loss /= val_tokens
 
-            extrap_losses = {}
-            for _mult, (_ext_inputs, _ext_targets) in extrap_val_data.items():
-                _ext_loss = 0
-                _ext_tokens = _ext_inputs.numel()
-                with torch.no_grad():
-                    for _i in range(len(_ext_inputs)):  # microbatch=1 to bound memory at long lengths
-                        _loss_step, _, _ = model(_ext_inputs[_i:_i+1], _ext_targets[_i:_i+1])
-                        _ext_loss += _loss_step.item()
-                extrap_losses[_mult] = _ext_loss / _ext_tokens
+
 
             mfu_str = ""
             if step > 0 and device.type == "cuda" and step_avg > 0:
@@ -233,15 +227,42 @@ for _ in range(num_trials):
 
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.5f} train_time:{training_time:.3f}s"
                    + f" step_avg:{1000*step_avg:.2f}ms{mfu_str}", console=True)
+
+            if val_loss is not None:
+                del val_loss
+                    
+            if train_loss is not None:
+                del train_loss
+                    
+            torch.cuda.empty_cache()
+    
+            extrap_losses = {}
+            for _mult, (_ext_inputs, _ext_targets) in extrap_val_data.items():
+                _ext_loss = 0
+                _ext_tokens = _ext_inputs.numel()
+                with torch.no_grad():
+                    for _i in range(len(_ext_inputs)):  # microbatch=1 to bound memory at long lengths
+                        _loss_step, _, _ = model(_ext_inputs[_i:_i+1], _ext_targets[_i:_i+1])
+                        _ext_loss += _loss_step.item()
+                extrap_losses[_mult] = _ext_loss / _ext_tokens
+    
             print0("step:{} ".format(step) +
-                   " ".join(f"extrap_{m}x:{l:.5f}" for m, l in extrap_losses.items()), console=True)
+                " ".join(f"extrap_{m}x:{l:.5f}" for m, l in extrap_losses.items()), console=True)
+    
+            extrap_losses = {}
+                
+            if _ext_loss is not None:
+                del _ext_loss
+                    
+            torch.cuda.empty_cache()
+            
             model.train()
             # start the clock again
             t0 = time.perf_counter()
 
         if step == train_steps:
             save_checkpoint(model, atma_config, TOKENIZER_NAME, CHECKPOINT_DIR,
-                            step=step, val_loss=val_loss)
+                            step=step)
             break
 
         # --------------- TRAINING SECTION -----------------
