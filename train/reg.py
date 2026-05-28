@@ -69,12 +69,12 @@ def sigreg(x, REG_MODE, sketch_dim=64):
         batch_size, seq_len, hidden_dim = x.shape
         flat_rep = x.reshape(-1, hidden_dim)
         if REG_MODE == 'weak':
-            reg_loss = sigreg.sigreg_weak_loss(flat_rep, sketch_dim=sketch_dim)
+            reg_loss = sigreg_weak_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'strong':
-            reg_loss = sigreg.sigreg_strong_loss(flat_rep, sketch_dim=sketch_dim)
+            reg_loss = sigreg_strong_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'discrete':
-            reg_loss = sigreg.sireg_discrete_loss(flat_rep, sketch_dim=sketch_dim)
+            reg_loss = sireg_discrete_loss(flat_rep, sketch_dim=sketch_dim)
         elif REG_MODE == 'zipfian':
-            reg_loss = sigreg.zipf_orthogonal_est(flat_rep, sketch_dim=sketch_dim)
+            reg_loss = zipf_orthogonal_est(flat_rep, sketch_dim=sketch_dim)
     
     return reg_loss
