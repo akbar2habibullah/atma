@@ -193,6 +193,18 @@ oracle in forward and backward to ~1e-15 ([verify_polar_online.py](verify_polar_
 > query-blocking would make it fully `O(k_block)`; deferred until query-dim memory is the
 > bottleneck.
 
+### FlashAttention-style Triton kernel ([kernel/polar_triton.py](kernel/polar_triton.py))
+
+A fused Triton kernel implements the same streaming reduction with **query-blocking too**
+(fully `O(block)` memory) and runs on tensor cores. It reproduces the online path to
+floating-point tolerance (~3e-7 fp32; gradchecked-oracle parity on all inputs and params)
+and is **7–27× faster** with **~5× less memory** than the PyTorch online/materialized
+paths on an L4 (see [kernel/README.md](kernel/README.md)). The backward keeps the cheap
+per-query preamble in PyTorch and runs only the two `O(T²)` matmul loops (`dq`, `dk/dv`)
+as Triton kernels. Opt in with `AtmaConfig(attn_kernel="triton")`; forward-only
+`polar_attention_fwd` serves inference (causal prefill, or `is_causal=False` + explicit
+`n_keys` for decode / offset prefill).
+
 ---
 
 ## 6. Architecture & integration
@@ -290,7 +302,8 @@ Run: `python verify_polar.py` and `python verify_polar_online.py` (use
 
 | File | Role |
 |---|---|
-| [model/blocks.py](model/blocks.py) | shared `polar_temp_null`, `polar_reduce` (materialized), `polar_attention_online` (streaming custom autograd) |
+| [kernel/polar_triton.py](kernel/polar_triton.py) | FlashAttention-style Triton kernel: fused fwd + hand-written bwd (`polar_attention`, `polar_attention_fwd`); 7–27× faster than the PyTorch paths |
+| [model/blocks.py](model/blocks.py) | shared `polar_temp_null`, `polar_reduce` (materialized), `polar_attention_online` (streaming custom autograd); re-exports the Triton kernel |
 | [train/model.py](train/model.py) | training `PolarAttention` (+ distractor → `align_loss`, online flag) |
 | [model/reference.py](model/reference.py) | reference `PolarAttention` (materialized oracle) |
 | [model/config.py](model/config.py) | `num_random_keys`, `attn_online`, `attn_k_block` |

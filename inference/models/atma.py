@@ -25,6 +25,23 @@ except Exception:
     causal_conv1d_update = None
 
 
+# FlashAttention-style polar-attention kernel, forward-only (no autograd) for inference.
+# Usage (q,k,v: (B, H, T, dk) with KV heads expanded to H, n_keys: (Tq,) valid-key
+# count per query):
+#   prefill (one sequence, triangular causal):
+#       c, mag = polar_attention_fwd(q, k, v, torch.arange(1, T+1), is_causal=True, **polar_params)
+#   decode / offset-prefill (queries after a cached prefix, arbitrary context):
+#       c, mag = polar_attention_fwd(q, k, v, n_keys, is_causal=False, **polar_params)
+# Both reproduce model.blocks.polar_reduce to ~5e-7 (fp32). A full paged-KV-cache
+# PolarAttention port (polar params + additive count channel + per-page K/V gather)
+# is the remaining inference integration step; see POLAR_ATTENTION.md sec. 10.
+try:
+    from kernel.polar_triton import polar_attention_fwd, HAS_TRITON  # noqa: F401
+except Exception:
+    polar_attention_fwd = None
+    HAS_TRITON = False
+
+
 def _infer_linear(in_f, out_f):
     return ReplicatedLinear(in_f, out_f, bias=True)
 

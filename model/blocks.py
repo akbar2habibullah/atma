@@ -2,6 +2,20 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+# FlashAttention-style Triton kernel (CUDA only). Re-exported so the `model`,
+# `train`, and `inference` packages can all reach it via model.blocks. Falls back
+# to None when Triton / CUDA is unavailable; callers must guard on HAS_TRITON.
+try:
+    from kernel.polar_triton import (
+        polar_attention as polar_attention_triton,
+        polar_attention_fwd as polar_attention_triton_fwd,
+        HAS_TRITON,
+    )
+except Exception:
+    polar_attention_triton = None
+    polar_attention_triton_fwd = None
+    HAS_TRITON = False
+
 
 def polar_temp_null(n_keys, len_gain_raw, null_base, null_slope_raw):
     """Per-head length temperature and EV-corrected null floor.

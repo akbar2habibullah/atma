@@ -17,6 +17,11 @@ class AtmaConfig:
     num_random_keys: int = 0
     attn_online: bool = False   # Polar attn: stream keys in blocks (O(T*k_block) memory)
     attn_k_block: int = 512
+    # Polar attn core implementation:
+    #   "torch"  -> materialized polar_reduce (or streamed polar_attention_online if attn_online)
+    #   "triton" -> FlashAttention-style Triton kernel (kernel/polar_triton.py); CUDA only,
+    #               falls back to the torch path on CPU / when triton is unavailable.
+    attn_kernel: str = "torch"
 
     @property
     def num_attention_heads(self) -> int:

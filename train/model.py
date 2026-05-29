@@ -10,6 +10,12 @@ from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
 from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online
 
+try:
+    from kernel.polar_triton import polar_attention as polar_attention_triton, HAS_TRITON
+except Exception:
+    polar_attention_triton = None
+    HAS_TRITON = False
+
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
 _NULL_SLOPE_INIT = 0.5
@@ -430,11 +436,12 @@ class PolarAttention(AtmaAttnBase):
     """
 
     def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4,
-                 online: bool = False, k_block: int = 512):
+                 online: bool = False, k_block: int = 512, attn_kernel: str = "torch"):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
         self.k_block = k_block
+        self.attn_kernel = attn_kernel  # "torch" | "triton" (Triton flash kernel, CUDA only)
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
@@ -485,7 +492,12 @@ class PolarAttention(AtmaAttnBase):
             len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
         )
 
-        if self.online:
+        use_triton = (self.attn_kernel == "triton" and HAS_TRITON
+                      and polar_attention_triton is not None and q_t.is_cuda)
+        if use_triton:
+            # FlashAttention-style Triton kernel: O(T*block) memory, fused fwd+bwd.
+            c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, **polar_params)
+        elif self.online:
             # Memory-efficient: never materializes the (T, T) score matrix.
             c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, **polar_params)
         else:
@@ -529,11 +541,13 @@ class Block(nn.Module):
         conv_kernel_size: int = 3,
         attn_online: bool = False,
         attn_k_block: int = 512,
+        attn_kernel: str = "torch",
     ):
         super().__init__()
         self.attn = (
             PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
-                           kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block)
+                           kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block,
+                           attn_kernel=attn_kernel)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -568,6 +582,7 @@ class Model(nn.Module):
                 conv_kernel_size=config.conv_kernel_size,
                 attn_online=config.attn_online,
                 attn_k_block=config.attn_k_block,
+                attn_kernel=config.attn_kernel,
             )
             for i in range(config.num_hidden_layers)
         ])
