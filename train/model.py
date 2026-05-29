@@ -8,7 +8,13 @@ from train.reg import sigreg
 from kernels import get_kernel
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase
+from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null
+
+# Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
+_LEN_GAIN_INIT = -1.0
+_NULL_SLOPE_INIT = 0.5
+_NULL_BASE_INIT = 2.0
+_MAG_BETA_INIT = -1.5
 
 def _causal_conv1d_fallback(x: Tensor, weight: Tensor) -> Tensor:
     """Pure PyTorch depthwise causal conv1d. x: (B, H, L), weight: (H, k)."""
@@ -414,6 +420,92 @@ class CausalSelfAttention(AtmaAttnBase):
         return self.proj(y), align_loss
 
 
+class PolarAttention(AtmaAttnBase):
+    """Training Polar attention: direction + bounded count channels.
+
+    Same projections / Canon conv / GQA as CausalSelfAttention; the SDPA core is
+    replaced by the validated polar_reduce (length-invariant direction + bounded
+    count), and a per-head count channel is injected additively. The distractor
+    objective calibrates the null sink (and Q geometry) to reject random keys.
+    """
+
+    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4):
+        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
+        self.num_random_keys = num_random_keys or 0
+        H, dk = self.num_heads, self.head_dim
+        self.mu_proj = Linear(H, dim)                                   # count channel -> residual
+        self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
+        self.null_base = nn.Parameter(torch.full((H,), _NULL_BASE_INIT))
+        self.null_slope_raw = nn.Parameter(torch.full((H,), _NULL_SLOPE_INIT))
+        self.len_gain_raw = nn.Parameter(torch.full((H,), _LEN_GAIN_INIT))
+        self.mag_beta_raw = nn.Parameter(torch.full((H,), _MAG_BETA_INIT))
+
+    def forward(self, x: torch.Tensor):
+        B, T, D = x.shape
+        H, dk = self.num_heads, self.head_dim
+
+        q_gate = self.q(x).view(B, T, H, dk * 2)
+        q, gate = torch.chunk(q_gate, 2, dim=-1)
+        k = self.k(x).view(B, T, self.num_kv_heads, dk)
+        v = self.v(x).view(B, T, self.num_kv_heads, dk)
+
+        q = F.rms_norm(q, (dk,))
+        k = F.rms_norm(k, (dk,))
+
+        q_conv_in = q.reshape(B, T, -1).transpose(1, 2)
+        k_conv_in = k.reshape(B, T, -1).transpose(1, 2)
+        v_conv_in = v.reshape(B, T, -1).transpose(1, 2)
+
+        w_q = self.canon_q.weight.squeeze(1).to(dtype=q_conv_in.dtype)
+        w_k = self.canon_k.weight.squeeze(1).to(dtype=k_conv_in.dtype)
+        w_v = self.canon_v.weight.squeeze(1).to(dtype=v_conv_in.dtype)
+
+        q_conv_out = q_conv_in + causal_conv1d_fn(q_conv_in.contiguous(), w_q)
+        k_conv_out = k_conv_in + causal_conv1d_fn(k_conv_in.contiguous(), w_k)
+        v_conv_out = v_conv_in + causal_conv1d_fn(v_conv_in.contiguous(), w_v)
+
+        q_attn = q_conv_out.transpose(1, 2).reshape(B, T, H, dk)
+        k_attn = k_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, dk)
+        v_attn = v_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, dk)
+
+        groups = H // self.num_kv_heads
+        k_attn = k_attn.repeat_interleave(groups, dim=2)
+        v_attn = v_attn.repeat_interleave(groups, dim=2)
+
+        q_t = q_attn.transpose(1, 2)                       # (B, H, T, dk)
+        k_t = k_attn.transpose(1, 2)
+        v_t = v_attn.transpose(1, 2)
+
+        sigma = torch.matmul(q_t, k_t.transpose(-2, -1)) / (dk ** 0.5)
+        mask = torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
+        sigma = sigma + mask
+        n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
+
+        c, mag = polar_reduce(
+            sigma, v_t, n_keys,
+            v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
+            len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
+        )
+
+        # Distractor: random keys should win ~no attention mass (calibrates null sink + Q).
+        align_loss = torch.tensor(0.0, device=x.device)
+        if self.num_random_keys > 0 and self.training:
+            R = self.num_random_keys
+            rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
+            k_rand = F.rms_norm(self.k(rand_input).view(B, R, self.num_kv_heads, dk), (dk,)).detach()
+            k_rand = k_rand.repeat_interleave(groups, dim=2).transpose(1, 2)   # (B, H, R, dk)
+            sigma_rand = torch.matmul(q_t, k_rand.transpose(-2, -1)) / (dk ** 0.5)
+            temp, null = polar_temp_null(n_keys, self.len_gain_raw, self.null_base, self.null_slope_raw)
+            ext = torch.cat([sigma.float(), sigma_rand.float(), null.expand(B, H, T, 1)], dim=-1) * temp
+            w_ext = torch.softmax(ext, dim=-1)
+            align_loss = w_ext[..., T:T + R].sum(-1).mean()                    # mass stolen by random keys
+
+        c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
+        content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
+        count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, D)
+        return content + count, align_loss
+
+
 class Block(nn.Module):
     def __init__(
         self,
@@ -429,7 +521,7 @@ class Block(nn.Module):
     ):
         super().__init__()
         self.attn = (
-            CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys, kernel_size=attn_kernel_size)
+            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys, kernel_size=attn_kernel_size)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -467,7 +559,7 @@ class Model(nn.Module):
         ])
         self.proj = Linear(config.hidden_size, config.vocab_size)
         self.norm = RMSNorm(config.hidden_size)
-        self.num_attn_layers = sum(1 for block in self.blocks if isinstance(block.attn, CausalSelfAttention))
+        self.num_attn_layers = sum(1 for block in self.blocks if isinstance(block.attn, PolarAttention))
 
     def forward(self, inputs: Tensor, targets: Tensor):
         x = self.embed(inputs)
