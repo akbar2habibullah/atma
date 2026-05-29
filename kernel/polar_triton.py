@@ -65,6 +65,11 @@ if HAS_TRITON:
         b = pid_bh // H
         h = pid_bh % H
 
+        # Force fp32: un-annotated python-float kernel args are fp64 on some Triton
+        # versions, which would silently promote the fp32 loop-carried accumulators.
+        scale = scale.to(tl.float32)
+        eps = eps.to(tl.float32)
+
         offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_d = tl.arange(0, DK)
         m_valid = offs_m < Tq
@@ -113,7 +118,7 @@ if HAS_TRITON:
             sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
             a = sig * temp[:, None]
             valid = offs_n[None, :] < n_i[:, None]
-            a = tl.where(valid, a, -1e38)
+            a = tl.where(valid, a, -1e38).to(tl.float32)   # stay fp32 (sentinel literal guard)
 
             m_new = tl.maximum(m_i, tl.max(a, 1))
             alpha = tl.exp(m_i - m_new)
@@ -326,6 +331,7 @@ if HAS_TRITON:
         pid_bh = tl.program_id(1)
         b = pid_bh // H
         h = pid_bh % H
+        scale = scale.to(tl.float32)   # guard: python-float args are fp64 on some Triton versions
 
         offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
         offs_d = tl.arange(0, DK)
@@ -362,7 +368,7 @@ if HAS_TRITON:
             sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
             valid = offs_n[None, :] < n_i[:, None]
             a = sig * temp[:, None]
-            a = tl.where(valid, a, -1e38)
+            a = tl.where(valid, a, -1e38).to(tl.float32)   # stay fp32 (sentinel literal guard)
             p = tl.exp(a - M_i[:, None])
             p = tl.where(valid, p, 0.0)
 
@@ -398,6 +404,7 @@ if HAS_TRITON:
         pid_bh = tl.program_id(1)
         b = pid_bh // H
         h = pid_bh % H
+        scale = scale.to(tl.float32)   # guard: python-float args are fp64 on some Triton versions
 
         offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
         offs_d = tl.arange(0, DK)
@@ -434,7 +441,7 @@ if HAS_TRITON:
             sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
             valid = offs_n[None, :] < n_i[:, None]
             a = sig * temp[:, None]
-            a = tl.where(valid, a, -1e38)
+            a = tl.where(valid, a, -1e38).to(tl.float32)   # stay fp32 (sentinel literal guard)
             p = tl.exp(a - M_i[:, None])
             p = tl.where(valid, p, 0.0)
 
