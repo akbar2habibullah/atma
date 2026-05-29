@@ -15,6 +15,8 @@ class AtmaConfig:
     dtype: torch.dtype = torch.bfloat16
     tie_word_embeddings: bool = False
     num_random_keys: int = 0
+    attn_online: bool = False   # Polar attn: stream keys in blocks (O(T*k_block) memory)
+    attn_k_block: int = 512
 
     @property
     def num_attention_heads(self) -> int:

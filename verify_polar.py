@@ -124,5 +124,36 @@ task, reg, align = trm(inp, tgt)
 check("train Model forward (task, reg, align)", all(torch.isfinite(torch.as_tensor(float(z))) for z in (task, reg, align)),
       f"task={float(task):.2f} reg={float(reg):.4f} align={float(align):.4f}")
 
+# ── 6. online path == materialized path ──────────────────────────────────────
+print("\n── online (memory-efficient) path ──")
+to = tm.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, num_random_keys=0, kernel_size=ks, online=True, k_block=8)
+copy(t, to)                       # identical weights to the materialized layer `t`
+to.eval()
+xx = torch.randn(2, 40, dim)
+with torch.no_grad():
+    ym, _ = t(xx)                 # materialized
+    yo, _ = to(xx)                # online, 8-key blocks
+d = (ym - yo).abs().max().item()
+check("online == materialized (fp32)", d < 1e-4, f"max_diff={d:.2e}")
+
+# ── 7. NaN-free full-Model backward (regression guard for the polar_reduce fix) ──
+print("\n── full-Model backward is finite (distractor on, both paths) ──")
+def model_backward_finite(online):
+    c2 = AtmaConfig(vocab_size=256, num_hidden_layers=4, hidden_size=256, head_dim=64,
+                    num_random_keys=8, attn_online=online, attn_k_block=8)
+    m = tm.Model(c2); m.train()
+    ii = torch.randint(0, 256, (2, 24)); tt = torch.randint(0, 256, (2, 24))
+    task, reg, align = m(ii, tt)
+    (task + reg + align).backward()
+    grads = [p.grad for p in m.parameters() if p.grad is not None]
+    all_finite = all(torch.isfinite(g).all() for g in grads)
+    # specifically the param that used to NaN:
+    lg = [b.attn.len_gain_raw.grad for b in m.blocks if isinstance(b.attn, tm.PolarAttention)]
+    lg_finite = all(g is not None and torch.isfinite(g).all() for g in lg)
+    return all_finite and lg_finite
+
+check("materialized Model backward all-finite", model_backward_finite(False))
+check("online Model backward all-finite", model_backward_finite(True))
+
 print(f"\n{'='*50}\nResults: {PASS} passed, {FAIL} failed")
 raise SystemExit(1 if FAIL else 0)

@@ -8,7 +8,7 @@ from train.reg import sigreg
 from kernels import get_kernel
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null
+from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
@@ -429,9 +429,12 @@ class PolarAttention(AtmaAttnBase):
     objective calibrates the null sink (and Q geometry) to reject random keys.
     """
 
-    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4):
+    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4,
+                 online: bool = False, k_block: int = 512):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
+        self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
+        self.k_block = k_block
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
@@ -476,29 +479,35 @@ class PolarAttention(AtmaAttnBase):
         k_t = k_attn.transpose(1, 2)
         v_t = v_attn.transpose(1, 2)
 
-        sigma = torch.matmul(q_t, k_t.transpose(-2, -1)) / (dk ** 0.5)
-        mask = torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
-        sigma = sigma + mask
         n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
-
-        c, mag = polar_reduce(
-            sigma, v_t, n_keys,
+        polar_params = dict(
             v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
             len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
         )
 
-        # Distractor: random keys should win ~no attention mass (calibrates null sink + Q).
+        if self.online:
+            # Memory-efficient: never materializes the (T, T) score matrix.
+            c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, **polar_params)
+        else:
+            sigma = torch.matmul(q_t, k_t.transpose(-2, -1)) / (dk ** 0.5)
+            sigma = sigma + torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
+            c, mag = polar_reduce(sigma, v_t, n_keys, **polar_params)
+
+        # Distractor (O(T*R), memory-friendly): random keys must lose to the null sink,
+        # calibrating null_base/null_slope (+ Q geometry). Compares random keys vs the
+        # null floor only — real keys staying above the floor is the task loss's job.
         align_loss = torch.tensor(0.0, device=x.device)
         if self.num_random_keys > 0 and self.training:
             R = self.num_random_keys
             rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
             k_rand = F.rms_norm(self.k(rand_input).view(B, R, self.num_kv_heads, dk), (dk,)).detach()
             k_rand = k_rand.repeat_interleave(groups, dim=2).transpose(1, 2)   # (B, H, R, dk)
-            sigma_rand = torch.matmul(q_t, k_rand.transpose(-2, -1)) / (dk ** 0.5)
+            sig_rand = torch.matmul(q_t, k_rand.transpose(-2, -1)) / (dk ** 0.5)  # (B, H, T, R)
             temp, null = polar_temp_null(n_keys, self.len_gain_raw, self.null_base, self.null_slope_raw)
-            ext = torch.cat([sigma.float(), sigma_rand.float(), null.expand(B, H, T, 1)], dim=-1) * temp
-            w_ext = torch.softmax(ext, dim=-1)
-            align_loss = w_ext[..., T:T + R].sum(-1).mean()                    # mass stolen by random keys
+            logits_r = (sig_rand * temp).float()
+            null_col = (null * temp).expand(B, H, T, 1).float()
+            w_r = torch.softmax(torch.cat([logits_r, null_col], dim=-1), dim=-1)
+            align_loss = w_r[..., :R].sum(-1).mean()                           # mass random keys steal
 
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
@@ -518,10 +527,13 @@ class Block(nn.Module):
         num_random_keys: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
+        attn_online: bool = False,
+        attn_k_block: int = 512,
     ):
         super().__init__()
         self.attn = (
-            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys, kernel_size=attn_kernel_size)
+            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
+                           kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -554,6 +566,8 @@ class Model(nn.Module):
                 num_random_keys=config.num_random_keys,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
+                attn_online=config.attn_online,
+                attn_k_block=config.attn_k_block,
             )
             for i in range(config.num_hidden_layers)
         ])
