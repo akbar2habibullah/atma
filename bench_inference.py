@@ -1,65 +1,76 @@
+"""Throughput benchmark for the Atma polar-attention model.
+
+Measures the polar-attention forward (prefill) throughput across batch sizes and
+sequence lengths — this is the path that exercises the FlashAttention-style polar
+Triton kernel (kernel/polar_triton.py). Also times short autoregressive generation.
+
+Loads the trained checkpoint if found under ../checkpoints, otherwise uses random
+weights (fine for a throughput benchmark). See inference/generate.py.
+
+Run:  python bench_inference.py
+"""
 import time
 import torch
-from inference import LLM, SamplingParams
 
-_WARMUP_PASSES = 3  # passes per batch size to let torch.compile finish before timing
+from inference.generate import load_model, generate, HAS_TRITON
+
+_WARMUP = 3   # passes to let the Triton kernels compile before timing
+
+
+def _sync(device):
+    if device == "cuda":
+        torch.cuda.synchronize()
+
+
+def time_forward(model, B, T, vocab, device, iters=10):
+    ids = torch.randint(0, vocab, (B, T), device=device)
+    for _ in range(_WARMUP):
+        model(ids)
+    _sync(device)
+    t0 = time.perf_counter()
+    for _ in range(iters):
+        model(ids)
+    _sync(device)
+    return (time.perf_counter() - t0) / iters
 
 
 def main():
-    print("Initializing inference engine for performance benchmark...")
-    llm = LLM(model="gpt2", kvcache_block_size=256)
+    print("Initializing the Atma polar-attention model for benchmarking...")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    model, info = load_model(device=device, dtype=dtype)
+    cfg = info["config"]
+    vocab = cfg["vocab_size"]
 
-    use_cuda = torch.cuda.is_available()
+    print(f"\nConfiguration:")
+    print(f"- checkpoint : {info['path'] if info['loaded'] else 'random init'}")
+    print(f"- model      : {cfg['num_hidden_layers']} layers, dim {cfg['hidden_size']}, "
+          f"{cfg['num_heads']} heads / {cfg['num_kv_heads']} kv-heads (GQA), head_dim {cfg['head_dim']}")
+    print(f"- attention  : polar @ layers {cfg['attn_layers']} ({'Triton kernel' if (HAS_TRITON and device=='cuda') else 'polar_reduce'}), LFM2 conv elsewhere")
+    print(f"- device     : {device} ({dtype})")
 
-    # Benchmarking different batch sizes
-    batch_sizes = [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
-    prompt = """Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
+    print(f"\nForward (prefill) throughput — exercises the polar kernel:")
+    print(f"  {'batch':>6} {'seq_len':>8} {'fwd ms':>9} {'tok/s':>12}")
+    configs = [(1, 512), (1, 1024), (1, 2048), (1, 4096),
+               (4, 512), (8, 1024), (16, 1024)]
+    for B, T in configs:
+        try:
+            dt = time_forward(model, B, T, vocab, device)
+            print(f"  {B:>6} {T:>8} {dt*1e3:>9.2f} {B * T / dt:>12.0f}")
+        except RuntimeError as e:
+            print(f"  {B:>6} {T:>8}  OOM/err: {str(e)[:40]}")
 
-Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
-
-Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
-
-Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.
-
-Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos."""
-    max_tokens = 256
-
-    print(f"\nBenchmark Configuration:")
-    print(f"- Model Architecture: Atma ({llm.engine.config.hf_config.num_hidden_layers} layers, {llm.engine.config.hf_config.hidden_size} model dim, causal conv + attention + LFM2)")
-    print(f"- Max Tokens to Generate: {max_tokens} per sequence")
-    print(f"- Prompt Length: {len(prompt.split())} words")
-
-    print("\nRunning benchmarks...")
-    for bs in batch_sizes:
-        prompts = [prompt] * bs
-        sampling_params = SamplingParams(
-            temperature=1.0,
-            max_tokens=max_tokens,
-            ignore_eos=True,  # force it to generate exactly max_tokens
-        )
-
-        # Multiple warmup passes to ensure torch.compile finishes compilation
-        # before the timed run (first pass triggers JIT, subsequent passes verify it's done).
-        for _ in range(_WARMUP_PASSES):
-            llm.generate(prompts, sampling_params, use_tqdm=False)
-
-        if use_cuda:
-            torch.cuda.synchronize()
-
-        # Timed benchmark pass
+    print(f"\nAutoregressive generation (full-recompute) — end-to-end gen speed:")
+    print(f"  {'prompt':>7} {'new':>5} {'total s':>9} {'tok/s':>8}")
+    for prompt_len, new in [(64, 64), (256, 64)]:
+        ids = torch.randint(0, vocab, (prompt_len,), device=device).tolist()
+        generate(model, ids, max_new_tokens=4, device=device)  # warmup
+        _sync(device)
         t0 = time.perf_counter()
-        outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
-        if use_cuda:
-            torch.cuda.synchronize()
-        elapsed = time.perf_counter() - t0
-
-        total_tokens = bs * max_tokens
-        throughput = total_tokens / elapsed
-
-        m = llm.last_metrics
-        print(f"Batch Size: {bs:4d} | Generated: {total_tokens:5d} tokens | "
-              f"Time: {elapsed:7.2f}s | Overall: {throughput:7.2f} tok/s | "
-              f"Prefill: {m['prefill_throughput']:7.0f} tok/s | Decode: {m['decode_throughput']:7.0f} tok/s")
+        generate(model, ids, max_new_tokens=new, temperature=0.0, device=device)
+        _sync(device)
+        dt = time.perf_counter() - t0
+        print(f"  {prompt_len:>7} {new:>5} {dt:>9.2f} {new / dt:>8.1f}")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Correctness tests for the Triton polar-attention kernel.
 
-Oracle = model.blocks.polar_attention_online (gradchecked to ~1e-15 in
-verify_polar_online.py) and polar_reduce (materialized). Run from repo root:
+Oracle = model.blocks.polar_attention_online (a float64-gradchecked streaming
+reduction) and polar_reduce (materialized). Run from repo root:
 
     python -m kernel.test_polar_kernel
 """

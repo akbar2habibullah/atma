@@ -35,7 +35,7 @@ def polar_temp_null(n_keys, len_gain_raw, null_base, null_slope_raw):
 
 def polar_reduce(sigma, v, n_keys, *, v_null, null_base, null_slope_raw,
                  len_gain_raw, mag_beta_raw, eps=1e-6):
-    """Polar attention reduction (validated in polar_proto.py). Computed in fp32.
+    """Polar attention reduction (the validated materialized oracle). Computed in fp32.
 
     Splits attention into two length-invariant channels from ONE temp-sharpened
     softmax with an EV-corrected null sink:

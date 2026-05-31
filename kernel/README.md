@@ -68,7 +68,7 @@ c, mag = polar_attention_fwd(q, k, v, n_keys, is_causal=..., **polar_params)
 ## Numerical parity
 
 Verified against the gradchecked oracle (`polar_attention_online`, itself float64
-`gradcheck`ed to ~1e-15 in `verify_polar_online.py`):
+`gradcheck`ed to ~1e-15 when it was first written):
 
 | | fp32 | bf16 / fp16 |
 |---|---|---|

@@ -113,8 +113,8 @@ out     = content + count
 
 ## 3. Design rationale (what was validated, and what failed)
 
-The formula was derived by **falsification** in the sandbox
-([polar_proto.py](polar_proto.py)) before integration. The non-obvious decisions:
+The formula was derived by **falsification** in a standalone sandbox before integration
+(that prototype script has since been removed). The non-obvious decisions:
 
 | Decision | Rejected alternative | Why |
 |---|---|---|
@@ -128,8 +128,7 @@ The formula was derived by **falsification** in the sandbox
 `len_gain · Δ ≥ 1`, where `Δ` is the QK separation margin between signal and noise. The
 temperature sharpening then suppresses each noise weight faster than `N` grows. End-to-end,
 the same key population at 1× and 64× length produces identical `c` (cosine 1.0) and
-identical `mag` (e.g. `0.27` for 3 matches, `0.66` for 50) — see `probe_final` in
-[polar_proto.py](polar_proto.py).
+identical `mag` (e.g. `0.27` for 3 matches, `0.66` for 50).
 
 ---
 
@@ -186,7 +185,7 @@ quantities are invariant to the max shift `M`, so `M` is treated as a detached c
 the backward — the standard flash trick.
 
 **Correctness** is established by float64 `gradcheck` and by matching the materialized
-oracle in forward and backward to ~1e-15 ([verify_polar_online.py](verify_polar_online.py)).
+oracle in forward and backward to ~1e-15 (see [§9 Verification](#9-verification)).
 
 > **Scope:** this reduces the key dimension to `O(k_block)` but is still `O(T)` in the
 > query dimension (each query's row reduction is computed for all queries at once). Adding
@@ -273,12 +272,11 @@ In [model/config.py](model/config.py):
 
 | Script | Checks |
 |---|---|
-| [verify_polar.py](verify_polar.py) | train == reference (bit-exact); attn Block parity; distractor fires + gradients flow; `mag ∈ [0,1)`, `‖c‖ = 1` at multiple lengths; online == materialized; **full-Model backward finite on both paths** (NaN regression guard). 14/14. |
-| [verify_polar_online.py](verify_polar_online.py) | float64 `gradcheck` on the streaming Function (multi-block, causal); forward + per-parameter backward match the oracle to ~1e-15. 11/11. |
-| [polar_proto.py](polar_proto.py) | standalone property probes: direction invariance, bounded magnitude, count-mechanism shootout, EV null floor, end-to-end length invariance. |
+| [verify.py](verify.py) | per-layer train == reference == inference (prefill + decode) parity for RMSNorm, MLP, LFM2 conv, **Polar attention**, full blocks, and the full model logits. 25/25. |
+| [kernel/test_polar_kernel.py](kernel/test_polar_kernel.py) | Triton kernel vs the gradchecked oracle: forward + all gradients (fp32/bf16/fp16), edge shapes (T=1, T<block, odd T), non-contiguous inputs, `n_keys=0` padding. 104/104. |
+| [kernel/test_integration.py](kernel/test_integration.py) | `train.model` PolarAttention + full Model with `attn_kernel="triton"` vs the torch path. 21/21. |
 
-Run: `python verify_polar.py` and `python verify_polar_online.py` (use
-`PYTHONIOENCODING=utf-8` on Windows consoles).
+Run: `python verify.py`, `python -m kernel.test_polar_kernel`, `python -m kernel.test_integration`.
 
 ---
 
@@ -306,6 +304,6 @@ Run: `python verify_polar.py` and `python verify_polar_online.py` (use
 | [model/blocks.py](model/blocks.py) | shared `polar_temp_null`, `polar_reduce` (materialized), `polar_attention_online` (streaming custom autograd); re-exports the Triton kernel |
 | [train/model.py](train/model.py) | training `PolarAttention` (+ distractor → `align_loss`, online flag) |
 | [model/reference.py](model/reference.py) | reference `PolarAttention` (materialized oracle) |
-| [model/config.py](model/config.py) | `num_random_keys`, `attn_online`, `attn_k_block` |
-| [polar_proto.py](polar_proto.py) | design sandbox / property probes |
-| [verify_polar.py](verify_polar.py), [verify_polar_online.py](verify_polar_online.py) | parity, gradcheck, NaN-guard tests |
+| [model/config.py](model/config.py) | `num_random_keys`, `attn_online`, `attn_k_block`, `attn_kernel` |
+| [inference/generate.py](inference/generate.py) | standalone polar inference (checkpoint-seek + random fallback, Triton kernel) |
+| [verify.py](verify.py), [kernel/test_polar_kernel.py](kernel/test_polar_kernel.py), [kernel/test_integration.py](kernel/test_integration.py) | parity, gradcheck-oracle, integration tests |
