@@ -23,7 +23,7 @@ from model.config import AtmaConfig
 
 from train.data import get_data, data_generator
 
-num_chunks = 1
+num_chunks = 10
 
 get_data("finewebedu_val_%06d.bin" % 0)
 
@@ -57,10 +57,10 @@ print0("="*100)
 val_tokens = 20 * 524288
 batch_size = 8 * 64 * 1024
 mbs = 8
-val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens))
+val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens, seq_len=4096))
 
 BASE_SEQ_LEN = 1024
-EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64]
+EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64, 128, 256]
 EXTRAP_NUM_SEQS = 4  # sequences per length
 
 extrap_val_data = {}
@@ -190,7 +190,7 @@ for _ in range(num_trials):
     #        Training and Validation       #
     ########################################
 
-    train_loader = data_generator("finewebedu10B/finewebedu_train_*.bin", batch_size)
+    train_loader = data_generator("finewebedu10B/finewebedu_train_*.bin", batch_size, seq_len=4096)
 
     train_loss = None
     
