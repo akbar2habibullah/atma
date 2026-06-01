@@ -57,10 +57,10 @@ print0("="*100)
 val_tokens = 20 * 524288
 batch_size = 8 * 64 * 1024
 mbs = 8
-val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens))
+val_inputs, val_targets = next(data_generator("finewebedu10B/finewebedu_val_*.bin", val_tokens, seq_len=4096))
 
 BASE_SEQ_LEN = 1024
-EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64]
+EXTRAP_MULTIPLIERS = [2, 4, 8, 16, 32, 64, 128, 256]
 EXTRAP_NUM_SEQS = 4  # sequences per length
 
 extrap_val_data = {}
@@ -73,15 +73,15 @@ for _mult in EXTRAP_MULTIPLIERS:
     )
     extrap_val_data[_mult] = (_ext_inputs, _ext_targets)
 
-REG_MODE = 'zipfian'
+REG_MODE = 'baseline'
 SKETCH_DIM = 64
-SIGR_ALPHA = 0.01
+SIGR_ALPHA = 0.0
 TOKENIZER_NAME = "gpt2"        # HF tokenizer id used to produce the training data
 CHECKPOINT_DIR = "checkpoints" # directory where the final checkpoint is written
 
 DIST_ALIGN_LOSS_WEIGHT = 0.01
 
-atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024, num_random_keys=1024)
+atma_config = AtmaConfig(vocab_size=50304, num_hidden_layers=16, hidden_size=1024, num_random_keys=0)
 model = Model(atma_config, reg_mode=REG_MODE, sketch_dim=SKETCH_DIM).to(device)
 model = torch.compile(model)
 
@@ -190,7 +190,7 @@ for _ in range(num_trials):
     #        Training and Validation       #
     ########################################
 
-    train_loader = data_generator("finewebedu10B/finewebedu_train_*.bin", batch_size)
+    train_loader = data_generator("finewebedu10B/finewebedu_train_*.bin", batch_size, seq_len=4096)
 
     train_loss = None
     
