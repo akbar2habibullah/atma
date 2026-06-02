@@ -451,6 +451,117 @@ def run_window_sweep(model, args, device):
               "Keeps declining past the window under 'full' → genuine long-range gain.")
 
 
+def _haystack_pool(args, min_len, n, device):
+    """A pool of n real-text token tensors (CPU int64), each ≥ min_len tokens — the
+    'haystack'. From --hf_dataset (single long docs) or the .bin stream. In-distribution
+    text so the needle sits in realistic context."""
+    if getattr(args, "hf_dataset", None):
+        docs = select_long_docs(args.hf_dataset, args.hf_text_key, args.hf_split, min_len, n)
+        if not docs:
+            raise SystemExit(f"No haystack docs with ≥ {min_len + 1:,} tokens found.")
+        return docs
+    gen = data_generator(args.val_data, min_len, seq_len=min_len)
+    return [next(gen)[0].view(-1).to("cpu", torch.int64) for _ in range(n)]
+
+
+def run_needle(model, args, device):
+    """Induction-style needle-in-haystack realistic for a small/undertrained LM: plant a
+    natural sentence carrying a UNIQUE random key and a short spaced-digit VALUE early, then
+    re-present the same sentence (minus the value) at the end and score next-token loss on the
+    value. No instructions/QA — pure verbatim copy-at-distance (what induction heads do).
+
+    Sweeps the needle→query distance and compares full attention vs sliding windows. A window
+    W < distance physically can't see the needle (→ chance), so 'full' beating it at distance =
+    genuine long-range retrieval; 'full' decaying to the needle-absent baseline = no long-range
+    capability (and the OOD blowup is destroying it)."""
+    import random
+    from transformers import AutoTokenizer
+    from model import blocks
+    from train.model import PolarAttention
+
+    random.seed(1234)
+    tok = AutoTokenizer.from_pretrained("gpt2")
+    eot = tok.eos_token_id
+
+    distances = args.needle_distances or [256, 512, 1024, 2048, 4096, 8192]
+    win_cfgs = [_parse_window(w) for w in (args.windows or ["full"])]
+    labels = [lbl for lbl, _ in win_cfgs]
+    vlen = args.needle_val_len
+    n_trials = args.num_seqs
+    polar_layers = [b.attn for b in model.blocks if isinstance(b.attn, PolarAttention)]
+
+    # haystack must cover the largest gap + the needle/query scaffold
+    overhead = 64
+    pool = _haystack_pool(args, max(distances) + overhead, n_trials, device)
+
+    def make_needle():
+        key = random.randint(10 ** 6, 10 ** 7 - 1)          # unique key ⇒ unambiguous induction binding
+        digits = [random.randint(0, 9) for _ in range(vlen)]
+        cue = tok.encode(f" The access code for record {key} is")
+        val = tok.encode("".join(f" {d}" for d in digits))   # one token per spaced digit
+        return cue, val
+
+    def value_logits(inputs):
+        x = _blocks_forward(model, inputs)                   # (1, L-1, D)
+        logits = model.proj(model.norm(x[:, -len(val):])).float()
+        return (15 * logits * (logits.square() + 15 ** 2).rsqrt())[0]   # (vlen, vocab)
+
+    # accumulators
+    ce = {(l, d): 0.0 for l in labels for d in distances}
+    acc = {(l, d): 0.0 for l in labels for d in distances}
+    base_ce = 0.0
+    print(f"\nNeedle retrieval ({n_trials} trials, value = {vlen} spaced random digits; "
+          f"windows={labels}; haystack = "
+          f"{args.hf_dataset or args.val_data}):\n")
+
+    with torch.no_grad():
+        for t in range(n_trials):
+            hay = pool[t % len(pool)]
+            cue, val = make_needle()
+            needle = cue + val
+            val_t = torch.tensor(val, device=device)
+            # needle-absent baseline (cue appears only at the query → model's prior on the value)
+            g = hay[:distances[0] + len(needle)].tolist()
+            seq = [eot] + g + cue + val
+            inp = torch.tensor(seq[:-1], dtype=torch.int32, device=device).view(1, -1)
+            for attn in polar_layers:
+                attn.window = None
+            base_ce += F.cross_entropy(value_logits(inp), val_t, reduction="mean").item()
+
+            for d in distances:
+                gap = hay[:d].tolist()
+                seq = [eot] + needle + gap + cue + val      # needle at start, query at end, gap=d
+                inp = torch.tensor(seq[:-1], dtype=torch.int32, device=device).view(1, -1)
+                for label, W in win_cfgs:
+                    for attn in polar_layers:
+                        attn.window = W
+                    lg = value_logits(inp)
+                    ce[(label, d)] += F.cross_entropy(lg, val_t, reduction="mean").item()
+                    acc[(label, d)] += (lg.argmax(-1) == val_t).float().mean().item()
+    for attn in polar_layers:
+        attn.window = None
+
+    base = base_ce / n_trials
+    print(f"Needle-absent baseline (chance) CE/digit: {base:.3f}\n")
+
+    def table(title, mat, fmt):
+        print(title)
+        print(f"{'distance':>9}  " + "  ".join(f"{l:>9}" for l in labels))
+        print("-" * (11 + 11 * len(labels)))
+        for d in distances:
+            print(f"{d:>9,}  " + "  ".join(f"{mat[(l, d)] / n_trials:>9{fmt}}" for l in labels))
+        print()
+
+    table("value CE / digit  (lower = retrieved; ≈ baseline = not retrieved):", ce, ".3f")
+    table("per-digit accuracy %  (greedy):", {k: v * 100 for k, v in acc.items()}, ".1f")
+    print("Reading it:")
+    print("  • full CE << baseline out to large distance → genuine long-range retrieval → "
+          "compression could preserve it.")
+    print("  • full CE → baseline past ~training length (and a window < distance also at "
+          "baseline) → no long-range retrieval capability; compression can't add it.")
+    print("  • a window W < distance should sit at baseline by construction (validates the metric).")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Length extrapolation evaluation")
     parser.add_argument("--checkpoint", default="checkpoints",
@@ -490,6 +601,15 @@ def main():
                         help="With --windows: also dump per-token loss L(t) binned by absolute position "
                              "at the max multiplier — separates genuine long-range gain (curve keeps "
                              "declining under 'full') from the averaging artifact (curve plateaus past W).")
+    parser.add_argument("--needle", action="store_true",
+                        help="Induction needle-in-haystack: plant a natural sentence with a unique key + "
+                             "spaced-digit value, re-present it at the end, score value next-token loss vs "
+                             "needle→query distance. Tests long-range RETRIEVAL capability (vs perplexity). "
+                             "Compares full attention vs --windows (default: full only).")
+    parser.add_argument("--needle_distances", type=int, nargs="+", default=None,
+                        help="Needle→query distances to sweep (default: 256 512 1024 2048 4096 8192).")
+    parser.add_argument("--needle_val_len", type=int, default=5,
+                        help="Number of spaced random digits in the needle value (default: 5).")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -500,8 +620,8 @@ def main():
     print(f"Loading checkpoint from '{args.checkpoint}'...")
     # Diagnose needs eager modules (hooks + the python-side probe sink survive only
     # uncompiled) and the streaming polar path (materialized O(T^2) OOMs past ~16x).
-    probe_mode = (args.diagnose or args.window is not None
-                  or args.hf_dataset is not None or args.windows is not None)
+    probe_mode = (args.diagnose or args.window is not None or args.hf_dataset is not None
+                  or args.windows is not None or args.needle)
     model, config = load_from_checkpoint(
         args.checkpoint, device,
         compile_model=not probe_mode, force_probe_path=probe_mode,
@@ -510,6 +630,9 @@ def main():
     print(f"Model: {num_params:.2f}M parameters  |  hidden={config.hidden_size}  "
           f"layers={config.num_hidden_layers}  vocab={config.vocab_size}")
 
+    if args.needle:
+        run_needle(model, args, device)
+        return
     if args.windows is not None:
         run_window_sweep(model, args, device)
         return
