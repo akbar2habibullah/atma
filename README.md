@@ -17,28 +17,24 @@
 
 Atma uses a **3:1 conv-to-attention ratio** across 16 decoder layers:
 
-- **LFM2 Gated Convolution** (12 layers): Inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
-- **Polar Attention** (4 layers, **default**): a length-invariant replacement for softmax SDPA. It keeps the Canon-B surround (GQA, horizontal residual convs on Q/K/V, QK-norm, `output * sigmoid(gate)`) but replaces the softmax core with two channels — a count-blind **direction** unit vector and a bounded **magnitude** (participation ratio through an extreme-value-corrected null sink). This bounds the attention output at any length, where softmax dilutes and blows up. See [POLAR_ATTENTION.md](POLAR_ATTENTION.md) for the full derivation. (The legacy softmax `CausalSelfAttention` remains in the codebase but is no longer wired into the model.)
+- **LFM2 Gated Convolution** (12 layers): inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
+- **Polar Attention** (4 layers, **default**): a length-invariant replacement for softmax SDPA. It keeps the Canon-B surround (GQA, horizontal residual convs on Q/K/V, QK-norm, `output * sigmoid(gate)`) but replaces the softmax core with two channels — a count-blind **direction** unit vector and a bounded **magnitude** (participation ratio through an extreme-value-corrected null sink). This bounds the attention output at any length, where softmax dilutes and blows up. Full derivation: **[POLAR_ATTENTION.md](POLAR_ATTENTION.md)**. (The legacy softmax `CausalSelfAttention` remains in the tree but is no longer wired into the model.)
 
-Each decoder block follows a pre-norm pattern: `x = x + sublayer(norm(x))` followed by `x = x + MLP(norm(x))`. The MLP uses squared ReLU gating with 4x hidden expansion.
+Each decoder block is pre-norm: `x = x + sublayer(norm(x))` then `x = x + MLP(norm(x))`. The MLP uses squared-ReLU gating with 4× hidden expansion.
 
-| Config | Value |
-|---|---|
-| Parameters | 369.72M |
-| Hidden dim | 1024 |
-| Heads | 8 (head_dim=128) |
-| KV Heads | 2 (1:4 GQA Ratio) |
-| Layers | 16 (12 conv + 4 attn) |
-| Vocab | 50304 |
-| Sequence length | 1024 |
+| Config | Value | | Config | Value |
+|---|---|---|---|---|
+| Parameters | 369.72M | | Layers | 16 (12 conv + 4 attn) |
+| Hidden dim | 1024 | | Heads | 8 (head_dim=128) |
+| Vocab | 50304 | | KV Heads | 2 (1:4 GQA) |
+| Sequence length | 1024 | | | |
 
-### One-Codebase Workflow
-The repository maintains strict numerical equivalence across different optimized pipelines:
+The repo maintains strict numerical equivalence across its optimized pipelines (`verify.py`, `atol=1e-4`):
 
 ```text
              ┌───────────────────┐     ┌─────────────────────┐
              │ TRAINING PIPELINE │ ──> │  REFERENCE MODEL    │
-             │ (FP8/FP16, Muon)  │     │ (Pure PyTorch SDPA) │
+             │ (FP8/FP16, Muon)  │     │ (PyTorch reference) │
              └───────────────────┘     └─────────────────────┘
                        │                         │
                        └───────────┬─────────────┘
@@ -50,281 +46,53 @@ The repository maintains strict numerical equivalence across different optimized
              └─────────────────────────────────────────────┘
 ```
 
-## Training
+> Equivalence currently holds for **training ↔ reference**. The paged inference engine still runs legacy softmax attention; the Polar port is the main tracked task — see [docs/inference.md](docs/inference.md).
 
-Training pipeline (based on NanoGPT speedrun methodology) with dual optimizers:
-- **Muon** for 2D+ weight matrices (lr=0.02, wd=0.01)
-- **AdamW** for embeddings, projections, and 1D params
-- Optional **SigReg** regularization (covariance whitening, kernel matching, discrete, or Zipfian modes)
+## Quick start
 
-Supports FP16 (safe scaled matmul) and FP8 (E4M3/E5M2) custom ops.
-
-### Training Performance
-
-- Total steps: 190
-- Total training tokens: 100M~
-- Batch size: 524,288 tokens (8 × 64K microbatches)
-
-| GPU         | Avg Step Time | Train Time | Model FLOPs Utilization (MFU) |
-|-------------|---------------|------------|-------------------------------|
-| NVIDIA L4   | 28.64s        | 5485.82s   | 36.6%                         |
-| NVIDIA H100 | 2.84s         | 605.11s    | 45.1%                         |
-
-### Training on more data
-
-```
-python train.py
-```
-
-Downloads FineWebEdu-10B (GPT-2 tokenized), memory-maps shards, and trains with gradient accumulation.
-
-### Length Extrapolation & Long-Range Retrieval
-
-Polar Attention is designed to **train short, infer long**. The evidence below is produced by [eval.py](eval.py) (extrapolation sweep, sliding-window probe, single-document loss, and an induction needle-in-haystack), all runnable on a single 24 GB L4.
-
-**1. Polar bounds extrapolation; softmax does not.** Matched runs (both trained at seq_len 4096, no distractor), validation loss vs context multiple:
-
-| Context | 1× | 8× | 64× | 512× |
-|---|---|---|---|---|
-| Softmax `CausalSelfAttention` | 3.20 | 3.38 | 10.05 | **13.55** |
-| **Polar Attention** | 3.34 | 3.71 | 6.02 | **6.48** |
-
-Softmax dilutes as keys accumulate and the loss explodes; Polar stays bounded at every length, for a small in-distribution cost. The residual degradation is the unbounded attention *pool* growing out-of-distribution — capping it with a sliding window ≈ the training length is near-optimal for perplexity (`python eval.py --window 2048 ...`).
-
-**2. The distractor loss heavy-lifts long-range retrieval.** Setting `num_random_keys > 0` adds a calibration loss: random keys projected through `K` must lose to the EV-corrected null sink (it learns to reject noise and keeps attention sharp at length). It barely moves perplexity, but it is decisive for *retrieval*. Induction needle-in-haystack (plant a natural sentence with a unique key + 5-digit value, re-present it at distance, score greedy per-digit accuracy on the value; trained at seq_len 2048, chance ≈ 1–4 %):
-
-| Needle distance | `num_random_keys=0` | `num_random_keys=2048` |
-|---|---|---|
-| 2,048 (1× train) | 97.5 % | 93.8 % |
-| 4,096 (2×) | 60.0 % | 70.0 % |
-| 8,192 (4×) | 2.5 % (chance) | **48.8 %** |
-| 16,384 (8×) | 0 % | **32.5 %** |
-| 32,768 (16×) | 0 % | **10.0 %** |
-| 65,536 (32×) | 0 % | **6.3 %** |
-
-Without the distractor, retrieval falls off a cliff just past the training length; with it, the model still recalls a fact planted **32× beyond** its training context. A sliding window cannot do this — it is retrieval-blind past its width — so the choice is workload-dependent: **plain language modeling → sliding window; tasks needing distant recall → full Polar attention with `num_random_keys > 0`.**
-
-Reproduce:
 ```bash
-python eval.py --hf_dataset codelion/finepdfs-100M --windows 128 512 2048 full --per_position   # perplexity vs window
-python eval.py --needle --hf_dataset codelion/finepdfs-100M --needle_distances 2048 4096 8192 16384 32768 65536   # retrieval
+python train.py          # train (downloads FineWebEdu-10B, GPT-2 tokenized)
+python verify.py         # cross-check training vs reference at atol=1e-4
 ```
 
-### Loading a checkpoint for inference
-
-After training completes, `train.py` writes three files to `checkpoints/`:
-
-| File | Contents |
-|---|---|
-| `weights.pt` | `{"model": state_dict}` with all `_orig_mod.` compile prefixes stripped |
-| `config.json` | `AtmaConfig` fields (dtype stored as a plain string, e.g. `"bfloat16"`) |
-| `tokenizer.json` | `{"tokenizer_name": "<hf-repo-id>"}` for `AutoTokenizer.from_pretrained` |
-
-To load the checkpoint into the inference engine:
-
 ```python
-import json, torch
-from model.config import AtmaConfig
 from inference import LLM, SamplingParams
-from transformers import AutoTokenizer
 
-with open("checkpoints/config.json") as f:
-    cfg = json.load(f)
-with open("checkpoints/tokenizer.json") as f:
-    tok = json.load(f)
-
-tokenizer = AutoTokenizer.from_pretrained(tok["tokenizer_name"])
-
-atma_config = AtmaConfig(
-    vocab_size=cfg["vocab_size"],
-    num_hidden_layers=cfg["num_hidden_layers"],
-    hidden_size=cfg["hidden_size"],
-    head_dim=cfg["head_dim"],
-    attn_kernel_size=cfg["attn_kernel_size"],
-    conv_kernel_size=cfg["conv_kernel_size"],
-    max_position_embeddings=cfg["max_position_embeddings"],
-    rms_norm_eps=cfg["rms_norm_eps"],
-    dtype=getattr(torch, cfg["dtype"]),
-)
-
-llm = LLM(model="checkpoints/weights.pt", hf_config=atma_config)
-params = SamplingParams(temperature=0.7, max_tokens=256)
-outputs = llm.generate(["Hello, world!"], params)
+llm = LLM(model="checkpoints/weights.pt")
+outputs = llm.generate(["Hello, world!"], SamplingParams(temperature=0.7, max_tokens=256))
 print(outputs[0]["text"])
 ```
 
-The `CHECKPOINT_DIR` and `TOKENIZER_NAME` constants at the top of `train.py` control where the checkpoint lands and which tokenizer is recorded.
+## Highlights — train short, infer long
 
-### Tokenizing a custom dataset
+Polar Attention keeps the attention output bounded at any length, where softmax dilutes and explodes:
 
-`train/data.py` provides `tokenize_to_bin` to preprocess any HuggingFace dataset into the binary shard format expected by the training loop.
-
-```python
-from train.data import tokenize_to_bin
-
-tokenize_to_bin(
-    dataset_name="HuggingFaceFW/fineweb",
-    tokenizer_name="gpt2",                 # any HF tokenizer repo id
-    output_dir="./my_dataset_bins",
-    file_prefix="fineweb",
-    dataset_config="sample-10BT",          # optional dataset config name
-    shard_size=10**8,                      # tokens per shard (default 100M)
-    text_field="text",                     # dataset column containing document text
-    split="train",
-)
-```
-
-Each shard is written as a `.bin` file with a 256 × int32 header followed by packed token ids. The first shard is named `val`, the rest `train`:
-
-```
-my_dataset_bins/
-├── fineweb_val_000000.bin
-├── fineweb_train_000001.bin
-├── fineweb_train_000002.bin
-└── ...
-```
-
-**Token storage width** is chosen automatically based on vocabulary size:
-
-| Vocab size | Storage | Example tokenizers |
+| validation loss @ 512× context | Softmax | **Polar** |
 |---|---|---|
-| ≤ 65 536 | uint16 (2 bytes/token) | GPT-2, GPT-NeoX |
-| > 65 536 | uint32 (4 bytes/token) | Llama-3, Mistral, Gemma |
+| (trained at seq_len 4096) | 13.55 | **6.48** |
 
-The width is stored in `header[3]` so `_load_data_shard` detects it automatically. Legacy files produced before this change have `header[3] == 0` and are read as uint16.
+And the optional distractor loss (`num_random_keys > 0`) extends long-range **retrieval** dramatically — an induction needle planted **32× beyond** the training length is still recalled (6.3% vs 0% / chance without it). Full evidence, the perplexity-vs-window analysis, and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
 
-To point `train.py` at the new shards, update the `filename_pattern` argument passed to `data_generator`:
+## Documentation
 
-```python
-from train.data import data_generator
+| Doc | Contents |
+|---|---|
+| [POLAR_ATTENTION.md](POLAR_ATTENTION.md) | Polar Attention: derivation, design rationale, verification |
+| [docs/training.md](docs/training.md) | Training pipeline, performance, checkpoints, tokenizing custom data |
+| [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
+| [docs/inference.md](docs/inference.md) | Inference engine, usage, throughput, the Polar-port status |
+| [kernel/README.md](kernel/README.md) | FlashAttention-style Triton polar kernels |
 
-train_loader = data_generator("my_dataset_bins/fineweb_train_*.bin", batch_size, seq_len=1024)
-val_loader   = data_generator("my_dataset_bins/fineweb_val_*.bin",   batch_size, seq_len=1024)
-```
-
-## Inference
-
-> **Polar Attention is not yet wired into the paged inference engine.** The production engine below (`inference/llm.py` → `inference/models/atma.py` → `inference/layers/attention.py`) still runs the **legacy softmax causal attention** (FlashAttention / SDPA paged path), so its outputs match a trained checkpoint only for softmax models. For **Polar checkpoints**, use the self-contained generator [inference/generate.py](inference/generate.py), which runs the FlashAttention-style Triton polar kernel (full-recompute). A paged polar decode kernel already exists (`_polar_decode_kernel` in [kernel/polar_triton.py](kernel/polar_triton.py)); porting it into the paged engine — so the engine, training, and reference paths are once again numerically equivalent — is the main tracked **future task**. `verify.py`'s attention/block/model *inference* checks are expected to fail until then.
-
-Production-grade inference engine featuring:
-
-- **Paged KV cache** with hash-based prefix caching (xxhash) for memory sharing
-- **Chunked prefill** and **preemption** scheduling
-- **CUDA graph capture** for decode at multiple batch sizes
-- **Centralized conv state tables** enabling graph-captured decode
-- **Tensor parallelism** support (ColumnParallel, RowParallel, QKVParallel, VocabParallel)
-- **Flash Attention 3/2** with Triton KV cache kernel and SDPA fallback
-- **Gumbel-max sampling**
-
-### Usage
-
-```python
-from inference import LLM, SamplingParams
-
-llm = LLM(model="path/to/weights.pt")
-params = SamplingParams(temperature=0.7, max_tokens=256)
-outputs = llm.generate(["Hello, world!"], params)
-print(outputs[0]["text"])
-```
-
-### Inference Decoding Performance
-
-Model Size: 369.72M Params (16 num_layers + 1024 hidden_dim)
-
-| Batch Size | NVIDIA L4  (tok/s) | NVIDIA H100 (tok/s) | NVIDIA T4 (tok/s)  |
-|------------|--------------------|---------------------|--------------------|
-| 1          | 235                | 344                 | 55                 |
-| 4          | 906                | 1,432               | 136                |
-| 8          | 1,775              | 2,809               | 240                |
-| 16         | 3,454              | 5,269               | 386                |
-| 32         | 6,180              | 10,112              | 558                |
-| 64         | 10,859             | 18,548              | 723                |
-| 128        | 17,531             | 33,638              | OOM                |
-| 256        | 24,023             | 51,966              | OOM                |
-| 512        | 27,806             | 75,749              | OOM                |
-| 1024       | 27,912             | 92,941              | OOM                |
-| 2048       | 28,268             | **96,972**          | OOM                |
-
-Measured at 256 generated tokens per sequence, prompt length ~320 words. 
-
-- NVIDIA L4: FA3 enabled and kvcache_block_size=64.
-- NVIDIA H100: FA2 enabled and kvcache_block_size=256.
-- NVIDIA T4: SDPA only, max_num_batched_tokens=4096, and kvcache_block_size=32.
-
-### Comparison with vLLM (H100)
-
-Using identical model [LiquidAI/LFM2.5-350M](https://huggingface.co/LiquidAI/LFM2.5-350M) with command:
-
-```
-> VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_DEEP_GEMM=0 vllm bench throughput --model LiquidAI/LFM2.5-350M --random-input-len 512 --random-output-len 256 --num-prompts 512
-
-Throughput: 70.77 requests/s, 54350.30 total tokens/s, 18116.77 output tokens/s
-Total num prompt tokens:  262144
-Total num output tokens:  131072
-``` 
-
-### Further Throughput Benchmark
-
-We also try larger model size 8937.41M parameters (32 num_layers + 4096 hidden_dim) on H100 to test performance ceiling of Atma inference engine.
-
-| Batch Size | Decoding (tok/s) |
-|------------|------------------|
-| 1          | 91               |
-| 4          | 347              |
-| 8          | 688              |
-| 16         | 1,320            |
-| 32         | 2,557            |
-| 64         | 4,785            |
-| 128        | 8,329            |
-| 256        | 13,043           |
-| 512        | 16,981           |
-| 1024       | OOM              |
-| 2048       | OOM              |
-
-> Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.
-
-## Verification
-
-The **training** and **reference** implementations are numerically equivalent at `atol=1e-4` (Polar attention is bit-exact between them in the default materialized configuration):
-
-```
-python verify.py
-```
-
-Tests each layer type (RMSNorm, MLP, LFM2Conv, Attention, DecoderBlock) and end-to-end prefill + decode. The **inference**-path attention/block/model checks are expected to fail until Polar is ported into the paged engine (see the note under [Inference](#inference)); the legacy softmax path still verifies.
-
-## Project Structure
+## Project structure
 
 ```
 atma/
-├── train.py                     # Main training script
-├── eval.py                      # Length-extrapolation, sliding-window & needle-in-haystack eval
-├── bench_inference.py           # Multi-batch-size throughput benchmark
-├── example_inference.py         # End-to-end generation demo
-├── verify.py                    # Numerical cross-implementation verification
-├── POLAR_ATTENTION.md           # Polar Attention derivation, design rationale & verification
-├── model/
-│   ├── config.py                # AtmaConfig dataclass
-│   ├── layers.py                # RMSNorm, MLP (shared bases)
-│   ├── blocks.py                # shared bases + Polar reductions (polar_reduce, online, _PROBE)
-│   └── reference.py             # ReferenceModel (ground-truth pure PyTorch, Polar attention)
-├── kernel/
-│   ├── polar_triton.py          # FlashAttention-style Triton polar kernels (fwd/bwd, decode, sliding window)
-│   └── test_*.py                # kernel-vs-oracle parity & integration tests
-├── train/
-│   ├── model.py                 # TrainModel (Polar attention + custom FP16/FP8 matmuls)
-│   ├── data.py                  # FineWebEdu binary shard loader
-│   ├── optimizer.py             # Muon optimizer with Newton-Schulz
-│   └── reg.py                   # SigReg regularization modes
-└── inference/
-    ├── llm.py                   # User-facing LLM class (paged engine — softmax attn, Polar port pending)
-    ├── generate.py              # Self-contained Polar-attention generator (Triton kernel)
-    ├── config.py                # Inference Config
-    ├── sampling_params.py       # SamplingParams
-    ├── models/atma.py           # Inference model forward pass
-    ├── layers/                  # attention, sampler, linear, embed_head, layernorm
-    ├── engine/                  # llm_engine, scheduler, block_manager, sequence, model_runner
-    └── utils/                   # Weight loader, thread-local context
+├── train.py / eval.py / verify.py     # train · evaluate (extrapolation, window, needle) · cross-verify
+├── POLAR_ATTENTION.md                 # Polar Attention derivation
+├── model/      # config, layers, blocks (Polar reductions), reference.py (pure-PyTorch oracle)
+├── kernel/     # FlashAttention-style Triton polar kernels (fwd/bwd, decode, sliding window) + tests
+├── train/      # TrainModel (Polar + FP16/FP8 matmuls), data loader, Muon optimizer, SigReg
+└── inference/  # paged engine (softmax; Polar port pending) + generate.py (self-contained Polar)
 ```
 
 ## References
