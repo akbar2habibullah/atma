@@ -2,14 +2,14 @@
 
 Run on the pod:  python verify_fla.py
 
-The FLA path is mapped to our recurrence by value pre-scaling (v <- gamma*v, so FLA's
-beta*v write becomes our gamma*beta*v) + g=log(gamma) + in-kernel L2-norm. The one
-expected residual is the readout self-term convention (FLA includes the current token in
-o_t; the torch reference uses M_{t-1} q_t, strictly causal). So:
+The torch reference now uses FLA's exact convention (decay-first, undecayed write,
+self-inclusive readout M_t q_t), so the recurrences MATCH. The only residual is numerics:
+FLA runs the kernel in bf16, the torch reference computes in fp32, and L2-norm is applied
+in-kernel vs via F.normalize. So:
 
-  rel_err  < ~5%   -> mapping is right; residual is the self-term convention (fine to ship).
-  rel_err  > ~15%  -> likely an API mismatch (g space / beta range / layout). Send the
-                      numbers and I'll fix the mapping.
+  rel_err  < ~0.05 -> correct (bf16-vs-fp32 numerics only). Ship the FLA path.
+  rel_err  > ~0.10 -> a real residual mismatch (g space / beta range / layout / scale).
+                      Send the numbers and I'll fix it.
 
 Also smoke-checks: outputs finite, gate-head gradients finite & non-trivial.
 """

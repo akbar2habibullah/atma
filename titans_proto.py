@@ -51,9 +51,14 @@ import torch
 # Reference oracle: sequential token-by-token scan (the definition).
 # --------------------------------------------------------------------------- #
 def gated_delta_sequential(q, k, v, gamma, beta, S0=None):
-    """Sequential gated delta rule. Returns (readouts R (B,H,N,dv), final state (B,H,dv,dk)).
+    """Sequential gated delta rule (flash-linear-attention convention). Returns
+    (readouts R (B,H,N,dv), final state (B,H,dv,dk)).
 
-    Causal readout: r_t uses M_{t-1} (state BEFORE writing token t)."""
+    Per step: decay FIRST, predict on the decayed state, write UNDECAYED, then read the
+    post-write state (self-inclusive):
+        M <- gamma_t M ; pred = M k_t ; M <- M + beta_t(v_t - pred) k_t^T ; r_t = M q_t
+    Matches fla.ops.gated_delta_rule (M_t = gamma M_{t-1}(I - beta k k^T) + beta v k^T,
+    readout M_t q_t)."""
     B, H, N, dk = q.shape
     dv = v.shape[-1]
     S = torch.zeros(B, H, dv, dk, dtype=q.dtype, device=q.device) if S0 is None else S0
@@ -61,11 +66,11 @@ def gated_delta_sequential(q, k, v, gamma, beta, S0=None):
     for t in range(N):
         qt, kt, vt = q[:, :, t], k[:, :, t], v[:, :, t]          # (B,H,dk),(B,H,dk),(B,H,dv)
         gt, bt = gamma[:, :, t], beta[:, :, t]                   # (B,H)
-        r = torch.einsum("bhvd,bhd->bhv", S, qt)                 # readout (pre-write)
-        R.append(r)
-        pred = torch.einsum("bhvd,bhd->bhv", S, kt)              # M_{t-1} k_t
-        w = bt[..., None] * (vt - pred)                          # (B,H,dv)
-        S = gt[..., None, None] * (S + torch.einsum("bhv,bhd->bhvd", w, kt))
+        S = gt[..., None, None] * S                              # decay first
+        pred = torch.einsum("bhvd,bhd->bhv", S, kt)              # pred on decayed state
+        u = bt[..., None] * (vt - pred)                          # delta value
+        S = S + torch.einsum("bhv,bhd->bhvd", u, kt)            # write (undecayed)
+        R.append(torch.einsum("bhvd,bhd->bhv", S, qt))          # readout AFTER write
     return torch.stack(R, dim=2), S
 
 

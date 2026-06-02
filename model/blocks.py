@@ -316,14 +316,17 @@ def polar_attention_online(q, k, v, n_keys, *, v_null, null_base, null_slope_raw
 @torch.compiler.disable   # the unrolled chunk loop + linalg solve blows up inductor compile;
                           # run it eager (FLA's kernel is the compiled fast path instead).
 def gated_delta_chunked(q, k, v, gamma, beta, chunk=64, S0=None):
-    """Chunkwise-parallel gated delta rule. q,k: (B,H,N,dk); v: (B,H,N,dv);
-    gamma,beta: (B,H,N) in (0,1). Returns (R (B,H,N,dv), S_final (B,H,dv,dk)).
+    """Chunkwise-parallel gated delta rule (flash-linear-attention convention). q,k:
+    (B,H,N,dk); v: (B,H,N,dv); gamma,beta: (B,H,N) in (0,1). Returns (R (B,H,N,dv),
+    S_final (B,H,dv,dk)). Matches gated_delta_sequential (decay-first, write undecayed,
+    self-inclusive readout M_t q_t) and fla.ops.gated_delta_rule.
 
-    Causal readout r_t = M_{t-1} q_t. Within a chunk the running-state coupling is
-    removed by solving the strictly-lower-triangular UT system
-        (I + diag(gamma*beta) D) A = diag(gamma*beta) (V - C_carry),
-    D[i,j] = (g_{i-1}/g_j)(k_j . k_i) for j < i, g_i = prod_{l<=i} gamma_l. Sequential
-    only across chunks (N/chunk steps); intra-chunk work is batched matmuls + one solve.
+    Within a chunk the running-state coupling is removed by solving the unit lower-
+    triangular UT system  (I + diag(beta) D) U = diag(beta)(V - C_carry),  where the
+    increment u_t = beta_t(v_t - gamma_t M_{t-1} k_t), D[p,s] = (g_p/g_s)(k_s . k_p) for
+    s<p, g_p = prod_{l<=p} gamma_l (INCLUSIVE -> decay applied before the write). Readout
+    r_p = g_p(M_0 q_p) + sum_{s<=p} (g_p/g_s)(k_s . q_p) u_s  (s<=p is self-inclusive).
+    Sequential only across chunks; intra-chunk is batched matmuls + one triangular solve.
     NOTE: keys/queries must be unit-norm for delta-rule stability (see TitansMemory)."""
     B, H, N, dk = q.shape
     dv = v.shape[-1]
@@ -335,34 +338,31 @@ def gated_delta_chunked(q, k, v, gamma, beta, chunk=64, S0=None):
         C = ce - cs
         qc, kc, vc = q[:, :, cs:ce], k[:, :, cs:ce], v[:, :, cs:ce]
         gc_, bc = gamma[:, :, cs:ce], beta[:, :, cs:ce]
-        gb = gc_ * bc
 
-        clg = torch.cumsum(torch.log(gc_), dim=-1)                       # Lgfull[1..C]
-        Lgfull = torch.cat([torch.zeros_like(clg[..., :1]), clg], dim=-1)  # (B,H,C+1)
-        Lp, Ls1 = Lgfull[..., :C], Lgfull[..., 1:C + 1]
-
+        clg = torch.cumsum(torch.log(gc_), dim=-1)                       # clg[p]=log g_p (inclusive)
         idx = torch.arange(C, device=device)
-        strict = idx[:, None] > idx[None, :]                             # [p,s] = s < p
-        diff = Lp[..., :, None] - Ls1[..., None, :]
-        ratio = torch.exp(diff.masked_fill(~strict, float("-inf")))     # 0 where s>=p
+        diff = clg[..., :, None] - clg[..., None, :]                     # log(g_p/g_s)  (B,H,C,C)
+        strict = idx[:, None] > idx[None, :]                             # s < p
+        incl = idx[:, None] >= idx[None, :]                              # s <= p (self-inclusive)
+        dec_strict = torch.exp(diff.masked_fill(~strict, float("-inf")))  # g_p/g_s, 0 where s>=p
+        dec_incl = torch.exp(diff.masked_fill(~incl, float("-inf")))      # g_p/g_s, 0 where s>p
 
-        D = ratio * torch.einsum("bhpd,bhsd->bhps", kc, kc)             # (g_{i-1}/g_j)(k_j.k_i)
-        Rq = ratio * torch.einsum("bhpd,bhsd->bhps", qc, kc)           # readout intra factor
-        carry = torch.exp(Lp)                                           # g_{i-1}
-        c_mat = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, kc)
-        cprime = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, qc)
+        D = dec_strict * torch.einsum("bhpd,bhsd->bhps", kc, kc)         # (g_p/g_s)(k_s.k_p), s<p
+        Rq = dec_incl * torch.einsum("bhpd,bhsd->bhps", qc, kc)          # (g_p/g_s)(k_s.q_p), s<=p
+        carry = torch.exp(clg)                                           # g_p (decay incl. step p)
+        c_mat = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, kc)   # g_p M_0 k_p
+        cprime = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, qc)  # g_p M_0 q_p
 
-        # (I + diag(gb)D) is unit lower-triangular (D strictly lower) -> a triangular
-        # solve (O(C^2), light backward) is exact and far cheaper than a general LU solve.
-        # unitriangular=True treats the diagonal as 1, so we pass the strictly-lower part.
-        L = gb[..., :, None] * D
-        A = torch.linalg.solve_triangular(L, gb[..., :, None] * (vc - c_mat),
+        # (I + diag(beta) D) is unit lower-triangular (D strictly lower) -> exact triangular
+        # solve. unitriangular=True treats the diagonal as 1, so pass the strictly-lower part.
+        L = bc[..., :, None] * D
+        U = torch.linalg.solve_triangular(L, bc[..., :, None] * (vc - c_mat),
                                           upper=False, unitriangular=True)
-        Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, A))
+        Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, U))
 
-        out_ratio = torch.exp(Lgfull[..., C:C + 1] - Ls1)              # g_C/g_j
-        gC = torch.exp(Lgfull[..., C])
-        S = gC[..., None, None] * S + torch.einsum("bhcv,bhcd->bhvd", out_ratio[..., None] * A, kc)
+        out_ratio = torch.exp(clg[..., -1:] - clg)                      # g_C/g_s
+        gC = torch.exp(clg[..., -1])                                    # g_C
+        S = gC[..., None, None] * S + torch.einsum("bhcv,bhcd->bhvd", out_ratio[..., None] * U, kc)
     return torch.cat(Rs, dim=2), S
 
 
@@ -409,13 +409,14 @@ class TitansMemory(nn.Module):
         use_fla = (self.kernel in ("auto", "fla") and _HAS_FLA and q_t.is_cuda)
 
         if use_fla:
+            # gated_delta_chunked / gated_delta_sequential now use FLA's native convention,
+            # so pass q,k,v straight through (no value pre-scaling). g = log(gamma) decay,
+            # in-kernel L2-norm handles the unit-key requirement; scale washes out post-RMSNorm.
             g = F.logsigmoid(g_logit)                                  # log-decay (<=0), (B,T,H)
-            gamma = g.exp()
             beta = torch.sigmoid(b_logit)
             q = q_t.transpose(1, 2).contiguous()                       # (B,T,H,dk)
             k = k_t.transpose(1, 2).contiguous()
-            # value pre-scaling: FLA writes beta*v; scaling v by gamma yields our gamma*beta*v
-            v = (v_t.transpose(1, 2).float() * gamma.unsqueeze(-1)).to(q_t.dtype).contiguous()
+            v = v_t.transpose(1, 2).contiguous()
             r, _ = chunk_gated_delta_rule(q, k, v, g.contiguous(), beta.contiguous(),
                                           scale=1.0, use_qk_l2norm_in_kernel=True)  # (B,T,H,dk)
         else:
