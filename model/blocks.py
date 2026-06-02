@@ -340,8 +340,12 @@ def gated_delta_chunked(q, k, v, gamma, beta, chunk=64, S0=None):
         c_mat = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, kc)
         cprime = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, qc)
 
-        eye = torch.eye(C, dtype=dtype, device=device)
-        A = torch.linalg.solve(eye + gb[..., :, None] * D, gb[..., :, None] * (vc - c_mat))
+        # (I + diag(gb)D) is unit lower-triangular (D strictly lower) -> a triangular
+        # solve (O(C^2), light backward) is exact and far cheaper than a general LU solve.
+        # unitriangular=True treats the diagonal as 1, so we pass the strictly-lower part.
+        L = gb[..., :, None] * D
+        A = torch.linalg.solve_triangular(L, gb[..., :, None] * (vc - c_mat),
+                                          upper=False, unitriangular=True)
         Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, A))
 
         out_ratio = torch.exp(Lgfull[..., C:C + 1] - Ls1)              # g_C/g_j
