@@ -185,6 +185,37 @@ def _chunked_loss(model, x, targets, chunk=8192):
     return total, n
 
 
+def select_long_docs(dataset_id, text_key, split, min_tokens, num_docs, tokenizer_name="gpt2"):
+    """Select up to num_docs SINGLE documents with >= min_tokens+1 tokens, tokenized exactly
+    as training (gpt2, EOT prepended as document start). Pre-filters by char length to avoid
+    tokenizing short docs. Returns a list of 1D int64 token tensors truncated to min_tokens+1
+    (we only ever test that prefix), so all multipliers see nested prefixes of the same doc."""
+    from datasets import load_dataset
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(tokenizer_name)
+    eot = tok.eos_token_id
+    need = min_tokens + 1
+    char_min = need               # ≥ need tokens ⇒ ≥ need chars (BPE token ≥ 1 char); safe lower bound
+
+    print(f"Scanning '{dataset_id}' [{split}] for docs with ≥ {need:,} tokens "
+          f"(pre-filter ≥ {char_min:,} chars)...")
+    ds = load_dataset(dataset_id, split=split)
+    docs, scanned = [], 0
+    for row in ds:
+        scanned += 1
+        text = row.get(text_key)
+        if not text or len(text) < char_min:
+            continue
+        ids = [eot] + tok.encode(text, add_special_tokens=False)
+        if len(ids) >= need:
+            docs.append(torch.tensor(ids[:need], dtype=torch.int64))
+            if len(docs) >= num_docs:
+                break
+    print(f"  selected {len(docs)}/{num_docs} docs (scanned {scanned:,} rows).")
+    return docs
+
+
 def run_diagnose(model, args, device):
     from model import blocks
     from train.model import PolarAttention
@@ -199,8 +230,31 @@ def run_diagnose(model, args, device):
     eps = 1e-6
     mults = args.multipliers if 1 in args.multipliers else [1] + args.multipliers
 
+    # Data source: single coherent long docs (--hf_dataset) or the concatenated .bin stream.
+    docs = None
+    if getattr(args, "hf_dataset", None):
+        min_tok = args.min_doc_tokens or args.base_len * max(mults)
+        docs = select_long_docs(args.hf_dataset, args.hf_text_key, args.hf_split,
+                                min_tok, args.num_seqs)
+        if not docs:
+            raise SystemExit(f"No docs with ≥ {min_tok + 1:,} tokens found — lower --multipliers "
+                             f"or --min_doc_tokens, or pick a dataset with longer documents.")
+    n_seqs = len(docs) if docs is not None else args.num_seqs
+
+    def batches(seq_len):
+        if docs is not None:                        # nested prefixes of the SAME coherent docs
+            for d in docs:
+                buf = d[:seq_len + 1]
+                yield (buf[:-1].view(1, -1).to(device, torch.int32),
+                       buf[1:].view(1, -1).to(device, torch.int64))
+        else:
+            gen = data_generator(args.val_data, seq_len, seq_len=seq_len)
+            for _ in range(n_seqs):
+                yield next(gen)
+
+    src = f"{n_seqs} docs from {args.hf_dataset}" if docs is not None else f"{n_seqs} seqs/length"
     win_note = f", sliding window W={window}" if window is not None else ""
-    print(f"\nActivation-distribution probe ({args.num_seqs} seqs/length, "
+    print(f"\nActivation-distribution probe ({src}, "
           f"base_len={args.base_len}, reference = 1×{win_note}):\n")
 
     losses = {}
@@ -210,12 +264,10 @@ def run_diagnose(model, args, device):
         probe.reset()
         probe.enabled = True
 
-        gen = data_generator(args.val_data, seq_len, seq_len=seq_len)
         loss_sum, tok = 0.0, 0
         with torch.no_grad():
-            for _ in range(args.num_seqs):
+            for inputs, targets in batches(seq_len):
                 blocks._PROBE = []                  # capture this forward's polar internals
-                inputs, targets = next(gen)
                 x = _blocks_forward(model, inputs)  # hooks + sink fill here; no LM head
                 probe.consume_sink(blocks._PROBE)
                 ls, n = _chunked_loss(model, x, targets, chunk=args.loss_chunk)
@@ -317,6 +369,15 @@ def main():
                         help="Eval-only causal sliding window: cap each query to its last W keys. "
                              "Tests whether holding N in-distribution restores extrapolation "
                              "(set W≈training length). Implies the probe harness.")
+    parser.add_argument("--hf_dataset", default=None,
+                        help="HF dataset of SINGLE coherent long documents (e.g. codelion/finepdfs-100M). "
+                             "Evaluates loss-vs-N on the same long docs (nested prefixes), not concatenated "
+                             "unrelated docs — the honest long-range test. Implies the probe harness.")
+    parser.add_argument("--hf_text_key", default="text", help="Text column in --hf_dataset (default: text).")
+    parser.add_argument("--hf_split", default="train", help="Split of --hf_dataset (default: train).")
+    parser.add_argument("--min_doc_tokens", type=int, default=None,
+                        help="Min token length for selected docs (default: base_len * max(multipliers), so "
+                             "every multiplier is a prefix of the same coherent doc).")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -327,7 +388,7 @@ def main():
     print(f"Loading checkpoint from '{args.checkpoint}'...")
     # Diagnose needs eager modules (hooks + the python-side probe sink survive only
     # uncompiled) and the streaming polar path (materialized O(T^2) OOMs past ~16x).
-    probe_mode = args.diagnose or args.window is not None
+    probe_mode = args.diagnose or args.window is not None or args.hf_dataset is not None
     model, config = load_from_checkpoint(
         args.checkpoint, device,
         compile_model=not probe_mode, force_probe_path=probe_mode,
