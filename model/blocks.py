@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -26,38 +27,55 @@ except Exception:
     chunk_gated_delta_rule = None
     _HAS_FLA = False
 
-# FLA's kernel is a Triton autograd.Function -> torch.compile can't trace it and graph-breaks
-# at every memory layer (lost fusion + lost cross-break memory planning = the ~2x time/RAM
-# regression; allow_in_graph fails because the kernel calls .data_ptr on fake tensors). Wrap
-# it as an OPAQUE custom op with a register_fake (dynamo propagates shapes without running the
-# kernel -> no graph break) and a recompute backward (runs FLA's own autograd eagerly in the
-# bwd -> correct grads; FLA fwd activations are recomputed not stored -> lower peak memory).
+# FLA's kernel is a Triton autograd.Function -> torch.compile graph-breaks at every memory
+# layer (lost fusion + lost cross-break memory planning = the ~2x time/RAM regression). The
+# DEFAULT path is the plain call (graph break, but known-correct and trains fine).
+#
+# Opt-in FLA_CUSTOM_OP=1 removes the break by wrapping FLA as opaque custom ops. BOTH the
+# forward AND the backward must be opaque: a single custom op with a python backward fails
+# because AOTAutograd traces the backward into the joint graph and re-enters the Triton
+# kernel (autotuner chokes: "unhashable type: non-nested SymInt"). So fwd and bwd are each a
+# custom_op with register_fake; the bwd recomputes FLA's autograd eagerly (correct grads +
+# fwd activations not stored). Experimental on a given torch/FLA combo -> verify_fla.py first.
 _fla_gated_delta = None
 if _HAS_FLA:
-    try:
-        @torch.library.custom_op("atma::fla_gated_delta", mutates_args=())
-        def _fla_gated_delta(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
-                             g: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
-            return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+    def _fla_raw(q, k, v, g, beta):                     # default: plain call (graph-breaks, works)
+        return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+    _fla_gated_delta = _fla_raw
 
-        @_fla_gated_delta.register_fake
-        def _(q, k, v, g, beta):
-            return torch.empty_like(v)                 # output o has v's shape (B,T,H,V)
+    if os.environ.get("FLA_CUSTOM_OP", "0") == "1":
+        try:
+            @torch.library.custom_op("atma::fla_gd_fwd", mutates_args=())
+            def _fla_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                         g: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
+                return _fla_raw(q, k, v, g, beta)
 
-        def _fla_setup(ctx, inputs, output):
-            ctx.save_for_backward(*inputs)
+            @_fla_fwd.register_fake
+            def _(q, k, v, g, beta):
+                return torch.empty_like(v)
 
-        def _fla_backward(ctx, grad_o):
-            q, k, v, g, beta = ctx.saved_tensors
-            with torch.enable_grad():                   # recompute FLA fwd to get its autograd graph
-                ins = [t.detach().requires_grad_(True) for t in (q, k, v, g, beta)]
-                o = chunk_gated_delta_rule(*ins, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
-                return torch.autograd.grad(o, ins, grad_o)
+            @torch.library.custom_op("atma::fla_gd_bwd", mutates_args=())
+            def _fla_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                         v: torch.Tensor, g: torch.Tensor, beta: torch.Tensor) -> list[torch.Tensor]:
+                with torch.enable_grad():                # recompute FLA fwd -> its autograd graph
+                    ins = [t.detach().requires_grad_(True) for t in (q, k, v, g, beta)]
+                    o = _fla_raw(*ins)
+                    return list(torch.autograd.grad(o, ins, grad_o))
 
-        _fla_gated_delta.register_autograd(_fla_backward, setup_context=_fla_setup)
-    except Exception:
-        def _fla_gated_delta(q, k, v, g, beta):         # fallback: raw call (graph-breaks under compile)
-            return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+            @_fla_bwd.register_fake
+            def _(grad_o, q, k, v, g, beta):
+                return [torch.empty_like(t) for t in (q, k, v, g, beta)]
+
+            def _setup(ctx, inputs, output):
+                ctx.save_for_backward(*inputs)
+
+            def _bwd(ctx, grad_o):
+                return tuple(_fla_bwd(grad_o, *ctx.saved_tensors))   # opaque bwd op (not traced)
+
+            _fla_fwd.register_autograd(_bwd, setup_context=_setup)
+            _fla_gated_delta = _fla_fwd
+        except Exception:
+            _fla_gated_delta = _fla_raw                  # fall back to the safe path on any error
 
 
 # --- Diagnostic probe ---------------------------------------------------------
