@@ -30,6 +30,7 @@ class AtmaConfig:
     mem_chunk: int = 128             # chunk size for the gated-delta parallel scan (GPU-tuned: 128 ~2x faster than 64)
     mem_gamma_bias: float = 3.9      # retention logit init: sigmoid(3.9) ~ 0.98 (long horizon)
     mem_beta_bias: float = 0.0       # write-strength logit init: sigmoid(0) = 0.5
+    mem_kernel: str = "auto"         # "auto"|"fla"|"torch": gated-delta backend (FLA fused vs eager PyTorch)
 
     @property
     def num_attention_heads(self) -> int:

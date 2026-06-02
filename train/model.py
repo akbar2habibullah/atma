@@ -443,7 +443,7 @@ class PolarAttention(AtmaAttnBase):
     def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4,
                  online: bool = False, k_block: int = 512, attn_kernel: str = "torch",
                  window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
-                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0):
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto"):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
@@ -459,7 +459,7 @@ class PolarAttention(AtmaAttnBase):
         self.mag_beta_raw = nn.Parameter(torch.full((H,), _MAG_BETA_INIT))
         # MAG long-term memory branch (additive 3rd channel). None unless enabled.
         self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
-                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias)
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
                     if mem_enabled else None)
 
     def forward(self, x: torch.Tensor):
@@ -571,13 +571,15 @@ class Block(nn.Module):
         mem_chunk: int = 64,
         mem_gamma_bias: float = 3.9,
         mem_beta_bias: float = 0.0,
+        mem_kernel: str = "auto",
     ):
         super().__init__()
         self.attn = (
             PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
                            kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block,
                            attn_kernel=attn_kernel, window=attn_window, mem_enabled=mem_enabled,
-                           mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias)
+                           mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias,
+                           mem_kernel=mem_kernel)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -618,6 +620,7 @@ class Model(nn.Module):
                 mem_chunk=config.mem_chunk,
                 mem_gamma_bias=config.mem_gamma_bias,
                 mem_beta_bias=config.mem_beta_bias,
+                mem_kernel=config.mem_kernel,
             )
             for i in range(config.num_hidden_layers)
         ])
