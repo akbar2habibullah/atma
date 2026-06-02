@@ -17,23 +17,6 @@ except Exception:
     HAS_TRITON = False
 
 
-# --- Diagnostic probe ---------------------------------------------------------
-# Off by default (None): zero numeric impact, no overhead. When eval.py --diagnose
-# sets this to a list, the polar reductions append per-call internals
-# (n_eff, mag, w_null), one dict per attention layer per forward, so the activation
-# probe can see whether the count channel saturates / the null sink drains as N grows.
-_PROBE = None
-
-
-def _probe_emit(n_eff, mag, w_null):
-    if _PROBE is not None:
-        _PROBE.append(dict(
-            n_eff=n_eff.detach().float(),     # (B, H, T) effective match count
-            mag=mag.detach().float(),         # (B, H, T) bounded count channel in [0,1)
-            w_null=w_null.detach().float(),   # (B, H, T) mass drained to the null sink
-        ))
-
-
 def polar_temp_null(n_keys, len_gain_raw, null_base, null_slope_raw):
     """Per-head length temperature and EV-corrected null floor.
 
@@ -52,7 +35,7 @@ def polar_temp_null(n_keys, len_gain_raw, null_base, null_slope_raw):
 
 def polar_reduce(sigma, v, n_keys, *, v_null, null_base, null_slope_raw,
                  len_gain_raw, mag_beta_raw, eps=1e-6):
-    """Polar attention reduction (the validated materialized oracle). Computed in fp32.
+    """Polar attention reduction (validated in polar_proto.py). Computed in fp32.
 
     Splits attention into two length-invariant channels from ONE temp-sharpened
     softmax with an EV-corrected null sink:
@@ -93,7 +76,6 @@ def polar_reduce(sigma, v, n_keys, *, v_null, null_base, null_slope_raw,
     m_eff = n_eff * (1.0 - w_null.squeeze(-1))
     mag = torch.tanh(F.softplus(mag_beta_raw.to(cd)).view(1, H, 1) * torch.log1p(m_eff))
 
-    _probe_emit(n_eff, mag, w_null.squeeze(-1))
     return c.to(out_dtype), mag.to(out_dtype)
 
 
@@ -113,7 +95,7 @@ class _PolarOnline(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                len_gain_raw, mag_beta_raw, k_block, eps, window=None):
+                len_gain_raw, mag_beta_raw, k_block, eps):
         out_dtype = q.dtype
         cd = _compute_dtype(out_dtype)
         B, H, T, dk = q.shape
@@ -121,12 +103,7 @@ class _PolarOnline(torch.autograd.Function):
         qd, kd, vd = q.to(cd), k.to(cd), v.to(cd)
         scale = dk ** -0.5
 
-        # window (eval-only sliding window): each query sees only its last `window`
-        # keys, so temp/null use the capped count min(n_keys, window) and the block
-        # loop also masks keys older than the window. backward does NOT model the
-        # band — guarded against grad use in polar_attention_online.
-        n_count = n_keys if window is None else torch.minimum(n_keys, n_keys.new_tensor(float(window)))
-        n = n_count.to(cd).clamp(min=1.0)
+        n = n_keys.to(cd).clamp(min=1.0)
         t = (1.0 + F.softplus(len_gain_raw.to(cd)).view(1, H, 1) * torch.log(n).view(1, 1, T))   # (1,H,T)
         nu = (null_base.to(cd).view(1, H, 1)
               + F.softplus(null_slope_raw.to(cd)).view(1, H, 1) * torch.sqrt(torch.log(n + 1.0)).view(1, 1, T))
@@ -143,10 +120,7 @@ class _PolarOnline(torch.autograd.Function):
             kb, vb = kd[:, :, ks:ke], vd[:, :, ks:ke]                       # (B,H,Kb,dk)
             sig = torch.matmul(qd, kb.transpose(-2, -1)) * scale            # (B,H,T,Kb)
             a = sig * t.unsqueeze(-1)
-            kidx = key_idx[ks:ke].view(1, 1, 1, -1)
-            invalid = kidx >= n_keys.view(1, 1, T, 1)                       # future
-            if window is not None:
-                invalid = invalid | (kidx < (n_keys.view(1, 1, T, 1) - window))  # older than window
+            invalid = key_idx[ks:ke].view(1, 1, 1, -1) >= n_keys.view(1, 1, T, 1)
             a = a.masked_fill(invalid, NEG)
             blk_max = a.amax(dim=-1)                                        # (B,H,T)
             M_new = torch.maximum(M, blk_max)
@@ -176,7 +150,6 @@ class _PolarOnline(torch.autograd.Function):
         beta = F.softplus(mag_beta_raw.to(cd)).view(1, H, 1)
         mag = torch.tanh(beta * torch.log1p(m_eff))
 
-        _probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
         ctx.k_block, ctx.eps = k_block, eps
@@ -275,23 +248,16 @@ class _PolarOnline(torch.autograd.Function):
         return (cast(grad_q, q), cast(grad_k, k), cast(grad_v, v), None,
                 cast(grad_v_null, v_null), cast(grad_null_base, null_base),
                 cast(grad_null_slope, null_slope_raw), cast(grad_len_gain, len_gain_raw),
-                cast(grad_mag_beta, mag_beta_raw), None, None, None)
+                cast(grad_mag_beta, mag_beta_raw), None, None)
 
 
 def polar_attention_online(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
-                           len_gain_raw, mag_beta_raw, k_block=512, eps=1e-6, window=None):
+                           len_gain_raw, mag_beta_raw, k_block=512, eps=1e-6):
     """Memory-efficient polar attention. q,k,v: (B,H,T,dk) with KV heads expanded.
     Streams keys in blocks of k_block -> O(B*H*T*k_block) peak (fwd and bwd).
-    Numerically equals materialized scores + polar_reduce.
-
-    window (int, optional): eval-only causal sliding window — each query attends to
-    only its last `window` keys. The streaming backward does not model the band, so
-    this is forward/no-grad only."""
-    if window is not None and torch.is_grad_enabled():
-        raise NotImplementedError("polar_attention_online(window=...) is forward/eval-only "
-                                  "(the streaming backward does not model the band).")
+    Numerically equals materialized scores + polar_reduce."""
     return _PolarOnline.apply(q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                              len_gain_raw, mag_beta_raw, k_block, eps, window)
+                              len_gain_raw, mag_beta_raw, k_block, eps)
 
 
 class AtmaConvBase(nn.Module):

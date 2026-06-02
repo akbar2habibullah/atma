@@ -1,9 +1,11 @@
 """
-verify.py — Per-layer numerical verification.
+verify.py — Per-layer numerical verification (Polar Attention model).
 
 Checks that train and inference forward passes produce the same outputs as the
 canonical reference implementation in model/reference.py, using the same random
-weights and random input tensors.
+weights and random input tensors. The attention is Polar Attention (direction +
+bounded-count channels); the inference path runs the polar Triton kernel on CUDA
+and falls back to the materialized polar_reduce on CPU.
 
 For each layer type:
   train      — batch-first (B, T, H), same math as reference
@@ -14,6 +16,10 @@ For each layer type:
 Usage:
     python verify.py
 """
+
+import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 import sys
 import torch
@@ -264,14 +270,15 @@ def verify_conv(config: AtmaConfig):
 
 
 def verify_attention(config: AtmaConfig):
-    print("\n── CausalSelfAttention ──")
+    print("\n── PolarAttention ──")
     dim = config.hidden_size
     hd = config.head_dim
+    nkv = config.num_key_value_heads
     k = config.attn_kernel_size
     prefill_len = SEQ_LEN - 1
 
-    ref_attn = ref_mod.CausalSelfAttention(dim, head_dim=hd, kernel_size=k)
-    infer_attn = InferAttn(layer_idx=0, dim=dim, head_dim=hd, kernel_size=k)
+    ref_attn = ref_mod.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k)
+    infer_attn = InferAttn(layer_idx=0, dim=dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k)
     _copy(ref_attn, infer_attn)
     _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)
 
@@ -315,14 +322,15 @@ def verify_attention(config: AtmaConfig):
 
     # ── train ──
     try:
-        from train.model import CausalSelfAttention as TrainAttn
-        train_attn = TrainAttn(dim, head_dim=hd, kernel_size=k)
+        import train.model as tm
+        tm.causal_conv1d_fn = tm._causal_conv1d_fallback  # pure-PyTorch conv so train runs on CPU
+        train_attn = tm.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, num_random_keys=0, kernel_size=k)
         _copy(ref_attn, train_attn)
         with torch.no_grad():
-            y_train = train_attn(x).squeeze(0)
-        _result("train == ref", y_ref_all, y_train)
-    except Exception:
-        print("  SKIP  train (kernel unavailable)")
+            y_train, _ = train_attn(x)   # PolarAttention returns (out, align_loss)
+        _result("train == ref", y_ref_all, y_train.squeeze(0))
+    except Exception as e:
+        print(f"  SKIP  train ({e})")
 
 
 def verify_block(config: AtmaConfig):
@@ -398,8 +406,9 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
 
     # ── train ──
     try:
-        from train.model import Block as TrainBlock
-        train_block = TrainBlock(
+        import train.model as tm
+        tm.causal_conv1d_fn = tm._causal_conv1d_fallback  # pure-PyTorch conv so train runs on CPU
+        train_block = tm.Block(
             dim, attention=is_attn,
             head_dim=config.head_dim,
             attn_kernel_size=config.attn_kernel_size,
@@ -407,10 +416,10 @@ def _verify_one_block(config: AtmaConfig, layer_idx: int, is_attn: bool):
         )
         _copy(ref_block, train_block)
         with torch.no_grad():
-            y_train, _ = train_block(x)   # Block returns (x, reg_loss)
+            y_train, _, _ = train_block(x)   # Block returns (x, reg_loss, align_loss)
         _result(f"block {layer_idx} train == ref", y_ref_all, y_train.squeeze(0))
-    except Exception:
-        print(f"  SKIP  block {layer_idx} train (kernel unavailable)")
+    except Exception as e:
+        print(f"  SKIP  block {layer_idx} train ({e})")
 
 
 def verify_model(config: AtmaConfig):
