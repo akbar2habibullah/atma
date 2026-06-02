@@ -16,13 +16,15 @@ import json
 import argparse
 
 import torch
+import torch.nn.functional as F
 
 from model.config import AtmaConfig
 from train.model import Model
 from train.data import data_generator
 
 
-def load_from_checkpoint(checkpoint_dir: str, device: torch.device):
+def load_from_checkpoint(checkpoint_dir: str, device: torch.device,
+                         compile_model: bool = True, force_probe_path: bool = False):
     config_path = os.path.join(checkpoint_dir, "config.json")
     weights_path = os.path.join(checkpoint_dir, "weights.pt")
 
@@ -32,12 +34,23 @@ def load_from_checkpoint(checkpoint_dir: str, device: torch.device):
     cfg["dtype"] = getattr(torch, cfg["dtype"])
     cfg["num_random_keys"] = 0  # distractor path is training-only; no weights attached
 
+    if force_probe_path:
+        # The materialized polar path is O(T^2) and OOMs past ~16x. Both the Triton
+        # kernel and the torch online path are O(T*block) and now emit the probe sink;
+        # prefer Triton (much faster at 64x), else fall back to torch online.
+        from model.blocks import HAS_TRITON
+        if HAS_TRITON:
+            cfg["attn_kernel"], cfg["attn_online"] = "triton", False
+        else:
+            cfg["attn_kernel"], cfg["attn_online"] = "torch", True
+
     config = AtmaConfig(**cfg)
     model = Model(config).to(device)
 
     state_dict = torch.load(weights_path, map_location=device, weights_only=True)["model"]
     model.load_state_dict(state_dict)
-    model = torch.compile(model)
+    if compile_model:
+        model = torch.compile(model)
     model.eval()
 
     return model, config
@@ -54,6 +67,226 @@ def eval_length(model: torch.nn.Module, val_data: str, seq_len: int, num_seqs: i
     return total_loss / (num_seqs * seq_len)
 
 
+class _ChannelStats:
+    """Streaming per-channel mean/std over (batch, position) — fp32, O(D) memory."""
+
+    def __init__(self):
+        self.count = 0
+        self.sum = None      # (D,)
+        self.sumsq = None    # (D,)
+
+    def update(self, x):     # x: (B, T, D)
+        xf = x.detach().float().reshape(-1, x.shape[-1])
+        s, ss = xf.sum(0), xf.square().sum(0)
+        if self.sum is None:
+            self.sum, self.sumsq = s, ss
+        else:
+            self.sum += s
+            self.sumsq += ss
+        self.count += xf.shape[0]
+
+    def mean(self):
+        return self.sum / self.count
+
+    def std(self):
+        return (self.sumsq / self.count - self.mean().square()).clamp_min(0).sqrt()
+
+    def rms(self):
+        return (self.sumsq.sum() / (self.count * self.sum.numel())).sqrt().item()
+
+
+class Probe:
+    """Captures, per layer and per multiplier, the activation distribution the
+    downstream (strictly local) stack consumes, plus the polar internals. The
+    question it answers: as N grows, do these go out-of-distribution vs 1×?"""
+
+    def __init__(self, model):
+        from train.model import PolarAttention
+        self.enabled = False
+        self.handles = []
+        self.attn_layers = []                       # block indices that are PolarAttention
+        self.res = {}                               # idx -> _ChannelStats (residual stream)
+        self.attn = {}                              # idx -> _ChannelStats (attn contribution)
+        self.polar = {}                             # idx -> {n_eff_sum, mag_sum, mag_sat, w_null_sum, n}
+        self.snapshots = {}                         # mult -> captured per-layer stats
+
+        for i, block in enumerate(model.blocks):
+            self.res[i] = _ChannelStats()
+            self.handles.append(block.register_forward_hook(self._res_hook(i)))
+            if isinstance(block.attn, PolarAttention):
+                self.attn_layers.append(i)
+                self.attn[i] = _ChannelStats()
+                self.handles.append(block.attn.register_forward_hook(self._attn_hook(i)))
+
+    def _res_hook(self, i):
+        def hook(_m, _inp, out):
+            if self.enabled:
+                self.res[i].update(out[0])          # Block returns (x, reg_loss, align_loss)
+        return hook
+
+    def _attn_hook(self, i):
+        def hook(_m, _inp, out):
+            if self.enabled:
+                self.attn[i].update(out[0])         # attn returns (content+count, align_loss)
+        return hook
+
+    def reset(self):
+        for d in (self.res, self.attn):
+            for k in d:
+                d[k] = _ChannelStats()
+        self.polar = {i: dict(n_eff=0.0, mag=0.0, mag_sat=0, w_null=0.0, n=0)
+                      for i in self.attn_layers}
+
+    def consume_sink(self, sink):
+        # sink: one dict per attention layer per forward, in block order.
+        for i, rec in zip(self.attn_layers, sink):
+            acc = self.polar[i]
+            acc["n_eff"] += rec["n_eff"].sum().item()
+            acc["mag"] += rec["mag"].sum().item()
+            acc["mag_sat"] += (rec["mag"] > 0.99).sum().item()
+            acc["w_null"] += rec["w_null"].sum().item()
+            acc["n"] += rec["mag"].numel()
+
+    def finalize(self, mult):
+        snap = {"res": {}, "attn": {}, "polar": {}}
+        for i, st in self.res.items():
+            snap["res"][i] = (st.mean(), st.std(), st.rms())
+        for i, st in self.attn.items():
+            snap["attn"][i] = (st.mean(), st.std(), st.rms())
+        for i, acc in self.polar.items():
+            n = max(acc["n"], 1)
+            snap["polar"][i] = dict(n_eff=acc["n_eff"] / n, mag=acc["mag"] / n,
+                                    mag_sat=100.0 * acc["mag_sat"] / n, w_null=acc["w_null"] / n)
+        self.snapshots[mult] = snap
+
+
+def _blocks_forward(model, inputs):
+    """embed -> blocks only (NO LM head). The block/attn hooks capture activations and
+    the polar sink fills here; skipping the (1, T, vocab) head avoids the 13-26 GB fp32
+    logits spike that OOMs a 24 GB L4 at long T. Returns the pre-final-norm residual."""
+    x = model.embed(inputs)
+    for block in model.blocks:
+        x, _, _ = block(x)
+    return x
+
+
+def _chunked_loss(model, x, targets, chunk=8192):
+    """Per-token CE via a time-chunked head: peak logits = chunk*vocab*4 (~1.6 GB at
+    chunk=8192), not T*vocab*4. Mirrors Model.forward's logit squashing exactly."""
+    total, n = 0.0, 0
+    T = x.shape[1]
+    for c0 in range(0, T, chunk):
+        c1 = min(c0 + chunk, T)
+        logits = model.proj(model.norm(x[:, c0:c1])).float()
+        logits = 15 * logits * (logits.square() + 15 ** 2).rsqrt()
+        tgt = targets[:, c0:c1].reshape(-1)
+        total += F.cross_entropy(logits.reshape(tgt.numel(), -1), tgt, reduction="sum").item()
+        n += tgt.numel()
+    return total, n
+
+
+def run_diagnose(model, args, device):
+    from model import blocks
+
+    probe = Probe(model)
+    eps = 1e-6
+    mults = args.multipliers if 1 in args.multipliers else [1] + args.multipliers
+
+    print(f"\nActivation-distribution probe ({args.num_seqs} seqs/length, "
+          f"base_len={args.base_len}, reference = 1×):\n")
+
+    losses = {}
+    for mult in mults:
+        seq_len = args.base_len * mult
+        torch.cuda.empty_cache()
+        probe.reset()
+        probe.enabled = True
+
+        gen = data_generator(args.val_data, seq_len, seq_len=seq_len)
+        loss_sum, tok = 0.0, 0
+        with torch.no_grad():
+            for _ in range(args.num_seqs):
+                blocks._PROBE = []                  # capture this forward's polar internals
+                inputs, targets = next(gen)
+                x = _blocks_forward(model, inputs)  # hooks + sink fill here; no LM head
+                probe.consume_sink(blocks._PROBE)
+                ls, n = _chunked_loss(model, x, targets, chunk=args.loss_chunk)
+                loss_sum += ls
+                tok += n
+        blocks._PROBE = None
+        probe.enabled = False
+        losses[mult] = loss_sum / tok
+        probe.finalize(mult)
+
+    ref = probe.snapshots[1]
+
+    def chan_drift(snap_layer, ref_layer):
+        m, s, _ = snap_layer
+        rm, rs, _ = ref_layer
+        z = (m - rm).abs() / (rs + eps)             # per-channel shift in ref-σ units
+        return z.mean().item(), (s / (rs + eps)).mean().item()
+
+    # ---- residual stream: what every downstream local layer actually consumes ----
+    print("Residual stream (mean over all 16 blocks, vs 1×):")
+    hdr = f"{'mult':>6}  {'loss':>8}  {'Δloss':>8}  {'mean-shift(σ)':>14}  {'std-ratio':>10}  {'rms-ratio':>10}"
+    print(hdr); print("-" * len(hdr))
+    for mult in mults:
+        snap = probe.snapshots[mult]
+        shifts, stds, rmss = [], [], []
+        for i in snap["res"]:
+            d_mean, d_std = chan_drift(snap["res"][i], ref["res"][i])
+            shifts.append(d_mean); stds.append(d_std)
+            rmss.append(snap["res"][i][2] / (ref["res"][i][2] + eps))
+        dl = losses[mult] - losses[1]
+        print(f"{f'{mult}x':>6}  {losses[mult]:>8.4f}  {dl:>+8.4f}  "
+              f"{sum(shifts)/len(shifts):>14.3f}  {sum(stds)/len(stds):>10.3f}  {sum(rmss)/len(rmss):>10.3f}")
+
+    # ---- final block residual (closest to the logits — most predictive of loss) ----
+    last = max(ref["res"])
+    print(f"\nFinal block (#{last}) residual, vs 1×:")
+    print(f"{'mult':>6}  {'mean-shift(σ)':>14}  {'std-ratio':>10}  {'rms-ratio':>10}")
+    for mult in mults:
+        snap = probe.snapshots[mult]
+        d_mean, d_std = chan_drift(snap["res"][last], ref["res"][last])
+        rr = snap["res"][last][2] / (ref["res"][last][2] + eps)
+        print(f"{f'{mult}x':>6}  {d_mean:>14.3f}  {d_std:>10.3f}  {rr:>10.3f}")
+
+    # ---- attention contribution (mean over the 4 polar layers) ----
+    print("\nAttention contribution to residual (rms-ratio vs 1×, mean over polar layers):")
+    print(f"{'mult':>6}  {'rms-ratio':>10}  {'mean-shift(σ)':>14}")
+    for mult in mults:
+        snap = probe.snapshots[mult]
+        rmss, shifts = [], []
+        for i in snap["attn"]:
+            rmss.append(snap["attn"][i][2] / (ref["attn"][i][2] + eps))
+            d_mean, _ = chan_drift(snap["attn"][i], ref["attn"][i])
+            shifts.append(d_mean)
+        print(f"{f'{mult}x':>6}  {sum(rmss)/len(rmss):>10.3f}  {sum(shifts)/len(shifts):>14.3f}")
+
+    # ---- polar internals (mean over the 4 polar layers): is the score-level premise holding? ----
+    print("\nPolar internals (mean over polar layers):")
+    ph = f"{'mult':>6}  {'mag (mean)':>11}  {'mag>0.99 %':>11}  {'w_null':>9}  {'n_eff':>9}"
+    print(ph); print("-" * len(ph))
+    for mult in mults:
+        pol = probe.snapshots[mult]["polar"]
+        n = len(pol)
+        mag = sum(p["mag"] for p in pol.values()) / n
+        sat = sum(p["mag_sat"] for p in pol.values()) / n
+        wn = sum(p["w_null"] for p in pol.values()) / n
+        ne = sum(p["n_eff"] for p in pol.values()) / n
+        print(f"{f'{mult}x':>6}  {mag:>11.4f}  {sat:>11.2f}  {wn:>9.4f}  {ne:>9.1f}")
+
+    print("\nReading it:")
+    print("  • residual mean-shift/std-ratio grow with N  → downstream local stack sees OOD")
+    print("    activations → keeping N in-distribution (compression/memory) is the right attack.")
+    print("  • mag saturates→1, n_eff blows up, or w_null→0 with N → the score-level premise")
+    print("    (length-invariant count) is failing → Δ collapse; compression alone won't save it.")
+    print("  • everything flat but loss still climbs → failure is positional, not aggregation.")
+
+    for h in probe.handles:
+        h.remove()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Length extrapolation evaluation")
     parser.add_argument("--checkpoint", default="checkpoints",
@@ -66,6 +299,12 @@ def main():
                         help="Sequences evaluated per length — more gives a stabler estimate (default: 16)")
     parser.add_argument("--multipliers", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32, 64],
                         help="Context length multipliers to evaluate (default: 1 2 4 8 16 32 64)")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="Probe the per-layer activation distribution + polar internals vs N "
+                             "(localizes the extrapolation failure) instead of the loss-only sweep. "
+                             "Runs embed->blocks only (no LM head) with a time-chunked loss to fit a 24 GB L4.")
+    parser.add_argument("--loss_chunk", type=int, default=8192,
+                        help="Time-chunk for the diagnose loss head (bounds peak logits memory; default 8192).")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -74,10 +313,19 @@ def main():
     device = torch.device("cuda")
 
     print(f"Loading checkpoint from '{args.checkpoint}'...")
-    model, config = load_from_checkpoint(args.checkpoint, device)
+    # Diagnose needs eager modules (hooks + the python-side probe sink survive only
+    # uncompiled) and the streaming polar path (materialized O(T^2) OOMs past ~16x).
+    model, config = load_from_checkpoint(
+        args.checkpoint, device,
+        compile_model=not args.diagnose, force_probe_path=args.diagnose,
+    )
     num_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model: {num_params:.2f}M parameters  |  hidden={config.hidden_size}  "
           f"layers={config.num_hidden_layers}  vocab={config.vocab_size}")
+
+    if args.diagnose:
+        run_diagnose(model, args, device)
+        return
 
     print(f"\nEvaluating {args.num_seqs} sequences per length "
           f"(base_len={args.base_len}, multipliers={args.multipliers}):\n")

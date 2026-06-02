@@ -17,6 +17,23 @@ except Exception:
     HAS_TRITON = False
 
 
+# --- Diagnostic probe ---------------------------------------------------------
+# Off by default (None): zero numeric impact, no overhead. When eval.py --diagnose
+# sets this to a list, the polar reductions append per-call internals
+# (n_eff, mag, w_null), one dict per attention layer per forward, so the activation
+# probe can see whether the count channel saturates / the null sink drains as N grows.
+_PROBE = None
+
+
+def _probe_emit(n_eff, mag, w_null):
+    if _PROBE is not None:
+        _PROBE.append(dict(
+            n_eff=n_eff.detach().float(),     # (B, H, T) effective match count
+            mag=mag.detach().float(),         # (B, H, T) bounded count channel in [0,1)
+            w_null=w_null.detach().float(),   # (B, H, T) mass drained to the null sink
+        ))
+
+
 def polar_temp_null(n_keys, len_gain_raw, null_base, null_slope_raw):
     """Per-head length temperature and EV-corrected null floor.
 
@@ -76,6 +93,7 @@ def polar_reduce(sigma, v, n_keys, *, v_null, null_base, null_slope_raw,
     m_eff = n_eff * (1.0 - w_null.squeeze(-1))
     mag = torch.tanh(F.softplus(mag_beta_raw.to(cd)).view(1, H, 1) * torch.log1p(m_eff))
 
+    _probe_emit(n_eff, mag, w_null.squeeze(-1))
     return c.to(out_dtype), mag.to(out_dtype)
 
 
@@ -150,6 +168,7 @@ class _PolarOnline(torch.autograd.Function):
         beta = F.softplus(mag_beta_raw.to(cd)).view(1, H, 1)
         mag = torch.tanh(beta * torch.log1p(m_eff))
 
+        _probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
         ctx.k_block, ctx.eps = k_block, eps

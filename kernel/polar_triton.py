@@ -286,6 +286,21 @@ def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
         IS_CAUSAL=is_causal, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
         num_warps=num_warps, num_stages=num_stages,
     )
+
+    # Diagnostic probe (off by default → skipped entirely). The kernel doesn't emit
+    # n_eff / w_null, so recover them from the saved stats (same algebra as the
+    # backward preamble) and feed the shared sink in model.blocks.
+    from model import blocks as _blocks
+    if _blocks._PROBE is not None:
+        nf = n_keys.clamp(min=1.0)                                    # (Tq,)
+        logn = torch.log(nf).view(1, Tq)
+        t = 1.0 + spg.view(H, 1) * logn                              # (H, Tq)
+        nu = nb.view(H, 1) + sps.view(H, 1) * torch.sqrt(torch.log(nf + 1.0)).view(1, Tq)
+        p_n = torch.exp((t * nu).view(1, H, Tq) - M)                 # (B, H, Tq)
+        Z = L + p_n
+        n_eff = L * L / Q2.clamp_min(eps)
+        _blocks._probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
+
     return c.to(out_dtype), mag.to(out_dtype), M, L, Q2, s
 
 
