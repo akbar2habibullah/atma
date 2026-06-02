@@ -8,7 +8,7 @@ from train.reg import sigreg
 from kernels import get_kernel
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online
+from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online, TitansMemory
 
 try:
     from kernel.polar_triton import (
@@ -441,12 +441,14 @@ class PolarAttention(AtmaAttnBase):
     """
 
     def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4,
-                 online: bool = False, k_block: int = 512, attn_kernel: str = "torch"):
+                 online: bool = False, k_block: int = 512, attn_kernel: str = "torch",
+                 window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
         self.k_block = k_block
-        self.window = None              # eval-only sliding window (set by eval.py --window)
+        self.window = window            # trainable sliding window (config); eval.py --window overrides
         self.attn_kernel = attn_kernel  # "torch" | "triton" (Triton flash kernel, CUDA only)
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
@@ -455,6 +457,10 @@ class PolarAttention(AtmaAttnBase):
         self.null_slope_raw = nn.Parameter(torch.full((H,), _NULL_SLOPE_INIT))
         self.len_gain_raw = nn.Parameter(torch.full((H,), _LEN_GAIN_INIT))
         self.mag_beta_raw = nn.Parameter(torch.full((H,), _MAG_BETA_INIT))
+        # MAG long-term memory branch (additive 3rd channel). None unless enabled.
+        self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias)
+                    if mem_enabled else None)
 
     def forward(self, x: torch.Tensor):
         B, T, D = x.shape
@@ -500,25 +506,25 @@ class PolarAttention(AtmaAttnBase):
 
         use_triton = (self.attn_kernel == "triton" and HAS_TRITON
                       and polar_attention_triton is not None and q_t.is_cuda)
-        if self.window is not None:
-            # eval-only sliding window: cap each query to its last `window` keys. Tests
-            # whether holding N in-distribution restores extrapolation, before committing
-            # to context compression. Forward/no-grad only (band backward not modeled).
-            if use_triton:
-                c, mag = polar_attention_triton_fwd(q_t, k_t, v_t, n_keys, window=self.window, **polar_params)
-            else:
-                c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block,
-                                                window=self.window, **polar_params)
-        elif use_triton:
+        # window=None -> full causal; window=W -> trainable sliding band (each query sees
+        # its last W keys). All three cores now model the band in the backward (Step 2).
+        W = self.window
+        if use_triton:
             # FlashAttention-style Triton kernel: O(T*block) memory, fused fwd+bwd.
-            c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, **polar_params)
+            c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, window=W, **polar_params)
         elif self.online:
             # Memory-efficient: never materializes the (T, T) score matrix.
-            c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, **polar_params)
+            c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, window=W, **polar_params)
         else:
             sigma = torch.matmul(q_t, k_t.transpose(-2, -1)) / (dk ** 0.5)
             sigma = sigma + torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
-            c, mag = polar_reduce(sigma, v_t, n_keys, **polar_params)
+            n_temp = n_keys
+            if W is not None:
+                kidx = torch.arange(T, device=x.device)
+                band = kidx.view(1, 1, 1, T) < (n_keys.view(1, 1, T, 1) - W)   # older than window
+                sigma = sigma.masked_fill(band, float("-inf"))
+                n_temp = torch.minimum(n_keys, n_keys.new_tensor(float(W)))
+            c, mag = polar_reduce(sigma, v_t, n_temp, **polar_params)
 
         # Distractor (O(T*R), memory-friendly): random keys must lose to the null sink,
         # calibrating null_base/null_slope (+ Q geometry). Compares random keys vs the
@@ -539,7 +545,10 @@ class PolarAttention(AtmaAttnBase):
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
         count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, D)
-        return content + count, align_loss
+        out = content + count
+        if self.mem is not None:                            # MAG long-term memory branch
+            out = out + self.mem(x, q_t, k_t, v_t)
+        return out, align_loss
 
 
 class Block(nn.Module):
@@ -557,12 +566,18 @@ class Block(nn.Module):
         attn_online: bool = False,
         attn_k_block: int = 512,
         attn_kernel: str = "torch",
+        attn_window: int = None,
+        mem_enabled: bool = False,
+        mem_chunk: int = 64,
+        mem_gamma_bias: float = 3.9,
+        mem_beta_bias: float = 0.0,
     ):
         super().__init__()
         self.attn = (
             PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
                            kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block,
-                           attn_kernel=attn_kernel)
+                           attn_kernel=attn_kernel, window=attn_window, mem_enabled=mem_enabled,
+                           mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -598,6 +613,11 @@ class Model(nn.Module):
                 attn_online=config.attn_online,
                 attn_k_block=config.attn_k_block,
                 attn_kernel=config.attn_kernel,
+                attn_window=config.attn_window,
+                mem_enabled=config.mem_enabled,
+                mem_chunk=config.mem_chunk,
+                mem_gamma_bias=config.mem_gamma_bias,
+                mem_beta_bias=config.mem_beta_bias,
             )
             for i in range(config.num_hidden_layers)
         ])

@@ -179,14 +179,14 @@ class _PolarOnline(torch.autograd.Function):
         _probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
-        ctx.k_block, ctx.eps = k_block, eps
+        ctx.k_block, ctx.eps, ctx.window = k_block, eps, window
         return c.to(out_dtype), mag.to(out_dtype)
 
     @staticmethod
     def backward(ctx, gc, gm):
         (q, k, v, n_keys, v_null, null_base, null_slope_raw,
          len_gain_raw, mag_beta_raw, M, L, Q2, s) = ctx.saved_tensors
-        k_block, eps = ctx.k_block, ctx.eps
+        k_block, eps, window = ctx.k_block, ctx.eps, ctx.window
         out_dtype = q.dtype
         cd = _compute_dtype(out_dtype)
         B, H, T, dk = q.shape
@@ -196,7 +196,10 @@ class _PolarOnline(torch.autograd.Function):
         gm = gm.to(cd)
         scale = dk ** -0.5
 
-        n = n_keys.to(cd).clamp(min=1.0)
+        # windowed count: temp/null use min(n_keys, window) so backward matches the
+        # forward's band (each query attends only to its last `window` keys).
+        n_count = n_keys if window is None else torch.minimum(n_keys, n_keys.new_tensor(float(window)))
+        n = n_count.to(cd).clamp(min=1.0)
         spg = F.softplus(len_gain_raw.to(cd)).view(1, H, 1)
         sps = F.softplus(null_slope_raw.to(cd)).view(1, H, 1)
         logn = torch.log(n).view(1, 1, T)
@@ -249,7 +252,10 @@ class _PolarOnline(torch.autograd.Function):
             kb, vb = kd[:, :, ks:ke], vd[:, :, ks:ke]
             sig = torch.matmul(qd, kb.transpose(-2, -1)) * scale
             a = sig * t.unsqueeze(-1)
-            invalid = key_idx[ks:ke].view(1, 1, 1, -1) >= n_keys.view(1, 1, T, 1)
+            kidx = key_idx[ks:ke].view(1, 1, 1, -1)
+            invalid = kidx >= n_keys.view(1, 1, T, 1)                      # future
+            if window is not None:
+                invalid = invalid | (kidx < (n_keys.view(1, 1, T, 1) - window))  # older than window
             a = a.masked_fill(invalid, torch.finfo(cd).min)
             p = torch.exp(a - M.unsqueeze(-1))                             # (B,H,T,Kb); invalid->0
 
@@ -284,14 +290,104 @@ def polar_attention_online(q, k, v, n_keys, *, v_null, null_base, null_slope_raw
     Streams keys in blocks of k_block -> O(B*H*T*k_block) peak (fwd and bwd).
     Numerically equals materialized scores + polar_reduce.
 
-    window (int, optional): eval-only causal sliding window — each query attends to
-    only its last `window` keys. The streaming backward does not model the band, so
-    this is forward/no-grad only."""
-    if window is not None and torch.is_grad_enabled():
-        raise NotImplementedError("polar_attention_online(window=...) is forward/eval-only "
-                                  "(the streaming backward does not model the band).")
+    window (int, optional): causal sliding window — each query attends to only its last
+    `window` keys. The streaming backward now models the band (temp/null use the windowed
+    count and the key loop masks keys older than n_keys - window), so this is trainable."""
     return _PolarOnline.apply(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, k_block, eps, window)
+
+
+# --- Titans-style linear compression memory (MAG branch) -------------------------
+# Validated standalone in titans_proto.py / verify_titans.py (chunked == sequential
+# scan, fp64). The Titans neural memory with momentum eta=0 reparametrizes exactly to
+# the Gated DeltaNet recurrence  M_t = gamma_t (M_{t-1} + w_t k_t^T),  w_t = beta_t
+# (v_t - M_{t-1} k_t),  with gamma = 1 - alpha (decay), beta = theta / (1 - alpha).
+
+def gated_delta_chunked(q, k, v, gamma, beta, chunk=64, S0=None):
+    """Chunkwise-parallel gated delta rule. q,k: (B,H,N,dk); v: (B,H,N,dv);
+    gamma,beta: (B,H,N) in (0,1). Returns (R (B,H,N,dv), S_final (B,H,dv,dk)).
+
+    Causal readout r_t = M_{t-1} q_t. Within a chunk the running-state coupling is
+    removed by solving the strictly-lower-triangular UT system
+        (I + diag(gamma*beta) D) A = diag(gamma*beta) (V - C_carry),
+    D[i,j] = (g_{i-1}/g_j)(k_j . k_i) for j < i, g_i = prod_{l<=i} gamma_l. Sequential
+    only across chunks (N/chunk steps); intra-chunk work is batched matmuls + one solve.
+    NOTE: keys/queries must be unit-norm for delta-rule stability (see TitansMemory)."""
+    B, H, N, dk = q.shape
+    dv = v.shape[-1]
+    dtype, device = q.dtype, q.device
+    S = torch.zeros(B, H, dv, dk, dtype=dtype, device=device) if S0 is None else S0
+    Rs = []
+    for cs in range(0, N, chunk):
+        ce = min(cs + chunk, N)
+        C = ce - cs
+        qc, kc, vc = q[:, :, cs:ce], k[:, :, cs:ce], v[:, :, cs:ce]
+        gc_, bc = gamma[:, :, cs:ce], beta[:, :, cs:ce]
+        gb = gc_ * bc
+
+        clg = torch.cumsum(torch.log(gc_), dim=-1)                       # Lgfull[1..C]
+        Lgfull = torch.cat([torch.zeros_like(clg[..., :1]), clg], dim=-1)  # (B,H,C+1)
+        Lp, Ls1 = Lgfull[..., :C], Lgfull[..., 1:C + 1]
+
+        idx = torch.arange(C, device=device)
+        strict = idx[:, None] > idx[None, :]                             # [p,s] = s < p
+        diff = Lp[..., :, None] - Ls1[..., None, :]
+        ratio = torch.exp(diff.masked_fill(~strict, float("-inf")))     # 0 where s>=p
+
+        D = ratio * torch.einsum("bhpd,bhsd->bhps", kc, kc)             # (g_{i-1}/g_j)(k_j.k_i)
+        Rq = ratio * torch.einsum("bhpd,bhsd->bhps", qc, kc)           # readout intra factor
+        carry = torch.exp(Lp)                                           # g_{i-1}
+        c_mat = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, kc)
+        cprime = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, qc)
+
+        eye = torch.eye(C, dtype=dtype, device=device)
+        A = torch.linalg.solve(eye + gb[..., :, None] * D, gb[..., :, None] * (vc - c_mat))
+        Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, A))
+
+        out_ratio = torch.exp(Lgfull[..., C:C + 1] - Ls1)              # g_C/g_j
+        gC = torch.exp(Lgfull[..., C])
+        S = gC[..., None, None] * S + torch.einsum("bhcv,bhcd->bhvd", out_ratio[..., None] * A, kc)
+    return torch.cat(Rs, dim=2), S
+
+
+class TitansMemory(nn.Module):
+    """Titans-style linear long-term memory (MAG branch) for PolarAttention.
+
+    Per-head matrix memory M (dv x dk) updated by the gated delta rule with
+    data-dependent per-head retention gamma_t = sigmoid(W_gamma x + b_gamma) (init high
+    ~0.98) and write strength beta_t = sigmoid(W_beta x + b_beta). Keys/queries are
+    L2-normalized (UNIT norm) for delta-rule stability -- distinct from polar's RMS-norm,
+    which would make ||k||^2 = dk and the rule expansive. The causal readout M_{t-1} q_t
+    is RMS-normed, output-gated, and projected to the residual as an additive third
+    channel (out = content + count + mem). proj is zero-init so the branch starts as a
+    no-op -- safe to enable on a trained polar model. Recurrence runs in fp32."""
+
+    def __init__(self, dim, num_heads, head_dim, linear_cls, chunk=64,
+                 gamma_bias=3.9, beta_bias=0.0):
+        super().__init__()
+        self.H, self.dk, self.chunk = num_heads, head_dim, chunk
+        self.gamma_bias, self.beta_bias = gamma_bias, beta_bias
+        H, dk = num_heads, head_dim
+        self.w_gamma = linear_cls(dim, H)         # data-dependent retention logits
+        self.w_beta = linear_cls(dim, H)          # data-dependent write logits
+        self.gate = linear_cls(dim, H * dk)       # output gate (per head-channel)
+        self.proj = linear_cls(H * dk, dim)       # readout -> residual (zero-init)
+        nn.init.zeros_(self.proj.weight)
+        if self.proj.bias is not None:
+            nn.init.zeros_(self.proj.bias)
+
+    def forward(self, x, q_t, k_t, v_t):
+        """x: (B,T,D); q_t,k_t,v_t: (B,H,T,dk) (KV heads already expanded). -> (B,T,D)."""
+        B, H, T, dk = q_t.shape
+        q = F.normalize(q_t.float(), dim=-1)                            # unit keys/queries
+        k = F.normalize(k_t.float(), dim=-1)
+        v = v_t.float()
+        gamma = torch.sigmoid(self.w_gamma(x).float() + self.gamma_bias).transpose(1, 2)  # (B,H,T)
+        beta = torch.sigmoid(self.w_beta(x).float() + self.beta_bias).transpose(1, 2)
+        r, _ = gated_delta_chunked(q, k, v, gamma, beta, chunk=self.chunk)                 # (B,H,T,dk)
+        r = F.rms_norm(r, (dk,))
+        r_flat = r.transpose(1, 2).reshape(B, T, H * dk).to(x.dtype)
+        return self.proj(r_flat * torch.sigmoid(self.gate(x)))
 
 
 class AtmaConvBase(nn.Module):
