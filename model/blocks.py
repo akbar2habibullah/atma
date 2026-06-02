@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -22,6 +23,14 @@ except Exception:
 try:
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     _HAS_FLA = True
+    # The FLA kernel is a custom autograd op -> dynamo graph-breaks at it, fragmenting the
+    # compiled model into subgraphs (lost fusion + lost cross-break memory planning -> the
+    # ~2x time/peak-memory regression). allow_in_graph keeps it as ONE opaque node so the
+    # model stays a single compiled graph. Opt-in (FLA_ALLOW_IN_GRAPH=1) because it routes
+    # the kernel through compiled autograd -- verify the loss curve still descends after
+    # enabling. If it errors at compile, unset it (falls back to the graph-break path).
+    if os.environ.get("FLA_ALLOW_IN_GRAPH", "0") == "1":
+        chunk_gated_delta_rule = torch._dynamo.allow_in_graph(chunk_gated_delta_rule)
 except Exception:
     chunk_gated_delta_rule = None
     _HAS_FLA = False
@@ -427,7 +436,7 @@ class TitansMemory(nn.Module):
             r, _ = gated_delta_chunked(q, k, v_t.float(), gamma, beta, chunk=self.chunk)  # (B,H,T,dk)
             r = r.transpose(1, 2)                                      # -> (B,T,H,dk)
 
-        r = F.rms_norm(r.float(), (dk,))
+        r = F.rms_norm(r, (dk,))                                       # bf16 from FLA (no fp32 upcast copy)
         r_flat = r.reshape(B, T, H * dk).to(x.dtype)
         return self.proj(r_flat * torch.sigmoid(self.gate(x)))
 
