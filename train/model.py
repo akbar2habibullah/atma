@@ -11,9 +11,14 @@ from model.layers import RMSNorm, MLP
 from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online
 
 try:
-    from kernel.polar_triton import polar_attention as polar_attention_triton, HAS_TRITON
+    from kernel.polar_triton import (
+        polar_attention as polar_attention_triton,
+        polar_attention_fwd as polar_attention_triton_fwd,
+        HAS_TRITON,
+    )
 except Exception:
     polar_attention_triton = None
+    polar_attention_triton_fwd = None
     HAS_TRITON = False
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
@@ -441,6 +446,7 @@ class PolarAttention(AtmaAttnBase):
         self.num_random_keys = num_random_keys or 0
         self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
         self.k_block = k_block
+        self.window = None              # eval-only sliding window (set by eval.py --window)
         self.attn_kernel = attn_kernel  # "torch" | "triton" (Triton flash kernel, CUDA only)
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
@@ -494,7 +500,16 @@ class PolarAttention(AtmaAttnBase):
 
         use_triton = (self.attn_kernel == "triton" and HAS_TRITON
                       and polar_attention_triton is not None and q_t.is_cuda)
-        if use_triton:
+        if self.window is not None:
+            # eval-only sliding window: cap each query to its last `window` keys. Tests
+            # whether holding N in-distribution restores extrapolation, before committing
+            # to context compression. Forward/no-grad only (band backward not modeled).
+            if use_triton:
+                c, mag = polar_attention_triton_fwd(q_t, k_t, v_t, n_keys, window=self.window, **polar_params)
+            else:
+                c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block,
+                                                window=self.window, **polar_params)
+        elif use_triton:
             # FlashAttention-style Triton kernel: O(T*block) memory, fused fwd+bwd.
             c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, **polar_params)
         elif self.online:

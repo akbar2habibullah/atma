@@ -187,13 +187,21 @@ def _chunked_loss(model, x, targets, chunk=8192):
 
 def run_diagnose(model, args, device):
     from model import blocks
+    from train.model import PolarAttention
+
+    window = getattr(args, "window", None)
+    if window is not None:
+        for block in model.blocks:
+            if isinstance(block.attn, PolarAttention):
+                block.attn.window = window
 
     probe = Probe(model)
     eps = 1e-6
     mults = args.multipliers if 1 in args.multipliers else [1] + args.multipliers
 
+    win_note = f", sliding window W={window}" if window is not None else ""
     print(f"\nActivation-distribution probe ({args.num_seqs} seqs/length, "
-          f"base_len={args.base_len}, reference = 1×):\n")
+          f"base_len={args.base_len}, reference = 1×{win_note}):\n")
 
     losses = {}
     for mult in mults:
@@ -305,6 +313,10 @@ def main():
                              "Runs embed->blocks only (no LM head) with a time-chunked loss to fit a 24 GB L4.")
     parser.add_argument("--loss_chunk", type=int, default=8192,
                         help="Time-chunk for the diagnose loss head (bounds peak logits memory; default 8192).")
+    parser.add_argument("--window", type=int, default=None,
+                        help="Eval-only causal sliding window: cap each query to its last W keys. "
+                             "Tests whether holding N in-distribution restores extrapolation "
+                             "(set W≈training length). Implies the probe harness.")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -315,15 +327,16 @@ def main():
     print(f"Loading checkpoint from '{args.checkpoint}'...")
     # Diagnose needs eager modules (hooks + the python-side probe sink survive only
     # uncompiled) and the streaming polar path (materialized O(T^2) OOMs past ~16x).
+    probe_mode = args.diagnose or args.window is not None
     model, config = load_from_checkpoint(
         args.checkpoint, device,
-        compile_model=not args.diagnose, force_probe_path=args.diagnose,
+        compile_model=not probe_mode, force_probe_path=probe_mode,
     )
     num_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model: {num_params:.2f}M parameters  |  hidden={config.hidden_size}  "
           f"layers={config.num_hidden_layers}  vocab={config.vocab_size}")
 
-    if args.diagnose:
+    if probe_mode:
         run_diagnose(model, args, device)
         return
 

@@ -113,7 +113,7 @@ class _PolarOnline(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                len_gain_raw, mag_beta_raw, k_block, eps):
+                len_gain_raw, mag_beta_raw, k_block, eps, window=None):
         out_dtype = q.dtype
         cd = _compute_dtype(out_dtype)
         B, H, T, dk = q.shape
@@ -121,7 +121,12 @@ class _PolarOnline(torch.autograd.Function):
         qd, kd, vd = q.to(cd), k.to(cd), v.to(cd)
         scale = dk ** -0.5
 
-        n = n_keys.to(cd).clamp(min=1.0)
+        # window (eval-only sliding window): each query sees only its last `window`
+        # keys, so temp/null use the capped count min(n_keys, window) and the block
+        # loop also masks keys older than the window. backward does NOT model the
+        # band — guarded against grad use in polar_attention_online.
+        n_count = n_keys if window is None else torch.minimum(n_keys, n_keys.new_tensor(float(window)))
+        n = n_count.to(cd).clamp(min=1.0)
         t = (1.0 + F.softplus(len_gain_raw.to(cd)).view(1, H, 1) * torch.log(n).view(1, 1, T))   # (1,H,T)
         nu = (null_base.to(cd).view(1, H, 1)
               + F.softplus(null_slope_raw.to(cd)).view(1, H, 1) * torch.sqrt(torch.log(n + 1.0)).view(1, 1, T))
@@ -138,7 +143,10 @@ class _PolarOnline(torch.autograd.Function):
             kb, vb = kd[:, :, ks:ke], vd[:, :, ks:ke]                       # (B,H,Kb,dk)
             sig = torch.matmul(qd, kb.transpose(-2, -1)) * scale            # (B,H,T,Kb)
             a = sig * t.unsqueeze(-1)
-            invalid = key_idx[ks:ke].view(1, 1, 1, -1) >= n_keys.view(1, 1, T, 1)
+            kidx = key_idx[ks:ke].view(1, 1, 1, -1)
+            invalid = kidx >= n_keys.view(1, 1, T, 1)                       # future
+            if window is not None:
+                invalid = invalid | (kidx < (n_keys.view(1, 1, T, 1) - window))  # older than window
             a = a.masked_fill(invalid, NEG)
             blk_max = a.amax(dim=-1)                                        # (B,H,T)
             M_new = torch.maximum(M, blk_max)
@@ -267,16 +275,23 @@ class _PolarOnline(torch.autograd.Function):
         return (cast(grad_q, q), cast(grad_k, k), cast(grad_v, v), None,
                 cast(grad_v_null, v_null), cast(grad_null_base, null_base),
                 cast(grad_null_slope, null_slope_raw), cast(grad_len_gain, len_gain_raw),
-                cast(grad_mag_beta, mag_beta_raw), None, None)
+                cast(grad_mag_beta, mag_beta_raw), None, None, None)
 
 
 def polar_attention_online(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
-                           len_gain_raw, mag_beta_raw, k_block=512, eps=1e-6):
+                           len_gain_raw, mag_beta_raw, k_block=512, eps=1e-6, window=None):
     """Memory-efficient polar attention. q,k,v: (B,H,T,dk) with KV heads expanded.
     Streams keys in blocks of k_block -> O(B*H*T*k_block) peak (fwd and bwd).
-    Numerically equals materialized scores + polar_reduce."""
+    Numerically equals materialized scores + polar_reduce.
+
+    window (int, optional): eval-only causal sliding window — each query attends to
+    only its last `window` keys. The streaming backward does not model the band, so
+    this is forward/no-grad only."""
+    if window is not None and torch.is_grad_enabled():
+        raise NotImplementedError("polar_attention_online(window=...) is forward/eval-only "
+                                  "(the streaming backward does not model the band).")
     return _PolarOnline.apply(q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                              len_gain_raw, mag_beta_raw, k_block, eps)
+                              len_gain_raw, mag_beta_raw, k_block, eps, window)
 
 
 class AtmaConvBase(nn.Module):
