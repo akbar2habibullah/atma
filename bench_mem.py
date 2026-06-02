@@ -65,7 +65,10 @@ def chunked(q, k, v, gamma, beta, chunk, method):
         L = gb[..., :, None] * D
         rhs = gb[..., :, None] * (vc - c_mat)
         if method == "tri":
-            A = torch.linalg.solve_triangular(L, rhs, upper=False, unitriangular=True)
+            # triangular_solve has no bf16 CUDA kernel -> solve in fp32 (mixed precision:
+            # bf16 matmuls feed the einsums above, the solve itself stays fp32).
+            A = torch.linalg.solve_triangular(L.float(), rhs.float(),
+                                              upper=False, unitriangular=True).to(L.dtype)
         else:
             A = torch.matmul(_inv_neumann(L, steps), rhs)
         Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, A))
