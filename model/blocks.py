@@ -1,4 +1,3 @@
-import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -23,17 +22,42 @@ except Exception:
 try:
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     _HAS_FLA = True
-    # The FLA kernel is a custom autograd op -> dynamo graph-breaks at it, fragmenting the
-    # compiled model into subgraphs (lost fusion + lost cross-break memory planning -> the
-    # ~2x time/peak-memory regression). allow_in_graph keeps it as ONE opaque node so the
-    # model stays a single compiled graph. Opt-in (FLA_ALLOW_IN_GRAPH=1) because it routes
-    # the kernel through compiled autograd -- verify the loss curve still descends after
-    # enabling. If it errors at compile, unset it (falls back to the graph-break path).
-    if os.environ.get("FLA_ALLOW_IN_GRAPH", "0") == "1":
-        chunk_gated_delta_rule = torch._dynamo.allow_in_graph(chunk_gated_delta_rule)
 except Exception:
     chunk_gated_delta_rule = None
     _HAS_FLA = False
+
+# FLA's kernel is a Triton autograd.Function -> torch.compile can't trace it and graph-breaks
+# at every memory layer (lost fusion + lost cross-break memory planning = the ~2x time/RAM
+# regression; allow_in_graph fails because the kernel calls .data_ptr on fake tensors). Wrap
+# it as an OPAQUE custom op with a register_fake (dynamo propagates shapes without running the
+# kernel -> no graph break) and a recompute backward (runs FLA's own autograd eagerly in the
+# bwd -> correct grads; FLA fwd activations are recomputed not stored -> lower peak memory).
+_fla_gated_delta = None
+if _HAS_FLA:
+    try:
+        @torch.library.custom_op("atma::fla_gated_delta", mutates_args=())
+        def _fla_gated_delta(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                             g: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
+            return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+
+        @_fla_gated_delta.register_fake
+        def _(q, k, v, g, beta):
+            return torch.empty_like(v)                 # output o has v's shape (B,T,H,V)
+
+        def _fla_setup(ctx, inputs, output):
+            ctx.save_for_backward(*inputs)
+
+        def _fla_backward(ctx, grad_o):
+            q, k, v, g, beta = ctx.saved_tensors
+            with torch.enable_grad():                   # recompute FLA fwd to get its autograd graph
+                ins = [t.detach().requires_grad_(True) for t in (q, k, v, g, beta)]
+                o = chunk_gated_delta_rule(*ins, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+                return torch.autograd.grad(o, ins, grad_o)
+
+        _fla_gated_delta.register_autograd(_fla_backward, setup_context=_fla_setup)
+    except Exception:
+        def _fla_gated_delta(q, k, v, g, beta):         # fallback: raw call (graph-breaks under compile)
+            return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
 
 
 # --- Diagnostic probe ---------------------------------------------------------
@@ -426,8 +450,7 @@ class TitansMemory(nn.Module):
             q = q_t.transpose(1, 2).contiguous()                       # (B,T,H,dk)
             k = k_t.transpose(1, 2).contiguous()
             v = v_t.transpose(1, 2).contiguous()
-            r, _ = chunk_gated_delta_rule(q, k, v, g.contiguous(), beta.contiguous(),
-                                          scale=1.0, use_qk_l2norm_in_kernel=True)  # (B,T,H,dk)
+            r = _fla_gated_delta(q, k, v, g.contiguous(), beta.contiguous())  # (B,T,H,dk), compile-opaque
         else:
             q = F.normalize(q_t.float(), dim=-1)                       # unit keys/queries
             k = F.normalize(k_t.float(), dim=-1)
