@@ -170,19 +170,59 @@ def _blocks_forward(model, inputs):
     return x
 
 
-def _chunked_loss(model, x, targets, chunk=8192):
+def _chunked_loss(model, x, targets, chunk=8192, pos_sum=None, pos_cnt=None):
     """Per-token CE via a time-chunked head: peak logits = chunk*vocab*4 (~1.6 GB at
-    chunk=8192), not T*vocab*4. Mirrors Model.forward's logit squashing exactly."""
+    chunk=8192), not T*vocab*4. Mirrors Model.forward's logit squashing exactly.
+
+    If pos_sum/pos_cnt (1D tensors) are given, also bins per-token loss by absolute target
+    position into log2 buckets (bucket k = positions [2^k, 2^{k+1})) — the L(t) curve."""
     total, n = 0.0, 0
-    T = x.shape[1]
+    T, B = x.shape[1], x.shape[0]
     for c0 in range(0, T, chunk):
         c1 = min(c0 + chunk, T)
         logits = model.proj(model.norm(x[:, c0:c1])).float()
         logits = 15 * logits * (logits.square() + 15 ** 2).rsqrt()
         tgt = targets[:, c0:c1].reshape(-1)
-        total += F.cross_entropy(logits.reshape(tgt.numel(), -1), tgt, reduction="sum").item()
+        loss = F.cross_entropy(logits.reshape(tgt.numel(), -1), tgt, reduction="none")
+        total += loss.sum().item()
         n += tgt.numel()
+        if pos_sum is not None:
+            pos = torch.arange(c0, c1, device=loss.device) + 1     # 1-indexed predicted position
+            if B > 1:
+                pos = pos.repeat(B)                                # reshape order is (batch, position)
+            bucket = torch.log2(pos.float()).floor().long().clamp_(max=pos_sum.numel() - 1)
+            pos_sum.index_add_(0, bucket, loss.double())
+            pos_cnt.index_add_(0, bucket, torch.ones_like(loss, dtype=torch.float64))
     return total, n
+
+
+def _doc_source(args, mults, device):
+    """Shared data source: single coherent long docs (--hf_dataset) or the concatenated
+    .bin stream. Returns (docs, n_seqs, batches) where batches(seq_len) yields (inputs, targets).
+    The .bin generator restarts from the same files each call, so every window/multiplier sees
+    the SAME sequences — a fair cross-window comparison."""
+    docs = None
+    if getattr(args, "hf_dataset", None):
+        min_tok = args.min_doc_tokens or args.base_len * max(mults)
+        docs = select_long_docs(args.hf_dataset, args.hf_text_key, args.hf_split,
+                                min_tok, args.num_seqs)
+        if not docs:
+            raise SystemExit(f"No docs with ≥ {min_tok + 1:,} tokens found — lower --multipliers "
+                             f"or --min_doc_tokens, or pick a dataset with longer documents.")
+    n_seqs = len(docs) if docs is not None else args.num_seqs
+
+    def batches(seq_len):
+        if docs is not None:                        # nested prefixes of the SAME coherent docs
+            for d in docs:
+                buf = d[:seq_len + 1]
+                yield (buf[:-1].view(1, -1).to(device, torch.int32),
+                       buf[1:].view(1, -1).to(device, torch.int64))
+        else:
+            gen = data_generator(args.val_data, seq_len, seq_len=seq_len)
+            for _ in range(n_seqs):
+                yield next(gen)
+
+    return docs, n_seqs, batches
 
 
 def select_long_docs(dataset_id, text_key, split, min_tokens, num_docs, tokenizer_name="gpt2"):
@@ -230,28 +270,7 @@ def run_diagnose(model, args, device):
     eps = 1e-6
     mults = args.multipliers if 1 in args.multipliers else [1] + args.multipliers
 
-    # Data source: single coherent long docs (--hf_dataset) or the concatenated .bin stream.
-    docs = None
-    if getattr(args, "hf_dataset", None):
-        min_tok = args.min_doc_tokens or args.base_len * max(mults)
-        docs = select_long_docs(args.hf_dataset, args.hf_text_key, args.hf_split,
-                                min_tok, args.num_seqs)
-        if not docs:
-            raise SystemExit(f"No docs with ≥ {min_tok + 1:,} tokens found — lower --multipliers "
-                             f"or --min_doc_tokens, or pick a dataset with longer documents.")
-    n_seqs = len(docs) if docs is not None else args.num_seqs
-
-    def batches(seq_len):
-        if docs is not None:                        # nested prefixes of the SAME coherent docs
-            for d in docs:
-                buf = d[:seq_len + 1]
-                yield (buf[:-1].view(1, -1).to(device, torch.int32),
-                       buf[1:].view(1, -1).to(device, torch.int64))
-        else:
-            gen = data_generator(args.val_data, seq_len, seq_len=seq_len)
-            for _ in range(n_seqs):
-                yield next(gen)
-
+    docs, n_seqs, batches = _doc_source(args, mults, device)
     src = f"{n_seqs} docs from {args.hf_dataset}" if docs is not None else f"{n_seqs} seqs/length"
     win_note = f", sliding window W={window}" if window is not None else ""
     print(f"\nActivation-distribution probe ({src}, "
@@ -347,6 +366,91 @@ def run_diagnose(model, args, device):
         h.remove()
 
 
+def _parse_window(token):
+    """'full'/'none'/'0' -> (label, None); else -> (str(W), int(W))."""
+    if token.lower() in ("full", "none", "0", "-1"):
+        return ("full", None)
+    return (token, int(token))
+
+
+def run_window_sweep(model, args, device):
+    """Compare multiple sliding windows + full attention in ONE pass on the same docs.
+    Prints a loss matrix and an n_eff matrix (multiplier × window), and — with
+    --per_position — the per-token loss L(t) by absolute position at the max multiplier
+    (plateau = averaging artifact; keeps declining = genuine long-range gain)."""
+    from model import blocks
+    from train.model import PolarAttention
+
+    win_cfgs = [_parse_window(w) for w in args.windows]
+    labels = [lbl for lbl, _ in win_cfgs]
+    mults = sorted(set(args.multipliers) | {1})
+    max_mult = max(mults)
+    polar_layers = [b.attn for b in model.blocks if isinstance(b.attn, PolarAttention)]
+
+    docs, n_seqs, batches = _doc_source(args, mults, device)
+    src = f"{n_seqs} docs from {args.hf_dataset}" if docs is not None else f"{n_seqs} seqs/length"
+    print(f"\nWindow sweep ({src}, base_len={args.base_len}, "
+          f"windows={labels}{', +L(t)' if args.per_position else ''}):\n")
+
+    NBINS = 24
+    loss_mat, neff_mat, posL = {}, {}, {}
+    for label, W in win_cfgs:
+        for attn in polar_layers:
+            attn.window = W
+        for mult in mults:
+            seq_len = args.base_len * mult
+            torch.cuda.empty_cache()
+            do_pos = args.per_position and mult == max_mult
+            ps = torch.zeros(NBINS, dtype=torch.float64, device=device) if do_pos else None
+            pc = torch.zeros(NBINS, dtype=torch.float64, device=device) if do_pos else None
+            loss_sum, tok, ne_sum, ne_cnt = 0.0, 0, 0.0, 0
+            with torch.no_grad():
+                for inputs, targets in batches(seq_len):
+                    blocks._PROBE = []
+                    x = _blocks_forward(model, inputs)
+                    for rec in blocks._PROBE:               # mean n_eff over layers/positions/seqs
+                        ne_sum += rec["n_eff"].sum().item()
+                        ne_cnt += rec["n_eff"].numel()
+                    ls, n = _chunked_loss(model, x, targets, args.loss_chunk, pos_sum=ps, pos_cnt=pc)
+                    loss_sum += ls
+                    tok += n
+            blocks._PROBE = None
+            loss_mat[(label, mult)] = loss_sum / tok
+            neff_mat[(label, mult)] = ne_sum / max(ne_cnt, 1)
+            if do_pos:
+                posL[label] = (ps.cpu(), pc.cpu())
+    for attn in polar_layers:
+        attn.window = None
+
+    def print_matrix(title, mat, fmt):
+        print(title)
+        print(f"{'mult':>6}  " + "  ".join(f"{l:>9}" for l in labels))
+        print("-" * (8 + 11 * len(labels)))
+        for mult in mults:
+            print(f"{f'{mult}x':>6}  " + "  ".join(f"{mat[(l, mult)]:>9{fmt}}" for l in labels))
+        print()
+
+    print_matrix("Mean loss vs N  (cols = window; 'full' = no window):", loss_mat, ".4f")
+    print_matrix("Mean n_eff vs N  (effective keys attended; cols = window):", neff_mat, ".1f")
+
+    if args.per_position:
+        print(f"Per-token loss L(t) by position bin at {max_mult}x  (cols = window):")
+        print(f"{'pos':>14}  " + "  ".join(f"{l:>9}" for l in labels))
+        print("-" * (16 + 11 * len(labels)))
+        for k in range(NBINS):
+            if all(posL[l][1][k].item() == 0 for l in labels):
+                continue
+            rng = f"{2**k:,}-{2**(k+1):,}"
+            cells = []
+            for l in labels:
+                s, c = posL[l][0][k].item(), posL[l][1][k].item()
+                cells.append(f"{s / c:>9.4f}" if c > 0 else f"{'—':>9}")
+            print(f"{rng:>14}  " + "  ".join(cells))
+        print("\nReading L(t): flat past the window width → the 'long < short' mean is the "
+              "position-averaging artifact (later tokens easier), not long-range use.\n"
+              "Keeps declining past the window under 'full' → genuine long-range gain.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Length extrapolation evaluation")
     parser.add_argument("--checkpoint", default="checkpoints",
@@ -378,6 +482,14 @@ def main():
     parser.add_argument("--min_doc_tokens", type=int, default=None,
                         help="Min token length for selected docs (default: base_len * max(multipliers), so "
                              "every multiplier is a prefix of the same coherent doc).")
+    parser.add_argument("--windows", nargs="+", default=None,
+                        help="Compare multiple sliding windows + full attention in ONE run on the same "
+                             "docs. Values are key widths; use 'full' (or 0) for no window. "
+                             "E.g. --windows 128 512 2048 full. Prints loss + n_eff matrices.")
+    parser.add_argument("--per_position", action="store_true",
+                        help="With --windows: also dump per-token loss L(t) binned by absolute position "
+                             "at the max multiplier — separates genuine long-range gain (curve keeps "
+                             "declining under 'full') from the averaging artifact (curve plateaus past W).")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -388,7 +500,8 @@ def main():
     print(f"Loading checkpoint from '{args.checkpoint}'...")
     # Diagnose needs eager modules (hooks + the python-side probe sink survive only
     # uncompiled) and the streaming polar path (materialized O(T^2) OOMs past ~16x).
-    probe_mode = args.diagnose or args.window is not None or args.hf_dataset is not None
+    probe_mode = (args.diagnose or args.window is not None
+                  or args.hf_dataset is not None or args.windows is not None)
     model, config = load_from_checkpoint(
         args.checkpoint, device,
         compile_model=not probe_mode, force_probe_path=probe_mode,
@@ -397,6 +510,9 @@ def main():
     print(f"Model: {num_params:.2f}M parameters  |  hidden={config.hidden_size}  "
           f"layers={config.num_hidden_layers}  vocab={config.vocab_size}")
 
+    if args.windows is not None:
+        run_window_sweep(model, args, device)
+        return
     if probe_mode:
         run_diagnose(model, args, device)
         return
