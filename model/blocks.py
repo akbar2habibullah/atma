@@ -433,10 +433,12 @@ class TitansMemory(nn.Module):
                  torch.compile-safe). Used when available on a CUDA tensor.
       "torch" -> the pure-PyTorch gated_delta_chunked (eager, compile-disabled).
       "auto"  -> fla if installed + CUDA, else torch.
-    The FLA path matches our recurrence via value pre-scaling v <- gamma*v (so FLA's
-    `beta*v` write becomes our `gamma*beta*v`) and g = log(gamma); it may differ slightly
-    from the torch reference in the readout self-term convention (validate with verify_fla.py).
-    The q-scale is irrelevant here because the readout is RMS-normed afterwards."""
+    Both backends use FLA's native convention (decay-first, undecayed write, self-inclusive
+    readout M_t q_t), so the FLA path passes q,k,v straight through -- NO value pre-scaling.
+    g = logsigmoid(gamma_logit) = log(gamma) (log-decay), beta = sigmoid(beta_logit),
+    use_qk_l2norm_in_kernel=True handles the unit-key requirement, and scale=1.0 washes out
+    because the readout is RMS-normed afterwards. They agree up to bf16-vs-fp32 numerics
+    (validate with verify_fla.py)."""
 
     def __init__(self, dim, num_heads, head_dim, linear_cls, chunk=64,
                  gamma_bias=3.9, beta_bias=0.0, kernel="auto"):
