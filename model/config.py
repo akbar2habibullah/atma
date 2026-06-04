@@ -22,6 +22,12 @@ class AtmaConfig:
     #   "triton" -> FlashAttention-style Triton kernel (kernel/polar_triton.py); CUDA only,
     #               falls back to the torch path on CPU / when triton is unavailable.
     attn_kernel: str = "triton"
+    # Attention core for the 4 attention layers:
+    #   "polar" -> PolarAttention (length-invariant direction+count, canon)   [default, shipping]
+    #   "nope"  -> softmax CausalSelfAttention, canon, no positional encoding
+    #   "rope"  -> softmax CausalSelfAttention, rotary positions, no canon
+    # nope/rope use the SAME GQA + output-gate surround; memory/window/distractor apply to all.
+    attn_type: str = "polar"
     # MAG compression memory (Titans-style linear gated-delta) + sliding window.
     # Defaults leave the model byte-identical to plain polar attention (no window, no
     # memory). Enable both together for the MAG configuration.
