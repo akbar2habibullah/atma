@@ -610,6 +610,10 @@ def main():
                         help="Needle→query distances to sweep (default: 256 512 1024 2048 4096 8192).")
     parser.add_argument("--needle_val_len", type=int, default=5,
                         help="Number of spaced random digits in the needle value (default: 5).")
+    parser.add_argument("--no_mem", action="store_true",
+                        help="Ablation: disable the Titans memory branch (set attn.mem=None) on the "
+                             "loaded checkpoint. Re-run any probe mode (--windows/--needle/--diagnose) "
+                             "with and without this flag to isolate the memory's eval-time contribution.")
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -629,6 +633,16 @@ def main():
     num_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model: {num_params:.2f}M parameters  |  hidden={config.hidden_size}  "
           f"layers={config.num_hidden_layers}  vocab={config.vocab_size}")
+
+    if args.no_mem:
+        from train.model import PolarAttention
+        m = getattr(model, "_orig_mod", model)        # unwrap torch.compile if present
+        n = 0
+        for block in m.blocks:
+            if isinstance(block.attn, PolarAttention) and getattr(block.attn, "mem", None) is not None:
+                block.attn.mem = None
+                n += 1
+        print(f"[--no_mem] Titans memory branch DISABLED in {n} attention layers (ablation).")
 
     if args.needle:
         run_needle(model, args, device)

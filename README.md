@@ -19,6 +19,7 @@ Atma uses a **3:1 conv-to-attention ratio** across 16 decoder layers:
 
 - **LFM2 Gated Convolution** (12 layers): inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
 - **Polar Attention** (4 layers, **default**): a length-invariant replacement for softmax SDPA. It keeps the Canon-B surround (GQA, horizontal residual convs on Q/K/V, QK-norm, `output * sigmoid(gate)`) but replaces the softmax core with two channels — a count-blind **direction** unit vector and a bounded **magnitude** (participation ratio through an extreme-value-corrected null sink). This bounds the attention output at any length, where softmax dilutes and blows up. Full derivation: **[POLAR_ATTENTION.md](POLAR_ATTENTION.md)**. (The legacy softmax `CausalSelfAttention` remains in the tree but is no longer wired into the model.)
+- **Titans compression memory (MAG, default-on)**: each polar layer carries a length-invariant linear long-term memory (a per-head gated-delta fast-weight store), added as an **additive third channel** alongside a sliding-window short-term branch — `out = content + count + memory`. It resolves the window-vs-retrieval tradeoff (window wins perplexity, full wins recall, neither both): the memory supplies the diffuse long-context perplexity gain while full polar + the distractor supply exact retrieval. Full derivation, the FLA fused-kernel integration, and the first end-to-end results: **[TITANS_MEMORY.md](TITANS_MEMORY.md)**.
 
 Each decoder block is pre-norm: `x = x + sublayer(norm(x))` then `x = x + MLP(norm(x))`. The MLP uses squared-ReLU gating with 4× hidden expansion.
 
@@ -73,11 +74,14 @@ Polar Attention keeps the attention output bounded at any length, where softmax 
 
 And the optional distractor loss (`num_random_keys > 0`) extends long-range **retrieval** dramatically — an induction needle planted **32× beyond** the training length is still recalled (6.3% vs 0% / chance without it). Full evidence, the perplexity-vs-window analysis, and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
 
+Adding the **Titans memory** (MAG) closes the rest of the gap: full-attention perplexity becomes *best and monotonic* (`1.93 @ 64×`, a reversal of polar-only where full was worst), the needle is recalled at `42%` out to `65536` tokens (64×), and convergence/perplexity now ranks **Polar+Titans > Causal > Polar-only** — at ~6–9% MFU overhead with the FLA fused kernel (`FLA_CUSTOM_OP=1`). Details: **[TITANS_MEMORY.md](TITANS_MEMORY.md)**.
+
 ## Documentation
 
 | Doc | Contents |
 |---|---|
 | [POLAR_ATTENTION.md](POLAR_ATTENTION.md) | Polar Attention: derivation, design rationale, verification |
+| [TITANS_MEMORY.md](TITANS_MEMORY.md) | Titans compression memory (MAG): gated-delta math, FLA fused kernel, results |
 | [docs/training.md](docs/training.md) | Training pipeline, performance, checkpoints, tokenizing custom data |
 | [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
 | [docs/inference.md](docs/inference.md) | Inference engine, usage, throughput, the Polar-port status |
@@ -97,6 +101,7 @@ atma/
 
 ## References
 
+- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)
 - [LFM2: Liquid Foundation Models 2](https://arxiv.org/abs/2511.23404)
 - [NanoGPT speedrun](https://github.com/KellerJordan/modded-nanogpt)
 - [Physics of Language Models: Part 4.1, Architecture Design and the Magic of Canon Layers](https://arxiv.org/abs/2512.17351)

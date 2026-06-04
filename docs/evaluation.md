@@ -32,12 +32,29 @@ Induction needle-in-haystack: plant a natural sentence with a unique key + 5-dig
 
 Without the distractor, retrieval falls off a cliff just past the training length; with it, the model still recalls a fact planted **32× beyond** its training context.
 
+## 3. The Titans memory (MAG) closes the perplexity-vs-retrieval gap
+
+Adding the [Titans compression memory](../TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`) gives a model that holds **both** properties at once. Trained at `seq_len=2048` with the window, evaluated on coherent long documents (finepdfs):
+
+- **Perplexity extrapolation reverses.** Full attention becomes *best and monotonic* — `1.93 @ 64×` — where polar-only had full attention as the **worst** option (`~3.21 @ 64×`). The ~1.3-nat gain is attributable to the memory, not the window: the polar core trains at the same `N ≤ 1024` operating point either way, so the memory is the only new variable.
+- **Retrieval flattens at distance.** The memory is a *lossy gist* (it cannot exact-recall a random needle — that stays the job of full polar + the distractor), but the combined run trades a little short-range accuracy for a much flatter long tail:
+
+| Needle distance | polar-only + distractor (§2) | **MAG** (window + memory + distractor) |
+|---|---|---|
+| 2,048 | 93.8 % | 71 % |
+| 65,536 (32×) | 6.3 % | **42 %** |
+
+The short-range dip is the **window** excluding distance-2048 keys from attention training, not memory harm. Without the distractor the MAG run retrieves at chance levels (27 % → 12 %): the memory supplies perplexity, the distractor supplies pinpoint recall.
+
+**Ablation — `--no_mem` confirms the memory is load-bearing.** Stripping the memory from a trained MAG checkpoint breaks it globally (loss `2.8 → 5.7` at 1×, needle `0 %` everywhere): the model uses the memory at *all* lengths, not just long context. See [TITANS_MEMORY.md §7](../TITANS_MEMORY.md#7-empirical-results) for the full numbers and the ~6–9% MFU overhead.
+
 ## Choosing an attention mode (workload-dependent)
 
 A sliding window is **retrieval-blind** past its width, while full Polar attention retrieves far but pays an out-of-distribution perplexity tax. So:
 
 - **Plain language modeling / locally-coherent generation** → sliding window ≈ training length (near-optimal perplexity, clean extrapolation, no extra cost).
-- **Tasks needing recall of specific distant content** → full Polar attention with `num_random_keys > 0` (the only setting that retrieves far). A bounded-pool recurrent memory trained in-loop is the path to *both* in-distribution perplexity and distant recall.
+- **Tasks needing recall of specific distant content** → full Polar attention with `num_random_keys > 0` (the only setting that retrieves far).
+- **Both at once** → enable the [Titans memory](../TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`). The bounded-pool recurrent memory trained in-loop is what delivers in-distribution perplexity *and* distant recall together (§3) — at ~6–9% MFU overhead.
 
 ## `eval.py` reference
 
@@ -61,5 +78,6 @@ python eval.py --needle --hf_dataset codelion/finepdfs-100M \
 | `--windows … --per_position` | multi-window + full comparison in one run, with `L(t)` curves |
 | `--hf_dataset ID` | single coherent long documents (nested prefixes) instead of the concatenated stream |
 | `--needle` | induction needle-in-haystack: retrieval accuracy vs needle→query distance |
+| `--no_mem` | strip the Titans memory branch from the checkpoint (sets `attn.mem = None`) to isolate its contribution |
 
 All probe modes run `embed → blocks` eager with a time-chunked LM head (fits 24 GB at 64×) and force the streaming/Triton polar path (the materialized `O(T²)` path OOMs past ~16×).
