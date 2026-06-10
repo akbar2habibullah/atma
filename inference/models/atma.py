@@ -219,7 +219,7 @@ class AtmaAttention(AtmaAttnBase):
             q = q_t.transpose(1, 2).contiguous()                         # (1, T, H, dk)
             k = k_t.transpose(1, 2).contiguous()
             v = v_t.transpose(1, 2).contiguous()
-            r, S = chunk_gated_delta_rule(q, k, v, g.contiguous(), beta.contiguous(),
+            r, S = chunk_gated_delta_rule(q=q, k=k, v=v, g=g.contiguous(), beta=beta.contiguous(),
                                           scale=1.0, initial_state=S0,
                                           output_final_state=True, use_qk_l2norm_in_kernel=True)
             mem_state_table[seq.seq_slot] = S.squeeze(0)
@@ -256,9 +256,13 @@ class AtmaAttention(AtmaAttnBase):
         if self._mem_use_fla(x):
             g = F.logsigmoid(g_logit).unsqueeze(1)                       # (B, 1, H)
             beta = torch.sigmoid(b_logit).unsqueeze(1)
+            # beta MUST be keyword-bound: fused_recurrent_gated_delta_rule has extra
+            # per-key/value gate params (gk, gv) between g and beta — a positional beta
+            # lands in gk and is indexed as [B, T, H, K] (out-of-bounds reads -> NaN /
+            # illegal memory access at large batch).
             r, S_new = fused_recurrent_gated_delta_rule(
-                q_t.unsqueeze(1), k_t.unsqueeze(1), v_t.unsqueeze(1),    # (B, 1, H, dk)
-                g, beta, scale=1.0, initial_state=S,
+                q=q_t.unsqueeze(1), k=k_t.unsqueeze(1), v=v_t.unsqueeze(1),  # (B, 1, H, dk)
+                g=g, beta=beta, scale=1.0, initial_state=S,
                 output_final_state=True, use_qk_l2norm_in_kernel=True)
             mem_state_table[seq_slots] = S_new                           # scatter
             r = r.squeeze(1)                                             # (B, H, dk)

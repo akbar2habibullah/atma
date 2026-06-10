@@ -40,7 +40,11 @@ except Exception:
 _fla_gated_delta = None
 if _HAS_FLA:
     def _fla_raw(q, k, v, g, beta):                     # default: plain call (graph-breaks, works)
-        return chunk_gated_delta_rule(q, k, v, g, beta, scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+        # beta keyword-bound on purpose: FLA's fused_recurrent variant has gk/gv params
+        # between g and beta, and chunk may grow them too — positional beta would bind
+        # to gk and be indexed as [B, T, H, K] (out-of-bounds reads).
+        return chunk_gated_delta_rule(q=q, k=k, v=v, g=g, beta=beta,
+                                      scale=1.0, use_qk_l2norm_in_kernel=True)[0]
     _fla_gated_delta = _fla_raw
 
     if os.environ.get("FLA_CUSTOM_OP", "0") == "1":

@@ -53,8 +53,15 @@ def verify_inference_bridge():
     beta = torch.sigmoid(torch.randn(B, Ttot, H, device=dev))        # fp32
     kw = dict(scale=1.0, use_qk_l2norm_in_kernel=True)
 
+    # NOTE: g and beta are keyword-bound everywhere. fused_recurrent_gated_delta_rule has
+    # extra per-key/value gate params (gk, gv) between g and beta, so a positional beta
+    # binds to gk and is indexed as [B, T, H, K] -> out-of-bounds reads (NaN at small B,
+    # illegal memory access at large B). chunk_gated_delta_rule has no gk/gv today, but
+    # keywords are version-proof.
     def fla_chunk(s, e, S0=None):
-        return chunk_gated_delta_rule(q[:, s:e], k[:, s:e], v[:, s:e], g[:, s:e], beta[:, s:e],
+        return chunk_gated_delta_rule(q=q[:, s:e].contiguous(), k=k[:, s:e].contiguous(),
+                                      v=v[:, s:e].contiguous(), g=g[:, s:e].contiguous(),
+                                      beta=beta[:, s:e].contiguous(),
                                       initial_state=S0, output_final_state=True, **kw)
 
     # oracle: one chunked pass over the whole stream
@@ -82,7 +89,9 @@ def verify_inference_bridge():
     outs = []
     for t in range(T, Ttot):
         o_t, S = fused_recurrent_gated_delta_rule(
-            q[:, t:t + 1], k[:, t:t + 1], v[:, t:t + 1], g[:, t:t + 1], beta[:, t:t + 1],
+            q=q[:, t:t + 1].contiguous(), k=k[:, t:t + 1].contiguous(),
+            v=v[:, t:t + 1].contiguous(), g=g[:, t:t + 1].contiguous(),
+            beta=beta[:, t:t + 1].contiguous(),
             initial_state=S, output_final_state=True, **kw)
         outs.append(o_t)
     o_dec = torch.cat(outs, dim=1)

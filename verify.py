@@ -14,7 +14,9 @@ For each layer type:
                   reference output at the last position
 
 Usage:
-    python verify.py
+    python verify.py          # CPU: validates the math via the pure-PyTorch fallbacks
+    python verify.py --cuda   # GPU: same checks through the Triton kernels (polar
+                              # prefill, paged polar decode incl. WINDOW, fused conv)
 """
 
 import os
@@ -49,6 +51,7 @@ TEST_CONFIG = AtmaConfig(
     head_dim=64,           # 4 heads, 1 KV head (1:4 GQA)
     attn_kernel_size=4,
     conv_kernel_size=3,
+    mem_kernel="torch",    # exact fp32 parity at ATOL; FLA bf16 numerics are verify_fla.py's job
 )
 SEQ_LEN = 8   # full sequence length; prefill = SEQ_LEN-1, decode = last token
 ATOL = 1e-4   # absolute tolerance for float32 comparisons
@@ -353,12 +356,14 @@ def verify_attention_mag(config: AtmaConfig):
     prefill_len = SEQ_LEN - 1
 
     ref_attn = ref_mod.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k,
-                                      window=window, mem_enabled=True, mem_chunk=mem_chunk)
+                                      window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                                      mem_kernel="torch")
     # mem.proj is zero-init (branch starts as a no-op); randomize it so the memory
     # branch actually contributes and a state bug would be visible.
     torch.nn.init.normal_(ref_attn.mem.proj.weight, std=0.05)
     infer_attn = InferAttn(layer_idx=0, dim=dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k,
-                           window=window, mem_enabled=True, mem_chunk=mem_chunk)
+                           window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                           mem_kernel="torch")
     _copy(ref_attn, infer_attn)
     _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)
 
@@ -442,7 +447,8 @@ def verify_attention_mag(config: AtmaConfig):
         import train.model as tm
         tm.causal_conv1d_fn = tm._causal_conv1d_fallback  # pure-PyTorch conv so train runs on CPU
         train_attn = tm.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, num_random_keys=0, kernel_size=k,
-                                       window=window, mem_enabled=True, mem_chunk=mem_chunk)
+                                       window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                                       mem_kernel="torch")
         _copy(ref_attn, train_attn)
         with torch.no_grad():
             y_train, _ = train_attn(x)
@@ -614,12 +620,24 @@ def verify_model(config: AtmaConfig):
 # ─── entry point ─────────────────────────────────────────────────────────────
 
 def main():
+    # --cuda: run the whole suite on the GPU so the inference layer takes its Triton
+    # paths (polar_attention_fwd prefill, the paged polar decode kernel incl. the
+    # WINDOW band, fused causal-conv prefill) instead of the CPU fallbacks. The memory
+    # branch stays on the torch kernel (TEST_CONFIG.mem_kernel) for exact fp32 parity.
+    if "--cuda" in sys.argv:
+        if not torch.cuda.is_available():
+            print("--cuda requested but CUDA is unavailable"); sys.exit(1)
+        torch.set_default_device("cuda")
+        # exact fp32 everywhere: TF32 (10-bit mantissa) would eat the 1e-4 ATOL
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+
     torch.manual_seed(42)
     config = TEST_CONFIG
 
     print(f"Verifying model: hidden_size={config.hidden_size}, "
           f"num_layers={config.num_hidden_layers}, head_dim={config.head_dim}, "
-          f"seq_len={SEQ_LEN}")
+          f"seq_len={SEQ_LEN}, device={torch.get_default_device()}")
 
     verify_rmsnorm(config)
     verify_mlp(config)
