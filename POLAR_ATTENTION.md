@@ -6,8 +6,8 @@ sequence length, infer at any length.**
 
 > Status: integrated and parity-verified in **training** ([train/model.py](train/model.py)),
 > the **reference** ([model/reference.py](model/reference.py)), and the **paged inference
-> engine** ([inference/models/atma.py](inference/models/atma.py); prefill kernel + paged
-> decode kernel, CPU-verified — GPU validation pending). See
+> engine** ([inference/models/atma.py](inference/models/atma.py); prefill kernel + GQA-grouped
+> paged decode kernel, verified on GPU via `verify.py --cuda`, 30/30). See
 > [Limitations](#limitations--deferred-work).
 
 ---
@@ -283,11 +283,12 @@ Run: `python verify.py`, `python -m kernel.test_polar_kernel`, `python -m kernel
 
 ## 10. Limitations & deferred work
 
-- **Inference ported** (2026-06-10). [inference/models/atma.py](inference/models/atma.py) runs
-  polar in the paged engine: `polar_attention_fwd` per sequence in prefill (with prefix K/V
-  gather for chunked prefill), the paged `polar_attention_decode` kernel in decode (reads the
-  paged KV cache via block tables; CUDA-graph capturable), window + Titans memory included.
-  `verify.py` passes 30/30 on CPU; the Triton decode path still needs GPU validation.
+- **Inference ported & GPU-verified** (2026-06-10). [inference/models/atma.py](inference/models/atma.py)
+  runs polar in the paged engine: `polar_attention_fwd` per sequence in prefill (with prefix
+  K/V gather for chunked prefill), the GQA-grouped paged `polar_attention_decode` kernel in
+  decode (reads the paged KV cache via block tables; CUDA-graph capturable), window + Titans
+  memory included. `verify.py` passes 30/30 on CPU and 30/30 with `--cuda` (NVIDIA L4).
+  Decode throughput: ~19.3k tok/s @ bs=512 on L4 (see [docs/inference.md](docs/inference.md)).
 - **Query-dim memory.** The online path is `O(T)` in the query dimension (see §5).
 - **Polar-Zipf regularizer** deferred (see §4).
 - **`CausalSelfAttention`** classes remain in the codebase but are unused (the blocks now

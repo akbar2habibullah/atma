@@ -47,7 +47,7 @@ The repo maintains strict numerical equivalence across its optimized pipelines (
              └─────────────────────────────────────────────┘
 ```
 
-> Equivalence holds across **training ↔ reference ↔ inference** (Polar attention + Titans memory; `verify.py` 30/30 on CPU). The paged engine's Triton decode path still needs validation on the target GPU — see [docs/inference.md](docs/inference.md).
+> Equivalence holds across **training ↔ reference ↔ inference** (Polar attention + Titans memory): `verify.py` passes 30/30 on CPU and 30/30 with `--cuda` through the Triton kernels (validated on NVIDIA L4) — see [docs/inference.md](docs/inference.md).
 
 ## Quick start
 
@@ -84,7 +84,7 @@ Adding the **Titans memory** (MAG) closes the rest of the gap: full-attention pe
 | [TITANS_MEMORY.md](TITANS_MEMORY.md) | Titans compression memory (MAG): gated-delta math, FLA fused kernel, results |
 | [docs/training.md](docs/training.md) | Training pipeline, performance, checkpoints, tokenizing custom data |
 | [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
-| [docs/inference.md](docs/inference.md) | Inference engine, usage, throughput, the Polar-port status |
+| [docs/inference.md](docs/inference.md) | Inference engine: usage, verification status, Polar+Titans throughput |
 | [kernel/README.md](kernel/README.md) | FlashAttention-style Triton polar kernels |
 
 ## Project structure

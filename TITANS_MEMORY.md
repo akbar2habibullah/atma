@@ -10,9 +10,10 @@ showed a single attention core cannot deliver at once.
 > the **reference** ([model/reference.py](model/reference.py)); the standalone recurrence is
 > float64-gradchecked ([verify_titans.py](verify_titans.py)). First end-to-end training runs
 > (2026-06-04) confirm the memory earns its cost. The inference path is **ported to the paged
-> engine** (2026-06-10; CPU-verified, GPU validation pending), and the *softmax-SWA-vs-polar
-> ablation* (does the polar core still pay for itself once memory is present?) is **deferred**
-> — see [Open & deferred work](#9-open--deferred-work).
+> engine and GPU-verified** (2026-06-10, NVIDIA L4: `verify.py --cuda` 30/30, `verify_fla.py`
+> bridge all green), and the *softmax-SWA-vs-polar ablation* (does the polar core still pay
+> for itself once memory is present?) is **deferred** — see
+> [Open & deferred work](#9-open--deferred-work).
 
 ---
 
@@ -315,12 +316,15 @@ Per-step **speed** ranks the reverse of quality:
 - **`mem_layers` perf lever.** Restricting the memory to the last N attention layers is a
   compile-agnostic overhead cut, offered but not built (overhead is already ~6–9%, so low
   priority).
-- **Inference port — done** (2026-06-10). The paged engine carries the per-head `M` in fp32
-  per-sequence state tables, FLA `[K, V]` layout ([inference/models/atma.py](inference/models/atma.py)):
-  `_mem_prefill` runs FLA's `chunk_gated_delta_rule`, `_mem_decode` FLA's
-  `fused_recurrent_gated_delta_rule` (batched T=1 step), both with
-  `initial_state`/`output_final_state` for the state carry; the pure-torch paths remain as
-  CPU fallback. CPU-verified via `verify.py`; validate the FLA bridge on GPU with
-  `verify_fla.py` (inference-bridge section).
+- **Inference port — done & GPU-verified** (2026-06-10). The paged engine carries the per-head
+  `M` in fp32 per-sequence state tables, FLA `[K, V]` layout
+  ([inference/models/atma.py](inference/models/atma.py)): `_mem_prefill` runs FLA's
+  `chunk_gated_delta_rule` (`initial_state`/`output_final_state` for the chunk carry),
+  `_mem_decode` runs the fused in-place step kernel
+  ([kernel/gated_delta_triton.py](kernel/gated_delta_triton.py)) — one state read+write per
+  step through the slot indirection; the pure-torch paths remain as CPU fallback. Verified on
+  L4: `verify.py --cuda` 30/30 and `verify_fla.py`'s inference-bridge checks (layout, chunk
+  carry, decode continuity, step kernel) all ≤ 0.005. The state is the dominant decode cost
+  at large batch (~512 KB/seq/layer fp32) — see [docs/inference.md](docs/inference.md).
 - **Momentum / deep memory.** Titans' momentum term (`η_t`) and the deep-MLP memory are deferred
   — revisit only if the linear gated-delta version caps out.
