@@ -47,7 +47,7 @@ The repo maintains strict numerical equivalence across its optimized pipelines (
              └─────────────────────────────────────────────┘
 ```
 
-> Equivalence currently holds for **training ↔ reference**. The paged inference engine still runs legacy softmax attention; the Polar port is the main tracked task — see [docs/inference.md](docs/inference.md).
+> Equivalence holds across **training ↔ reference ↔ inference** (Polar attention + Titans memory; `verify.py` 30/30 on CPU). The paged engine's Triton decode path still needs validation on the target GPU — see [docs/inference.md](docs/inference.md).
 
 ## Quick start
 
@@ -96,7 +96,7 @@ atma/
 ├── model/      # config, layers, blocks (Polar reductions), reference.py (pure-PyTorch oracle)
 ├── kernel/     # FlashAttention-style Triton polar kernels (fwd/bwd, decode, sliding window) + tests
 ├── train/      # TrainModel (Polar + FP16/FP8 matmuls), data loader, Muon optimizer, SigReg
-└── inference/  # paged engine (softmax; Polar port pending) + generate.py (self-contained Polar)
+└── inference/  # paged engine (Polar + Titans, paged decode kernel) + generate.py (self-contained Polar)
 ```
 
 ## References

@@ -26,6 +26,81 @@ def rel(a, b):
     return (a - b).norm().item() / (b.norm().item() + 1e-9)
 
 
+def verify_inference_bridge():
+    """Checks the exact FLA usage in inference/models/atma.py (the paged-engine memory
+    branch): chunked-prefill state carry (initial_state/output_final_state), the state
+    LAYOUT bridge (FLA [K,V] vs torch gated_delta_chunked's transposed [V,K]), and
+    chunk-prefill -> fused_recurrent decode continuity. All single-source-of-truth
+    against one full chunked pass and the fp32 torch oracle.
+
+      rel_err < ~0.05 -> correct (bf16-vs-fp32 / kernel-boundary numerics only).
+      rel_err > ~0.10 -> real mismatch (layout / state convention) — do NOT ship decode.
+    """
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
+    from model.blocks import gated_delta_chunked
+
+    print("\n── inference bridge (paged-engine mem branch) ──")
+    torch.manual_seed(1)
+    dev = "cuda"
+    B, H, T, dk, Tdec = 2, 8, 256, 128, 8
+    Ttot = T + Tdec
+    dtype = torch.bfloat16
+
+    q = torch.randn(B, Ttot, H, dk, device=dev, dtype=dtype)
+    k = torch.randn(B, Ttot, H, dk, device=dev, dtype=dtype)
+    v = torch.randn(B, Ttot, H, dk, device=dev, dtype=dtype)
+    g = F.logsigmoid(torch.randn(B, Ttot, H, device=dev) + 3.9)      # log-decay, fp32
+    beta = torch.sigmoid(torch.randn(B, Ttot, H, device=dev))        # fp32
+    kw = dict(scale=1.0, use_qk_l2norm_in_kernel=True)
+
+    def fla_chunk(s, e, S0=None):
+        return chunk_gated_delta_rule(q[:, s:e], k[:, s:e], v[:, s:e], g[:, s:e], beta[:, s:e],
+                                      initial_state=S0, output_final_state=True, **kw)
+
+    # oracle: one chunked pass over the whole stream
+    o_full, _ = fla_chunk(0, Ttot)
+
+    # 1) chunked-prefill state carry (split at a non-multiple of the kernel chunk)
+    T1 = 100
+    _, S_a = fla_chunk(0, T1)
+    o_b, _ = fla_chunk(T1, T, S0=S_a)
+    print(f"chunk-split state carry   rel_err = {rel(o_b.float(), o_full[:, T1:T].float()):.4f}")
+
+    # 2) layout bridge: FLA final state == transpose of the torch oracle's state
+    o_pre, S_pre = fla_chunk(0, T)
+    qn = F.normalize(q[:, :T].float().transpose(1, 2), dim=-1)       # (B, H, T, dk) unit
+    kn = F.normalize(k[:, :T].float().transpose(1, 2), dim=-1)
+    r_t, S_t = gated_delta_chunked(qn, kn, v[:, :T].float().transpose(1, 2),
+                                   torch.exp(g[:, :T]).transpose(1, 2),
+                                   beta[:, :T].transpose(1, 2), chunk=64)
+    print(f"prefill out vs torch      rel_err = {rel(o_pre.float(), r_t.transpose(1, 2)):.4f}")
+    print(f"state layout vs torch     rel_err = {rel(S_pre.float(), S_t.transpose(-1, -2)):.4f}"
+          f"   (transposed-compare control: {rel(S_pre.float(), S_t):.4f} — should be MUCH larger)")
+
+    # 3) decode continuity: fused_recurrent single-token steps from the prefill state
+    S = S_pre
+    outs = []
+    for t in range(T, Ttot):
+        o_t, S = fused_recurrent_gated_delta_rule(
+            q[:, t:t + 1], k[:, t:t + 1], v[:, t:t + 1], g[:, t:t + 1], beta[:, t:t + 1],
+            initial_state=S, output_final_state=True, **kw)
+        outs.append(o_t)
+    o_dec = torch.cat(outs, dim=1)
+    print(f"chunk->recurrent decode   rel_err = {rel(o_dec.float(), o_full[:, T:].float()):.4f}")
+
+    # 4) torch fallback decode step (the CPU path in _mem_decode) vs FLA recurrent step
+    gamma1 = torch.exp(g[:, T])                                       # (B, H)
+    beta1 = beta[:, T]
+    q1 = F.normalize(q[:, T].float(), dim=-1)                         # (B, H, dk)
+    k1 = F.normalize(k[:, T].float(), dim=-1)
+    St = S_pre.float().transpose(-1, -2)                              # torch (B, H, dv, dk)
+    Sd = gamma1[..., None, None] * St
+    u = beta1[..., None] * (v[:, T].float() - torch.einsum("bhvk,bhk->bhv", Sd, k1))
+    S_new = Sd + u.unsqueeze(-1) * k1.unsqueeze(-2)
+    r1 = torch.einsum("bhvk,bhk->bhv", S_new, q1)
+    print(f"torch decode step vs FLA  rel_err = {rel(outs[0].squeeze(1).float(), r1):.4f}")
+
+
 def main():
     if not torch.cuda.is_available():
         print("SKIP: needs CUDA"); return
@@ -69,6 +144,8 @@ def main():
     print(f"FLA finite={finite}  w_gamma grad nonzero={nontrivial}")
     print("\nInterpretation: output rel_err < ~0.05 => mapping correct (residual = readout"
           " self-term). > ~0.15 => API mismatch, send me these numbers.")
+
+    verify_inference_bridge()
 
 
 if __name__ == "__main__":

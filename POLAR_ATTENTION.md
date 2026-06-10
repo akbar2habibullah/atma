@@ -4,9 +4,10 @@ A length-invariant replacement for softmax scaled-dot-product attention (SDPA), 
 in place of `CausalSelfAttention` in the atma model. The goal: **train at short
 sequence length, infer at any length.**
 
-> Status: integrated and parity-verified in **training** ([train/model.py](train/model.py))
-> and the **reference** ([model/reference.py](model/reference.py)). The inference path
-> ([inference/models/atma.py](inference/models/atma.py)) is **not ported yet** — see
+> Status: integrated and parity-verified in **training** ([train/model.py](train/model.py)),
+> the **reference** ([model/reference.py](model/reference.py)), and the **paged inference
+> engine** ([inference/models/atma.py](inference/models/atma.py); prefill kernel + paged
+> decode kernel, CPU-verified — GPU validation pending). See
 > [Limitations](#limitations--deferred-work).
 
 ---
@@ -272,7 +273,7 @@ In [model/config.py](model/config.py):
 
 | Script | Checks |
 |---|---|
-| [verify.py](verify.py) | per-layer train == reference == inference (prefill + decode) parity for RMSNorm, MLP, LFM2 conv, **Polar attention**, full blocks, and the full model logits. 25/25. |
+| [verify.py](verify.py) | per-layer train == reference == inference (prefill + decode) parity for RMSNorm, MLP, LFM2 conv, **Polar attention** (incl. window + Titans mem + chunked prefill), full blocks, and the full model logits. 30/30. |
 | [kernel/test_polar_kernel.py](kernel/test_polar_kernel.py) | Triton kernel vs the gradchecked oracle: forward + all gradients (fp32/bf16/fp16), edge shapes (T=1, T<block, odd T), non-contiguous inputs, `n_keys=0` padding. 104/104. |
 | [kernel/test_integration.py](kernel/test_integration.py) | `train.model` PolarAttention + full Model with `attn_kernel="triton"` vs the torch path. 21/21. |
 
@@ -282,13 +283,11 @@ Run: `python verify.py`, `python -m kernel.test_polar_kernel`, `python -m kernel
 
 ## 10. Limitations & deferred work
 
-- **Inference not ported.** [inference/models/atma.py](inference/models/atma.py) and
-  [inference/layers/attention.py](inference/layers/attention.py) still use the old softmax
-  attention. FlashAttention cannot express polar attention (the null column, EV-corrected
-  floor, and weight-level reductions for the participation ratio), so inference must use a
-  materialized/SDPA-style path — which is streamable in decode (temp/null use the current
-  context length; no extra KV-cache state). **`verify.py`'s attention/block/model
-  *inference* checks will fail until this is done — that is expected, not a regression.**
+- **Inference ported** (2026-06-10). [inference/models/atma.py](inference/models/atma.py) runs
+  polar in the paged engine: `polar_attention_fwd` per sequence in prefill (with prefix K/V
+  gather for chunked prefill), the paged `polar_attention_decode` kernel in decode (reads the
+  paged KV cache via block tables; CUDA-graph capturable), window + Titans memory included.
+  `verify.py` passes 30/30 on CPU; the Triton decode path still needs GPU validation.
 - **Query-dim memory.** The online path is `O(T)` in the query dimension (see §5).
 - **Polar-Zipf regularizer** deferred (see §4).
 - **`CausalSelfAttention`** classes remain in the codebase but are unused (the blocks now

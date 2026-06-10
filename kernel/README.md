@@ -99,10 +99,11 @@ accurate than the existing online path.
   unavailable. Default is `"torch"` to preserve the bit-exact parity tests.
 - **model** — re-exported as `model.blocks.polar_attention_triton` /
   `polar_attention_triton_fwd` (guarded by `model.blocks.HAS_TRITON`).
-- **inference** — `polar_attention_fwd` is imported in `inference/models/atma.py`; use
-  `is_causal=True` for single-sequence prefill and `is_causal=False` with explicit
-  `n_keys` for decode / offset prefill. (A full paged-KV-cache `PolarAttention` port is
-  the remaining inference step — see `POLAR_ATTENTION.md` §10.)
+- **inference** — `inference/models/atma.py` uses `polar_attention_fwd` for prefill
+  (`is_causal=True` for a fresh sequence; `is_causal=False` + explicit `n_keys` for a
+  chunked-prefill continuation) and `polar_attention_decode` for paged decode (reads K/V
+  directly from the paged cache via `block_tables`/`context_lens`; supports `window=`;
+  CUDA-graph capturable).
 
 ## Tests
 

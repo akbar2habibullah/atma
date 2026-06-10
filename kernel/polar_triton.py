@@ -361,6 +361,7 @@ if HAS_TRITON:
         H, NUM_KV_HEADS, scale, eps,
         BLOCK_SIZE: tl.constexpr, MAX_BLOCKS: tl.constexpr,
         BLOCK_N: tl.constexpr, DK: tl.constexpr,
+        WINDOW: tl.constexpr,
     ):
         b = tl.program_id(0)
         h = tl.program_id(1)
@@ -373,7 +374,13 @@ if HAS_TRITON:
         q = tl.load(Q + b * stride_qb + h * stride_qh + offs_d * stride_qd).to(tl.float32)  # (DK,)
 
         n_i = tl.load(CONTEXT_LENS + b)                  # int32 valid-key count
-        n_f = tl.maximum(n_i.to(tl.float32), 1.0)
+        # WINDOW>0: causal sliding window — the query sees only its last WINDOW keys,
+        # so temp/null use the capped count min(n_i, WINDOW) and the key loop masks
+        # positions older than n_i - WINDOW. WINDOW==0 disables it (full context).
+        if WINDOW > 0:
+            n_f = tl.maximum(tl.minimum(n_i.to(tl.float32), float(WINDOW)), 1.0)
+        else:
+            n_f = tl.maximum(n_i.to(tl.float32), 1.0)
         spg = tl.load(SPG + h).to(tl.float32)
         sps = tl.load(SPS + h).to(tl.float32)
         beta = tl.load(BETA + h).to(tl.float32)
@@ -390,6 +397,8 @@ if HAS_TRITON:
         for start in range(0, total, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)        # global key positions
             valid = offs_n < n_i
+            if WINDOW > 0:
+                valid = valid & (offs_n >= (n_i - WINDOW))  # older than window
             blk = offs_n // BLOCK_SIZE                     # logical block index
             within = offs_n % BLOCK_SIZE
             phys = tl.load(BLOCK_TABLES + b * stride_btb + blk * stride_btn,
@@ -439,7 +448,7 @@ if HAS_TRITON:
 @torch.no_grad()
 def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
                            v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
-                           eps=1e-6, block_n=64):
+                           eps=1e-6, block_n=64, window=None):
     """Paged polar decode. One query per sequence over its cached context.
 
     q            : (B, H, dk)  current-token query (KV heads NOT expanded; GQA done in-kernel)
@@ -447,6 +456,9 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
     v_cache      : same shape as k_cache
     block_tables : (B, max_blocks) int32  logical->physical block map
     context_lens : (B,) int32  valid key count per sequence (incl. current token)
+    window       : (int, optional) causal sliding window — the query attends to only its
+                   last `window` cached keys (temp/null use min(context_len, window)),
+                   matching polar_attention_fwd(window=...).
 
     Returns c (B, H, dk), mag (B, H). CUDA-graph capturable (no host sync, fixed shapes).
     Matches model.blocks.polar_reduce for the equivalent dense computation to ~1e-3 (bf16).
@@ -482,6 +494,7 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
         mag.stride(0), mag.stride(1),
         H, num_kv_heads, scale, eps,
         BLOCK_SIZE=block_size, MAX_BLOCKS=max_blocks, BLOCK_N=block_n, DK=dk,
+        WINDOW=(0 if window is None else int(window)),
         num_warps=4, num_stages=2,
     )
     return c.to(out_dtype), mag.to(out_dtype)

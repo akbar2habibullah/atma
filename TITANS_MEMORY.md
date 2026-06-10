@@ -9,9 +9,10 @@ showed a single attention core cannot deliver at once.
 > Status: integrated and parity-verified in **training** ([train/model.py](train/model.py)) and
 > the **reference** ([model/reference.py](model/reference.py)); the standalone recurrence is
 > float64-gradchecked ([verify_titans.py](verify_titans.py)). First end-to-end training runs
-> (2026-06-04) confirm the memory earns its cost. The inference path is **not ported yet**, and
-> the *softmax-SWA-vs-polar ablation* (does the polar core still pay for itself once memory is
-> present?) is **deferred** — see [Open & deferred work](#9-open--deferred-work).
+> (2026-06-04) confirm the memory earns its cost. The inference path is **ported to the paged
+> engine** (2026-06-10; CPU-verified, GPU validation pending), and the *softmax-SWA-vs-polar
+> ablation* (does the polar core still pay for itself once memory is present?) is **deferred**
+> — see [Open & deferred work](#9-open--deferred-work).
 
 ---
 
@@ -314,7 +315,12 @@ Per-step **speed** ranks the reverse of quality:
 - **`mem_layers` perf lever.** Restricting the memory to the last N attention layers is a
   compile-agnostic overhead cut, offered but not built (overhead is already ~6–9%, so low
   priority).
-- **Inference port.** [inference/](inference/) still runs legacy softmax attention; the memory
-  state (a per-head `M` carried across decode steps) is not in the paged engine yet.
+- **Inference port — done** (2026-06-10). The paged engine carries the per-head `M` in fp32
+  per-sequence state tables, FLA `[K, V]` layout ([inference/models/atma.py](inference/models/atma.py)):
+  `_mem_prefill` runs FLA's `chunk_gated_delta_rule`, `_mem_decode` FLA's
+  `fused_recurrent_gated_delta_rule` (batched T=1 step), both with
+  `initial_state`/`output_final_state` for the state carry; the pure-torch paths remain as
+  CPU fallback. CPU-verified via `verify.py`; validate the FLA bridge on GPU with
+  `verify_fla.py` (inference-bridge section).
 - **Momentum / deep memory.** Titans' momentum term (`η_t`) and the deep-MLP memory are deferred
   — revisit only if the linear gated-delta version caps out.

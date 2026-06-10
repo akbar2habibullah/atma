@@ -1,15 +1,17 @@
 # Inference
 
-> **Polar Attention is not yet wired into the paged inference engine.** The production engine (`inference/llm.py` → `inference/models/atma.py` → `inference/layers/attention.py`) still runs the **legacy softmax causal attention** (FlashAttention / SDPA paged path), so its outputs match a trained checkpoint only for softmax models. For **Polar checkpoints**, use the self-contained generator [inference/generate.py](../inference/generate.py), which runs the FlashAttention-style Triton polar kernel (full-recompute). A paged polar decode kernel already exists (`_polar_decode_kernel` in [kernel/polar_triton.py](../kernel/polar_triton.py)); porting it into the paged engine — so the engine, training, and reference paths are once again numerically equivalent — is the main tracked **future task**. `verify.py`'s attention/block/model *inference* checks are expected to fail until then.
+> **Polar Attention + Titans MAG memory are wired into the paged engine** (`inference/llm.py` → `inference/models/atma.py`), matching [model/reference.py](../model/reference.py) and [train/model.py](../train/model.py): prefill runs the FlashAttention-style Triton polar kernel per sequence (`polar_attention_fwd`), decode runs the **paged polar decode kernel** (`polar_attention_decode` in [kernel/polar_triton.py](../kernel/polar_triton.py)) reading K/V directly from the paged cache via block tables — no gather, fixed launch shape, **CUDA-graph capturable**. The sliding window (`attn_window`) is honored in both phases, and the Titans memory state (per-head `M`, fp32, FLA `[K, V]` layout) lives in per-sequence state tables next to the conv states. On CUDA the memory branch runs **FLA's fused gated-delta kernels** — `chunk_gated_delta_rule` for prefill and `fused_recurrent_gated_delta_rule` for the batched decode step — with `initial_state`/`output_final_state` carrying the per-seq state across prefill chunks and decode steps (`mem_kernel: auto|fla|torch`; the pure-PyTorch path remains the CPU/fallback and the graph-safe escape hatch if FLA misbehaves under CUDA-graph capture). `verify.py` checks train == reference == inference parity per layer and end-to-end (30/30 on CPU); **on the target GPU run `verify.py` plus `verify_fla.py`** — the latter's *inference bridge* section validates the FLA state layout, chunked-prefill state carry, and chunk→recurrent decode continuity, which are CPU-unverifiable (as are `_polar_decode_kernel`'s `WINDOW` band and in-graph decode). The self-contained full-recompute generator [inference/generate.py](../inference/generate.py) remains as a simple cross-check (no window/memory).
+>
+> **Known limitation — cross-request prefix-cache hits.** A hash-matched prefix from *another* request reuses its K/V blocks correctly, but the new sequence's conv/memory state tables start from zeros (those states were never computed for this sequence), so the first tokens after such a hit can drift. Same-request chunked prefill is exact (state carried in the tables, prefix K/V gathered from the cache). Decoding throughput numbers below predate the Polar port (measured with the softmax path) — re-benchmark.
 
 Production-grade inference engine featuring:
 
 - **Paged KV cache** with hash-based prefix caching (xxhash) for memory sharing
 - **Chunked prefill** and **preemption** scheduling
 - **CUDA graph capture** for decode at multiple batch sizes
-- **Centralized conv state tables** enabling graph-captured decode
+- **Centralized per-seq state tables** (conv states + Titans memory) enabling graph-captured decode
 - **Tensor parallelism** support (ColumnParallel, RowParallel, QKVParallel, VocabParallel)
-- **Flash Attention 3/2** with Triton KV cache kernel and SDPA fallback
+- **Triton polar attention kernels** (prefill + paged decode) with a pure-PyTorch CPU fallback
 - **Gumbel-max sampling**
 
 ## Usage
