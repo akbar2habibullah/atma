@@ -109,6 +109,17 @@ def verify_inference_bridge():
     r1 = torch.einsum("bhvk,bhk->bhv", S_new, q1)
     print(f"torch decode step vs FLA  rel_err = {rel(outs[0].squeeze(1).float(), r1):.4f}")
 
+    # 5) fused in-place step kernel (kernel/gated_delta_triton.py — the engine's CUDA
+    #    decode path) vs the same torch step: output AND the slot-indexed state update.
+    #    fp32 both sides -> expect ~1e-6, far tighter than the bf16 checks above.
+    from kernel.gated_delta_triton import gated_delta_decode_step
+    table = torch.zeros(4, H, dk, dk, device=dev, dtype=torch.float32)
+    slots = torch.tensor([2, 0], device=dev)                          # non-trivial slot map
+    table[slots] = S_pre
+    r_kern = gated_delta_decode_step(q[:, T], k[:, T], v[:, T], gamma1, beta1, table, slots)
+    print(f"step kernel out vs torch  rel_err = {rel(r_kern, r1):.6f}")
+    print(f"step kernel state vs torch rel_err = {rel(table[slots], S_new.transpose(-1, -2)):.6f}")
+
 
 def main():
     if not torch.cuda.is_available():

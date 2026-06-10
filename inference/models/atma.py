@@ -35,22 +35,31 @@ except Exception:
     polar_attention_decode = None
     HAS_TRITON = False
 
-# flash-linear-attention's fused gated-delta kernels (CUDA/Triton) for the Titans memory
-# branch: the chunked-parallel forward serves prefill, the fused recurrent forward serves
-# the batched single-token decode step. Both accept initial_state / output_final_state, so
-# the per-sequence state carries across prefill chunks and decode steps. Falls back to the
-# pure-PyTorch gated_delta_chunked / explicit step on CPU or when FLA is unavailable.
+# Titans memory kernels:
+#  - prefill: flash-linear-attention's fused chunk_gated_delta_rule (CUDA/Triton), with
+#    initial_state / output_final_state carrying the per-sequence state across chunks.
+#  - decode: our fused single-step kernel (kernel/gated_delta_triton.py), which reads and
+#    writes the slot-indexed state table IN PLACE — one state read + one write per step,
+#    vs 3x traffic for a gather -> kernel -> scatter sequence. Exact fp32, graph-safe.
+# Falls back to the pure-PyTorch gated_delta_chunked / explicit step on CPU or when the
+# kernels are unavailable.
 # NOTE on layout: FLA states are [N, H, K, V]; the torch gated_delta_chunked state is
 # (B, H, dv, dk) — the transpose. The mem state tables store the FLA layout (so the GPU
-# decode hot path is gather -> kernel -> scatter with no transposes); the torch fallback
-# transposes at its boundary. Validate the bridge on GPU with verify_fla.py.
+# hot paths run transpose-free); the torch fallback transposes at its boundary. Validate
+# the bridge on GPU with verify_fla.py.
 try:
-    from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     _HAS_FLA = True
 except Exception:
     chunk_gated_delta_rule = None
-    fused_recurrent_gated_delta_rule = None
     _HAS_FLA = False
+
+try:
+    from kernel.gated_delta_triton import gated_delta_decode_step
+    from kernel.gated_delta_triton import HAS_TRITON as _HAS_STEP_KERNEL
+except Exception:
+    gated_delta_decode_step = None
+    _HAS_STEP_KERNEL = False
 
 
 def _infer_linear(in_f, out_f):
@@ -239,11 +248,11 @@ class AtmaAttention(AtmaAttnBase):
 
     def _mem_decode(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
         """x: (B, D); q_t,k_t,v_t: (B, H, dk) current-token tensors (KV heads expanded).
-        Single gated-delta step, batched over sequences via gather/scatter by seq_slots
-        (CUDA-graph compatible).
+        Single gated-delta step, batched over sequences (CUDA-graph compatible).
 
-        GPU: FLA's fused_recurrent_gated_delta_rule with T=1 (initial_state gathered from
-        the table in its native [K,V] layout — no transposes on the hot path).
+        GPU: the fused step kernel (kernel/gated_delta_triton.py) — reads and writes the
+        slot-indexed state table IN PLACE in its native [K,V] layout, so the (large) fp32
+        state moves once per step instead of gather + kernel + scatter.
         CPU/fallback: the explicit N=1 step of gated_delta_chunked (decay-first, undecayed
         write, self-inclusive readout M_t q_t), transposing at the layout boundary."""
         mem = self.mem
@@ -251,24 +260,14 @@ class AtmaAttention(AtmaAttnBase):
         H, dk = self.num_heads, self.head_dim
         g_logit = mem.w_gamma(x).float() + mem.gamma_bias                # (B, H)
         b_logit = mem.w_beta(x).float() + mem.beta_bias
-        S = mem_state_table[seq_slots]                                   # (B, H, dk, dv) gather, FLA layout
+        gamma = torch.sigmoid(g_logit)
+        beta = torch.sigmoid(b_logit)
 
-        if self._mem_use_fla(x):
-            g = F.logsigmoid(g_logit).unsqueeze(1)                       # (B, 1, H)
-            beta = torch.sigmoid(b_logit).unsqueeze(1)
-            # beta MUST be keyword-bound: fused_recurrent_gated_delta_rule has extra
-            # per-key/value gate params (gk, gv) between g and beta — a positional beta
-            # lands in gk and is indexed as [B, T, H, K] (out-of-bounds reads -> NaN /
-            # illegal memory access at large batch).
-            r, S_new = fused_recurrent_gated_delta_rule(
-                q=q_t.unsqueeze(1), k=k_t.unsqueeze(1), v=v_t.unsqueeze(1),  # (B, 1, H, dk)
-                g=g, beta=beta, scale=1.0, initial_state=S,
-                output_final_state=True, use_qk_l2norm_in_kernel=True)
-            mem_state_table[seq_slots] = S_new                           # scatter
-            r = r.squeeze(1)                                             # (B, H, dk)
+        if gated_delta_decode_step is not None and _HAS_STEP_KERNEL and x.is_cuda:
+            r = gated_delta_decode_step(q_t, k_t, v_t, gamma, beta,
+                                        mem_state_table, seq_slots)      # (B, H, dk) fp32
         else:
-            gamma = torch.sigmoid(g_logit)
-            beta = torch.sigmoid(b_logit)
+            S = mem_state_table[seq_slots]                               # (B, H, dk, dv) gather
             qn = F.normalize(q_t.float(), dim=-1)                        # (B, H, dk)
             kn = F.normalize(k_t.float(), dim=-1)
             St = S.transpose(-1, -2)                                     # -> torch (B, H, dv, dk)

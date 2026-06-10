@@ -358,20 +358,27 @@ if HAS_TRITON:
         stride_btb, stride_btn,
         stride_cb, stride_ch, stride_cd,
         stride_mb, stride_mh,
-        H, NUM_KV_HEADS, scale, eps,
+        scale, eps,
         BLOCK_SIZE: tl.constexpr, MAX_BLOCKS: tl.constexpr,
         BLOCK_N: tl.constexpr, DK: tl.constexpr,
+        G: tl.constexpr, GP: tl.constexpr, DOT_DTYPE: tl.constexpr,
         WINDOW: tl.constexpr,
     ):
+        # One program per (sequence, KV head): the G query heads of the GQA group are
+        # the rows of a (GP, ...) tile (GP = G padded to >=16 for tl.dot), so each
+        # cached K/V byte is read ONCE per group instead of once per query head
+        # (a `groups`-fold cut of decode's dominant memory traffic).
         b = tl.program_id(0)
-        h = tl.program_id(1)
+        kv_h = tl.program_id(1)
         scale = scale.to(tl.float32)     # python-float args are fp64 on some Triton versions
         eps = eps.to(tl.float32)
-        groups = H // NUM_KV_HEADS
-        kv_h = h // groups
         offs_d = tl.arange(0, DK)
+        offs_g = tl.arange(0, GP)                          # query-head rows (padded)
+        g_valid = offs_g < G
+        heads = tl.where(g_valid, kv_h * G + offs_g, 0)    # global query-head ids (0-clamped pad)
 
-        q = tl.load(Q + b * stride_qb + h * stride_qh + offs_d * stride_qd).to(tl.float32)  # (DK,)
+        q = tl.load(Q + b * stride_qb + heads[:, None] * stride_qh + offs_d[None, :] * stride_qd,
+                    mask=g_valid[:, None], other=0.0).to(DOT_DTYPE)        # (GP, DK)
 
         n_i = tl.load(CONTEXT_LENS + b)                  # int32 valid-key count
         # WINDOW>0: causal sliding window — the query sees only its last WINDOW keys,
@@ -381,20 +388,27 @@ if HAS_TRITON:
             n_f = tl.maximum(tl.minimum(n_i.to(tl.float32), float(WINDOW)), 1.0)
         else:
             n_f = tl.maximum(n_i.to(tl.float32), 1.0)
-        spg = tl.load(SPG + h).to(tl.float32)
-        sps = tl.load(SPS + h).to(tl.float32)
-        beta = tl.load(BETA + h).to(tl.float32)
-        nb = tl.load(NULLBASE + h).to(tl.float32)
+        spg = tl.load(SPG + heads, mask=g_valid, other=0.0).to(tl.float32)   # (GP,)
+        sps = tl.load(SPS + heads, mask=g_valid, other=0.0).to(tl.float32)
+        beta = tl.load(BETA + heads, mask=g_valid, other=0.0).to(tl.float32)
+        nb = tl.load(NULLBASE + heads, mask=g_valid, other=0.0).to(tl.float32)
         temp = 1.0 + spg * tl.log(n_f)
         nullv = nb + sps * tl.sqrt(tl.log(n_f + 1.0))
 
-        m_i = -1e38
-        l_i = 0.0
-        q2_i = 0.0
-        acc = tl.zeros([DK], tl.float32)
+        m_i = tl.full([GP], -1e38, tl.float32)
+        l_i = tl.zeros([GP], tl.float32)
+        q2_i = tl.zeros([GP], tl.float32)
+        acc = tl.zeros([GP, DK], tl.float32)
 
-        total = MAX_BLOCKS * BLOCK_SIZE
-        for start in range(0, total, BLOCK_N):
+        # dynamic loop bounds: only scan the live context (and, with a window, skip
+        # keys older than the band) — in CUDA-graph mode MAX_BLOCKS*BLOCK_SIZE is the
+        # padded max_model_len, which would otherwise be scanned in full every step.
+        hi = tl.minimum(tl.cdiv(n_i, BLOCK_N) * BLOCK_N, MAX_BLOCKS * BLOCK_SIZE)
+        if WINDOW > 0:
+            lo = (tl.maximum(n_i - WINDOW, 0) // BLOCK_N) * BLOCK_N
+        else:
+            lo = 0
+        for start in range(lo, hi, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)        # global key positions
             valid = offs_n < n_i
             if WINDOW > 0:
@@ -407,42 +421,44 @@ if HAS_TRITON:
                      + kv_h * stride_kc_h + offs_d[None, :] * stride_kc_d)
             v_ptr = (V_CACHE + phys[:, None] * stride_vc_blk + within[:, None] * stride_vc_pos
                      + kv_h * stride_vc_h + offs_d[None, :] * stride_vc_d)
-            k = tl.load(k_ptr, mask=valid[:, None], other=0.0).to(tl.float32)
-            v = tl.load(v_ptr, mask=valid[:, None], other=0.0).to(tl.float32)
+            k = tl.load(k_ptr, mask=valid[:, None], other=0.0).to(DOT_DTYPE)   # (BLOCK_N, DK)
+            v = tl.load(v_ptr, mask=valid[:, None], other=0.0).to(DOT_DTYPE)
 
-            sig = tl.sum(q[None, :] * k, axis=1) * scale  # (BLOCK_N,)
-            a = sig * temp
-            a = tl.where(valid, a, -1e38)
-            m_new = tl.maximum(m_i, tl.max(a, 0))
+            sig = tl.dot(q, tl.trans(k), input_precision="ieee") * scale       # (GP, BLOCK_N)
+            a = sig * temp[:, None]
+            a = tl.where(valid[None, :] & g_valid[:, None], a, -1e38).to(tl.float32)
+            m_new = tl.maximum(m_i, tl.max(a, 1))
             alpha = tl.exp(m_i - m_new)
-            p = tl.exp(a - m_new)
-            p = tl.where(valid, p, 0.0)
-            l_i = l_i * alpha + tl.sum(p, 0)
-            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 0)
-            acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+            p = tl.exp(a - m_new[:, None])
+            p = tl.where(valid[None, :], p, 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(p.to(DOT_DTYPE), v, input_precision="ieee")
             m_i = m_new
 
         # fold null sink
-        a_n = temp * nullv
+        a_n = temp * nullv                                 # (GP,)
         m_new = tl.maximum(m_i, a_n)
         alpha = tl.exp(m_i - m_new)
         l_i = l_i * alpha
         q2_i = q2_i * alpha * alpha
-        acc = acc * alpha
+        acc = acc * alpha[:, None]
         m_i = m_new
         p_n = tl.exp(a_n - m_i)
         Z = l_i + p_n
 
-        vnull = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
-        s = acc + p_n * vnull
-        snorm = tl.maximum(tl.sqrt(tl.sum(s * s)), eps)
-        c = s / snorm
+        vnull = tl.load(VNULL + heads[:, None] * DK + offs_d[None, :],
+                        mask=g_valid[:, None], other=0.0).to(tl.float32)        # (GP, DK)
+        s = acc + p_n[:, None] * vnull
+        snorm = tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)
+        c = s / snorm[:, None]
         n_eff = l_i * l_i / tl.maximum(q2_i, eps)
         m_eff = n_eff * (l_i / tl.maximum(Z, eps))
         mag = 2.0 * tl.sigmoid(2.0 * (beta * tl.log(1.0 + m_eff))) - 1.0
 
-        tl.store(C_OUT + b * stride_cb + h * stride_ch + offs_d * stride_cd, c)
-        tl.store(MAG_OUT + b * stride_mb + h * stride_mh, mag)
+        tl.store(C_OUT + b * stride_cb + heads[:, None] * stride_ch + offs_d[None, :] * stride_cd,
+                 c, mask=g_valid[:, None])
+        tl.store(MAG_OUT + b * stride_mb + heads * stride_mh, mag, mask=g_valid)
 
 
 @torch.no_grad()
@@ -462,13 +478,19 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
 
     Returns c (B, H, dk), mag (B, H). CUDA-graph capturable (no host sync, fixed shapes).
     Matches model.blocks.polar_reduce for the equivalent dense computation to ~1e-3 (bf16).
+
+    GQA-aware: one program per (sequence, KV head) computes all `H // num_kv_heads`
+    query heads of the group, so the paged K/V is read once per group (not per head).
     """
     B, H, dk = q.shape
     num_kv_heads = k_cache.shape[2]
+    groups = H // num_kv_heads
+    gp = max(16, triton.next_power_of_2(groups))   # tl.dot needs M >= 16; pad + mask
     max_blocks = block_tables.shape[1]
     block_size = k_cache.shape[1]
     out_dtype = q.dtype
     dev = q.device
+    dot_dtype, _, _ = _dtype_meta(out_dtype)
 
     spg = F.softplus(len_gain_raw.float()).contiguous()
     sps = F.softplus(null_slope_raw.float()).contiguous()
@@ -481,7 +503,7 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
     mag = torch.empty((B, H), device=dev, dtype=torch.float32)
     scale = 1.0 / math.sqrt(dk)
 
-    grid = (B, H)
+    grid = (B, num_kv_heads)
     _polar_decode_kernel[grid](
         q, k_cache, v_cache, block_tables, context_lens,
         vnull, spg, nb, sps, beta,
@@ -492,8 +514,9 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
         block_tables.stride(0), block_tables.stride(1),
         c.stride(0), c.stride(1), c.stride(2),
         mag.stride(0), mag.stride(1),
-        H, num_kv_heads, scale, eps,
+        scale, eps,
         BLOCK_SIZE=block_size, MAX_BLOCKS=max_blocks, BLOCK_N=block_n, DK=dk,
+        G=groups, GP=gp, DOT_DTYPE=dot_dtype,
         WINDOW=(0 if window is None else int(window)),
         num_warps=4, num_stages=2,
     )
