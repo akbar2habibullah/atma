@@ -20,8 +20,10 @@ from pathlib import Path
 
 
 def _log_open(path):
+    # "w": one process per config -> a re-run (e.g. after --reset) overwrites the stale failed
+    # log cleanly instead of appending two CONFIG/ERROR blocks the parser would trip on.
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    return open(path, "a", buffering=1)
+    return open(path, "w", buffering=1)
 
 
 def _emit_block(fh, name, obj):

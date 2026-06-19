@@ -44,6 +44,8 @@ class Muon(torch.optim.Optimizer):
             for base_i in range(0, len(params), world_size):
                 if base_i + rank < len(params):
                     p = params[base_i + rank]
+                    if p.grad is None:        # skip params unused this step (e.g. dropped branches)
+                        continue
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum"] = torch.zeros_like(p)

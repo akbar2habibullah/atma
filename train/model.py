@@ -377,6 +377,11 @@ class CausalSelfAttention(AtmaAttnBase):
         self.window = window
         self.sdpa_scale = 0.12 if pos == "rope" else None   # rope: tuned scale; nope: SDPA default (1/sqrt(dk))
         self.rotary = Rotary(head_dim) if pos == "rope" else None
+        if pos == "rope":
+            # rope uses rotary, not canon -> drop the unused canon convs so they aren't
+            # gradient-less params (Muon's lerp_ crashes on p.grad=None). Also makes rope a
+            # true no-canon baseline.
+            self.canon_q = self.canon_k = self.canon_v = None
         H, dk = self.num_heads, self.head_dim
         self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
                                  gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
