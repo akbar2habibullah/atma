@@ -96,7 +96,7 @@ def main():
             attn_type=cfg["attn_type"], attn_window=cfg["attn_window"],
             mem_enabled=cfg["mem_enabled"], mem_chunk=cfg["mem_chunk"],
             mem_gamma_bias=cfg["mem_gamma_bias"], mem_beta_bias=cfg["mem_beta_bias"],
-            mem_kernel=cfg["mem_kernel"],
+            mem_kernel=cfg["mem_kernel"], wall_gate_bias=cfg.get("wall_gate_bias", -4.0),
         )
         model = Model(ac, reg_mode=cfg["reg_mode"], sketch_dim=cfg["sketch_dim"]).to(device)
         num_params = sum(p.numel() for p in model.parameters())

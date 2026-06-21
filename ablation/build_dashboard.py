@@ -1,8 +1,8 @@
 """Build a self-contained interactive dashboard (single .html, no deps) from the ablation logs.
 
-    python -m ablation.build_dashboard --log_dir ablation/logs --out ablation/dashboard.html
+    python -m ablation.build_dashboard --log_dir ablation/logs --out pages/dashboard.html
     # or from an existing results.json:
-    python -m ablation.build_dashboard --results ablation/results.json --out ablation/dashboard.html
+    python -m ablation.build_dashboard --results ablation/results.json --out pages/dashboard.html
 
 The HTML embeds the parsed data + a vanilla-JS UI: per-axis filters, a per-metric leaderboard
 that drills down to the full config, and a val-loss-vs-wall-clock canvas plot for selected runs.
@@ -58,7 +58,7 @@ HTML = r"""<!doctype html><html><head><meta charset="utf-8">
  th{color:#8b93a3;cursor:default;position:sticky;top:52px;background:#0f1115}
  tr.run:hover{background:#171b24} td.val{font-variant-numeric:tabular-nums;font-weight:600}
  .chip{display:inline-block;border-radius:4px;padding:0 5px;margin-right:3px;font-size:10px}
- .rope{background:#3a2d52;color:#cdb6ff}.nope{background:#1f3a4d;color:#9fd8ff}.polar{background:#173d2f;color:#9af0c6}
+ .rope{background:#3a2d52;color:#cdb6ff}.nope{background:#1f3a4d;color:#9fd8ff}.polar{background:#173d2f;color:#9af0c6}.wall{background:#4d3a1f;color:#ffd89f}
  .on{background:#243; color:#9af0c6}.off{background:#332; color:#e0c08a}
  .reg{background:#2a2f3a;color:#aeb6c4}
  .muted{color:#6b7384}.bad{color:#e0736b}.good{color:#7fe0a0}
@@ -299,7 +299,7 @@ def main():
     ap = argparse.ArgumentParser(description="Build the static ablation dashboard.")
     ap.add_argument("--log_dir", default="ablation/logs")
     ap.add_argument("--results", default=None, help="use an existing results.json instead of parsing logs")
-    ap.add_argument("--out", default="ablation/dashboard.html")
+    ap.add_argument("--out", default="pages/dashboard.html")
     args = ap.parse_args()
 
     if args.results:

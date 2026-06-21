@@ -18,7 +18,7 @@ import itertools
 from dataclasses import dataclass, field
 
 REG_MODES = ["baseline", "weak", "strong", "discrete", "zipfian"]
-ATTN_TYPES = ["rope", "nope", "polar"]
+ATTN_TYPES = ["rope", "nope", "polar", "wall"]   # wall = Tilde Research Wall Attention (2nd batch)
 EVAL_LENGTHS = [2048, 4096, 8192, 16384, 32768, 65536]
 
 
@@ -55,6 +55,7 @@ class RunConfig:
     mem_beta_bias: float = 0.0
     mem_kernel: str = "auto"
     fla_custom_op: bool = True         # set FLA_CUSTOM_OP=1 (compile-clean FLA path)
+    wall_gate_bias: float = -4.0       # wall core: log-forget gate init (slow forget)
 
     # --- eval (fixed) ---
     eval_lengths: list = field(default_factory=lambda: list(EVAL_LENGTHS))

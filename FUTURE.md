@@ -137,6 +137,20 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
 - **Wall vs Titans on the window-vs-retrieval cell** — does per-channel gating make the gist
   memory partially redundant *for quality*, while the memory still wins on compute/KV-cache?
 
+**Status — wired as a 2nd-batch axis (2026-06-20).** `attn_type="wall"` is implemented in
+[train/model.py](train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
+the matched comparison to `nope` — isolates the gating; all params used → no Muon issue), adds a
+per-channel log-forget gate `g = -softplus(W_g·x + wall_gate_bias)` (slow-forget init), and applies
+Wall's score `q_i·k_j·exp(P_i−P_j)` per channel via the stable rescale `q̃=exp(P)q, k̃=exp(−P)k`
+into standard attention. Two backends: a **pure-PyTorch fallback** (recentered prefix sum →
+exact at the training length, compile-friendly, CPU-testable; used for the compiled training pass)
+and **Tilde's `wall_attn` Triton kernel** (per-chunk anchors → faithful at long context; used at
+eval on CUDA when installed). The 40 wall cells (5×2×2×2) are generated at
+[ablation/shards/shard5](ablation/shards/shard5) (grid is now 160). **Caveat:** the torch fallback
+recenters+clamps the prefix sum, which is exact only while the centred range is small (≈ train
+length); for faithful long-context eval (>~4k) the host must `pip install` the `wall_attn` kernel —
+validate it (à la `verify_fla.py`) before trusting wall's 65k needle/perplexity numbers.
+
 **Caveat.** All Wall numbers are single-source (Tilde blog, 1B scale, their benchmarks). The
 mechanism is sound and the bimodal result is credible *because* it echoes our own retention
 spectrum — but treat "beats RoPE+FoX / SOTA" as promising, not settled, until run in our harness.

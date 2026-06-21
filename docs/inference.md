@@ -86,23 +86,3 @@ Throughput: 70.77 requests/s, 54350.30 total tokens/s, 18116.77 output tokens/s
 Total num prompt tokens:  262144
 Total num output tokens:  131072
 ```
-
-## Further throughput benchmark
-
-We also try larger model size 8937.41M parameters (32 num_layers + 4096 hidden_dim) on H100 to test the performance ceiling of the Atma inference engine (measured on the legacy softmax configuration above).
-
-| Batch Size | Decoding (tok/s) |
-|------------|------------------|
-| 1          | 91               |
-| 4          | 347              |
-| 8          | 688              |
-| 16         | 1,320            |
-| 32         | 2,557            |
-| 64         | 4,785            |
-| 128        | 8,329            |
-| 256        | 13,043           |
-| 512        | 16,981           |
-| 1024       | OOM              |
-| 2048       | OOM              |
-
-> Measured at 256 generated tokens per sequence, prompt length ~320 words. FA2 enabled and kvcache_block_size=256.

@@ -12,7 +12,7 @@ runner and an interactive static-HTML dashboard. See [TITANS_MEMORY.md](../TITAN
 | `distractor` | off / on — `num_random_keys ∈ {0, seq_len}` |
 | `memory` | off / on — Titans gated-delta memory branch |
 | `window` | off / on — training sliding window = 1024 (training-only) |
-| `attn_type` | `rope` (rotary, no canon) · `nope` (canon, no position) · `polar` |
+| `attn_type` | `rope` (rotary, no canon) · `nope` (canon, no position) · `polar` · `wall` (canon + Wall Attention, 2nd batch) |
 
 All cells share: 16 layers (12 conv + 4 attn), hidden 1024, head_dim 128, GQA 1:4,
 `seq_len=2048`, ~1B tokens (1 epoch). Distractor/memory/window are wired into **all three**
@@ -35,9 +35,30 @@ FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir <shardN> --log_dir ab
 
 # 3) collect every <run_id>.log from the 4 hosts into ONE folder, then build the dashboard
 python -m ablation.parse_logs      --log_dir ablation/logs --out ablation/results.json
-python -m ablation.build_dashboard --log_dir ablation/logs --out ablation/dashboard.html
-#    open ablation/dashboard.html in any browser (offline, no install)
+python -m ablation.build_dashboard --log_dir ablation/logs --out pages/dashboard.html
+#    open pages/dashboard.html in any browser (offline, no install); it is also the
+#    ablation page linked from the GitHub Pages site in pages/index.html
 ```
+
+### Second batch — Wall attention (`shard5`)
+
+`attn_type="wall"` (Tilde Research [Wall Attention](https://github.com/tilde-research/wall-attention-release))
+is a 4th core, added after the first 120-cell batch — making the full grid **160**. Its 40 cells
+(5×2×2×2) are generated separately into `ablation/shards/shard5`:
+
+```bash
+python -m ablation.generate_configs --attn_types wall --out ablation/shards/shard5   # 40 *.json
+# run like any other shard (one or more GPUs):
+FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/shards/shard5 --log_dir ablation/logs --gpu 0
+```
+
+Wall keeps canon (so it's the matched comparison to `nope` — isolates the per-channel forget
+gating). **Dependency:** training runs on a pure-PyTorch fallback (exact at train length); at
+eval the core automatically uses Tilde's Triton kernel **if `wall_attn` is importable on a CUDA
+device** (falling back safely otherwise). **Faithful long-context eval (>~4k) needs that kernel**
+— `pip install` the `wall_attn` package on the host and validate it (à la `verify_fla.py`) before
+trusting wall's 65k needle/perplexity numbers; without it the fallback recenters+clamps the gate
+prefix-sum and only approximates past train length. See [FUTURE.md §4](../FUTURE.md).
 
 > The full flat set is also available (`python -m ablation.generate_configs --out ablation/configs`
 > → 120 `*.json`). On a single host with multiple GPUs that *do* share a filesystem, point one

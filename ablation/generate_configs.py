@@ -16,6 +16,8 @@ from ablation.config_schema import expand_grid, shard_configs, ATTN_TYPES, REG_M
 def main():
     ap = argparse.ArgumentParser(description="Generate the ablation grid config files.")
     ap.add_argument("--out", default="ablation/configs", help="output directory for *.json")
+    ap.add_argument("--attn_types", nargs="+", default=None,
+                    help="restrict to these attn_type(s), e.g. `--attn_types wall` for the 40 wall cells")
     ap.add_argument("--shards", type=int, default=1,
                     help="split into N balanced subdirs out/shard{0..N-1}/ (one per GPU/host)")
     ap.add_argument("--num_chunks", type=int, default=None, help="override token budget (chunks)")
@@ -34,10 +36,14 @@ def main():
         overrides["mbs"] = args.mbs
 
     configs = expand_grid(**overrides)
-    expected = len(ATTN_TYPES) * len(REG_MODES) * 2 * 2 * 2
-    assert len(configs) == expected == 120, f"expected 120 cells, got {len(configs)}"
+    assert len(configs) == len(ATTN_TYPES) * len(REG_MODES) * 2 * 2 * 2, f"grid size {len(configs)}"
+    if args.attn_types:
+        keep = set(args.attn_types)
+        configs = [c for c in configs if c.attn_type in keep]
+        assert configs, f"no configs for attn_types={args.attn_types}"
     ids = [c.run_id for c in configs]
     assert len(set(ids)) == len(ids), "duplicate run_id in grid"
+    print(f"{len(configs)} configs (attn_types={args.attn_types or ATTN_TYPES})")
 
     def _write(cfgs, out_dir):
         os.makedirs(out_dir, exist_ok=True)
