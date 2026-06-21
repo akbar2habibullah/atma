@@ -1,28 +1,27 @@
 """Batch-throughput scaling benchmark for the Atma polar-attention model.
 
 Sweeps batch size 1 -> 512 to find the peak inference throughput, exercising the
-FlashAttention-style polar Triton kernel (kernel/polar_triton.py).
+FlashAttention-style polar Triton kernels (kernel/polar_triton.py).
 
 Two paths:
-  * If the full vLLM-style engine is importable (needs `transformers`), `--engine`
-    runs the real end-to-end serving benchmark (prefill + paged-KV decode) across
-    batch sizes, reporting prefill / decode / overall tok/s.
-  * By default it runs a direct polar-model forward (prefill) throughput sweep
-    (no `transformers` needed): embed -> polar/conv blocks -> norm. The LM head is
+  * Default: the full vLLM-style engine (needs `transformers`) — the real
+    end-to-end serving benchmark (prefill + paged-KV polar decode + Titans memory)
+    across batch sizes, reporting prefill / decode / overall tok/s.
+  * `--direct`: a direct polar-model forward (prefill) throughput sweep (no
+    `transformers` needed): embed -> polar/conv blocks -> norm. The LM head is
     excluded because materializing logits for all positions at bs=512 would OOM
     (B*T*vocab); in real decode the head is applied only to the last token.
 
-Loads the trained checkpoint if found under ../checkpoints, otherwise random weights
-(fine for a throughput benchmark). See inference/generate.py.
+Both paths load the trained checkpoint if found under ../checkpoints (same search
+as inference/generate.py); otherwise they run with random weights — fine for a
+throughput benchmark.
 
-Run:  python bench_inference.py            # direct polar throughput sweep
-      python bench_inference.py --engine   # full serving engine (needs transformers)
+Run:  python bench_inference.py             # full serving engine (default)
+      python bench_inference.py --direct    # direct polar forward sweep
 """
 import sys
 import time
 import torch
-
-from inference.generate import load_model, HAS_TRITON
 
 BATCH_SIZES = [1, 4, 8, 16, 32, 64, 128, 256, 512]
 SEQ_LEN = 512          # prompt length per sequence for the direct sweep
@@ -32,6 +31,24 @@ _WARMUP = 3            # passes to let the Triton kernels compile before timing
 def _sync(device):
     if device == "cuda":
         torch.cuda.synchronize()
+
+
+def _find_weights():
+    """Locate a checkpoint with inference/generate.py's search (explicit dirs,
+    ../checkpoints, ./checkpoints). Returns (weights_path | None, AtmaConfig built
+    from the checkpoint's config.json when present, else defaults)."""
+    import json
+    from dataclasses import fields as dc_fields
+    from inference.generate import find_checkpoint
+    from model.config import AtmaConfig
+
+    wpath, cfgpath, _tok, searched = find_checkpoint()
+    hf = AtmaConfig()
+    if cfgpath:
+        names = {f.name for f in dc_fields(AtmaConfig)} - {"dtype"}
+        d = {k: v for k, v in json.load(open(cfgpath)).items() if k in names}
+        hf = AtmaConfig(**d)
+    return wpath, hf, searched
 
 
 @torch.no_grad()
@@ -44,6 +61,7 @@ def _forward_body(model, ids):
 
 
 def bench_direct():
+    from inference.generate import load_model, HAS_TRITON
     print("Initializing the Atma polar-attention model (direct throughput sweep)...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
@@ -88,15 +106,25 @@ def bench_direct():
 
 
 def bench_engine():
-    """Original-style end-to-end serving benchmark via the vLLM-style engine (now
-    polar). Requires `transformers`. Sweeps batch size 1 -> 512."""
+    """End-to-end serving benchmark via the vLLM-style engine (polar attention +
+    Titans memory, paged decode kernel). Requires `transformers` (tokenizer only).
+    Sweeps batch size 1 -> 512."""
     from inference import LLM, SamplingParams
     if LLM is None:
         print("Engine (LLM) unavailable — `transformers` not installed. "
-              "Run without --engine for the direct polar throughput sweep.")
+              "Falling back to the direct polar throughput sweep.\n")
+        bench_direct()
         return
+
+    wpath, hf, searched = _find_weights()
+    if wpath:
+        print(f"[checkpoint] {wpath}")
+    else:
+        print("[checkpoint] none found -> random weights (searched: " + ", ".join(searched) + ")")
     print("Initializing the polar-attention inference engine...")
-    llm = LLM(model="gpt2", kvcache_block_size=256)
+    # model=wpath loads the weights (the engine falls back to random weights when the
+    # path doesn't resolve) and the tokenizer falls back to gpt2 either way.
+    llm = LLM(model=wpath or "gpt2", kvcache_block_size=256, hf_config=hf)
     use_cuda = torch.cuda.is_available()
 
     prompt = ("Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex "
@@ -133,10 +161,10 @@ def bench_engine():
 
 
 def main():
-    if "--engine" in sys.argv:
-        bench_engine()
-    else:
+    if "--direct" in sys.argv:
         bench_direct()
+    else:
+        bench_engine()       # default (--engine kept as an accepted no-op)
 
 
 if __name__ == "__main__":

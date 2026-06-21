@@ -8,7 +8,7 @@ from train.reg import sigreg
 from kernels import get_kernel
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online
+from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, polar_temp_null, polar_attention_online, TitansMemory
 
 try:
     from kernel.polar_triton import (
@@ -20,6 +20,17 @@ except Exception:
     polar_attention_triton = None
     polar_attention_triton_fwd = None
     HAS_TRITON = False
+
+# Tilde Research Wall Attention (data-dependent per-channel forget gates lifted into softmax;
+# https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used as
+# the faithful long-context path for attn_type="wall"; a pure-PyTorch fallback covers training
+# (exact at train length) and CPU. See WallAttention below.
+try:
+    from wall_attn import wall_attn as _wall_attn_kernel
+    _HAS_WALL = True
+except Exception:
+    _wall_attn_kernel = None
+    _HAS_WALL = False
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
@@ -338,97 +349,210 @@ class LFM2Conv(AtmaConvBase):
         return self.out_proj(x_gated_2), torch.tensor(0.0, device=x.device)
 
 
-class CausalSelfAttention(AtmaAttnBase):
-    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4):
-        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
+class Rotary(nn.Module):
+    """Half-truncate RoPE with base-frequency tuning (modded-nanogpt style). Applied to
+    QK-normed q/k of shape (B, T, H, head_dim)."""
 
-        self.num_random_keys = num_random_keys
+    def __init__(self, dim: int):
+        super().__init__()
+        angular_freq = (1 / 1024) ** torch.linspace(0, 1, steps=dim // 4, dtype=torch.float32)
+        self.register_buffer("angular_freq", torch.cat([angular_freq, angular_freq.new_zeros(dim // 4)]))
+
+    def forward(self, x_BTHD: Tensor):
+        pos = torch.arange(x_BTHD.size(1), dtype=torch.float32, device=x_BTHD.device)
+        theta = torch.outer(pos, self.angular_freq)[None, :, None, :]
+        cos, sin = theta.cos(), theta.sin()
+        x1, x2 = x_BTHD.to(dtype=torch.float32).chunk(2, dim=-1)
+        y1 = x1 * cos + x2 * sin
+        y2 = x1 * (-sin) + x2 * cos
+        return torch.cat((y1, y2), 3).type_as(x_BTHD)
+
+
+class CausalSelfAttention(AtmaAttnBase):
+    """Softmax attention core for the ablation grid, three position schemes:
+      pos="nope" -> canon convs on q/k/v, NO positional encoding (the legacy default).
+      pos="rope" -> rotary on q/k, NO canon, tuned SDPA scale 0.12.
+      pos="wall" -> canon convs + Wall Attention (Tilde Research): data-dependent per-channel
+                    log-forget gates g, cumulative prefix sum P, score q_i.k_j.exp(P_i-P_j)
+                    per channel, then softmax. Implemented as the stable q/k rescale
+                    q~=exp(P)q, k~=exp(-P)k feeding standard attention.
+    Shares the GQA + output-gate surround with PolarAttention. The optional training
+    sliding window (SWA), MSE distractor, and additive Titans memory branch are wired
+    here so every grid cell (reg x distractor x memory x window x core) is distinct.
+    With pos="nope", window=None, mem_enabled=False, num_random_keys in {0,None}, this is
+    byte-identical to the original CausalSelfAttention."""
+
+    def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None,
+                 kernel_size=4, pos: str = "nope", window: int = None,
+                 mem_enabled: bool = False, mem_chunk: int = 64,
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto",
+                 wall_gate_bias: float = -4.0):
+        super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
+        self.num_random_keys = num_random_keys or 0
+        self.pos = pos
+        self.window = window
+        self.sdpa_scale = 0.12 if pos == "rope" else None   # rope: tuned scale; nope/wall: SDPA default (1/sqrt(dk))
+        self.rotary = Rotary(head_dim) if pos == "rope" else None
+        if pos == "rope":
+            # rope uses rotary, not canon -> drop the unused canon convs so they aren't
+            # gradient-less params (Muon's lerp_ crashes on p.grad=None). Also makes rope a
+            # true no-canon baseline.
+            self.canon_q = self.canon_k = self.canon_v = None
+        H, dk = self.num_heads, self.head_dim
+        # Wall keeps canon (so all params are used); adds a per-channel log-forget gate head.
+        self.w_wall = Linear(dim, H * dk) if pos == "wall" else None
+        self.wall_gate_bias = wall_gate_bias                # g = -softplus(W_g x + bias); bias<0 -> slow forget at init
+        self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
+                    if mem_enabled else None)
+
+    def _sdpa(self, qh, kh, vh, W, scale):
+        """Causal SDPA with an optional sliding-window band. q/k/v: (B, T, H, dk)."""
+        T = qh.shape[1]
+        attn_mask, is_causal = None, True
+        if W is not None:
+            qi = torch.arange(T, device=qh.device).view(T, 1)
+            ki = torch.arange(T, device=qh.device).view(1, T)
+            band = (ki <= qi) & (ki > qi - W)
+            attn_mask = torch.zeros(T, T, device=qh.device, dtype=qh.dtype).masked_fill(~band, float("-inf"))
+            is_causal = False
+        return F.scaled_dot_product_attention(
+            qh.transpose(1, 2), kh.transpose(1, 2), vh.transpose(1, 2),
+            attn_mask=attn_mask, is_causal=is_causal, scale=scale).transpose(1, 2)
+
+    def _wall_attention(self, x, q_attn, k_attn, v_attn, groups, W):
+        """Wall attention on canon'd q/k/v. q_attn:(B,T,H,dk); k/v_attn:(B,T,kvH,dk). Returns
+        (y (B,T,H,dk), align_loss). Faithful long-context path = Tilde's chunked Triton kernel
+        (per-chunk anchors, used at eval on CUDA); the torch fallback recenters the prefix sum so
+        exp() stays finite and is exact at the training length (where the centred range is small)."""
+        B, T = x.shape[0], x.shape[1]
+        H, dk = self.num_heads, self.head_dim
+        k_exp = k_attn.repeat_interleave(groups, dim=2)             # (B,T,H,dk)
+        v_exp = v_attn.repeat_interleave(groups, dim=2)
+        g = -F.softplus(self.w_wall(x).view(B, T, H, dk).float() + self.wall_gate_bias)  # (B,T,H,dk) <= 0, nats
+        scale = dk ** -0.5
+
+        if (not self.training) and _HAS_WALL and q_attn.is_cuda:
+            try:                                                    # faithful long-context kernel (eager/eval)
+                y = _wall_attn_kernel(q_attn.contiguous(), k_exp.contiguous(), v_exp.contiguous(),
+                                      g.to(q_attn.dtype).contiguous(), scale=scale, window_size=W)
+                return y, torch.tensor(0.0, device=x.device)
+            except Exception:
+                pass                                                # fall through to the torch path
+
+        P = torch.cumsum(g, dim=1)                                  # (B,T,H,dk), monotone decreasing
+        P = P - 0.5 * (P.amax(1, keepdim=True) + P.amin(1, keepdim=True))   # recenter per (B,H,dk)
+        P = P.clamp(-30.0, 30.0)                                    # NaN guard (only bites at long-ctx eval)
+        qt = (q_attn.float() * torch.exp(P)).to(q_attn.dtype)
+        kt = (k_exp.float() * torch.exp(-P)).to(q_attn.dtype)
+        y = self._sdpa(qt, kt, v_exp, W, scale)
+
+        align_loss = torch.tensor(0.0, device=x.device)
+        if self.num_random_keys > 0 and self.training:
+            R = self.num_random_keys
+            rand_input = torch.randn(B, R, x.shape[2], device=x.device, dtype=x.dtype)
+            k_rand = F.rms_norm(self.k(rand_input).view(B, R, self.num_kv_heads, dk), (dk,)).detach()
+            v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
+            k_rand = k_rand.repeat_interleave(groups, dim=2)        # random noise carries no forgetting (P=0)
+            v_rand = v_rand.repeat_interleave(groups, dim=2)
+            k_dist = torch.cat([k_rand, kt], dim=1)
+            v_dist = torch.cat([v_rand, v_exp], dim=1)
+            dist_mask = torch.zeros(T, R + T, device=x.device, dtype=qt.dtype)
+            dist_mask[:, R:] = torch.triu(
+                torch.full((T, T), float("-inf"), device=x.device, dtype=qt.dtype), diagonal=1)
+            y_dist = F.scaled_dot_product_attention(
+                qt.transpose(1, 2), k_dist.transpose(1, 2), v_dist.transpose(1, 2),
+                attn_mask=dist_mask, scale=scale).transpose(1, 2)
+            align_loss = F.mse_loss(y_dist, y)
+        return y, align_loss
 
     def forward(self, x: torch.Tensor):
         B, T, D = x.shape
+        H, dk = self.num_heads, self.head_dim
+        groups = H // self.num_kv_heads
 
-        q_gate = self.q(x).view(B, T, self.num_heads, self.head_dim * 2)
+        q_gate = self.q(x).view(B, T, H, dk * 2)
         q, gate = torch.chunk(q_gate, 2, dim=-1)
-        k = self.k(x).view(B, T, self.num_kv_heads, self.head_dim)
-        v = self.v(x).view(B, T, self.num_kv_heads, self.head_dim)
+        k = self.k(x).view(B, T, self.num_kv_heads, dk)
+        v = self.v(x).view(B, T, self.num_kv_heads, dk)
 
-        # QK-Norm (Per head)
-        q = F.rms_norm(q, (self.head_dim,))
-        k = F.rms_norm(k, (self.head_dim,))
+        # QK-Norm (per head)
+        q = F.rms_norm(q, (dk,))
+        k = F.rms_norm(k, (dk,))
 
-        # Reshape to (B, hdim/kv_hdim, T) safely using transpose
-        q_conv_in = q.reshape(B, T, -1).transpose(1, 2)  # (B, hdim, T)
-        k_conv_in = k.reshape(B, T, -1).transpose(1, 2)  # (B, kv_hdim, T)
-        v_conv_in = v.reshape(B, T, -1).transpose(1, 2)
-
-        # Extract weights for causal_conv1d_fn -> (hdim/kv_hdim, kernel_size)
-        w_q = self.canon_q.weight.squeeze(1).to(dtype=q_conv_in.dtype)
-        w_k = self.canon_k.weight.squeeze(1).to(dtype=k_conv_in.dtype)
-        w_v = self.canon_v.weight.squeeze(1).to(dtype=v_conv_in.dtype)
-
-        # Apply Canon layer (Horizontal residual: h' = h + conv1d(h))
-        q_conv_out = q_conv_in + causal_conv1d_fn(q_conv_in.contiguous(), w_q)
-        k_conv_out = k_conv_in + causal_conv1d_fn(k_conv_in.contiguous(), w_k)
-        v_conv_out = v_conv_in + causal_conv1d_fn(v_conv_in.contiguous(), w_v)
-
-        # Reshape to (B, T, num_heads/num_kv_heads, head_dim) for attention
-        q_attn = q_conv_out.transpose(1, 2).reshape(B, T, self.num_heads, self.head_dim)
-        k_attn = k_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
-        v_attn = v_conv_out.transpose(1, 2).reshape(B, T, self.num_kv_heads, self.head_dim)
-
-        if _fa3 is None:
-            # SDPA requires equal head counts — expand KV heads for GQA
-            groups = self.num_heads // self.num_kv_heads
-            k_sdpa = k_attn.repeat_interleave(groups, dim=2)
-            v_sdpa = v_attn.repeat_interleave(groups, dim=2)
-            y = F.scaled_dot_product_attention(q_attn.transpose(1, 2), k_sdpa.transpose(1, 2), v_sdpa.transpose(1, 2), is_causal=True).transpose(1, 2)
+        if self.pos == "rope":
+            # rotary positions, no canon
+            q_attn, k_attn, v_attn = self.rotary(q), self.rotary(k), v
+            # memory is content-addressable -> feed it the pre-rotary (QK-normed) q/k/v
+            q_mem, k_mem, v_mem = q, k, v
         else:
-            # FA3 supports GQA natively
-            y = flash_attn.flash_attn_func(
-                q_attn, k_attn, v_attn,
-                causal=True
-            )
+            # Canon (horizontal residual conv), no positional encoding
+            q_conv_in = q.reshape(B, T, -1).transpose(1, 2)
+            k_conv_in = k.reshape(B, T, -1).transpose(1, 2)
+            v_conv_in = v.reshape(B, T, -1).transpose(1, 2)
+            w_q = self.canon_q.weight.squeeze(1).to(dtype=q_conv_in.dtype)
+            w_k = self.canon_k.weight.squeeze(1).to(dtype=k_conv_in.dtype)
+            w_v = self.canon_v.weight.squeeze(1).to(dtype=v_conv_in.dtype)
+            q_attn = (q_conv_in + causal_conv1d_fn(q_conv_in.contiguous(), w_q)).transpose(1, 2).reshape(B, T, H, dk)
+            k_attn = (k_conv_in + causal_conv1d_fn(k_conv_in.contiguous(), w_k)).transpose(1, 2).reshape(B, T, self.num_kv_heads, dk)
+            v_attn = (v_conv_in + causal_conv1d_fn(v_conv_in.contiguous(), w_v)).transpose(1, 2).reshape(B, T, self.num_kv_heads, dk)
+            q_mem, k_mem, v_mem = q_attn, k_attn, v_attn
 
-        align_loss = torch.tensor(0.0, device=x.device)
-        
-        if self.num_random_keys > 0 and self.training:  # skip during eval: custom mask forces O(T²) memory
-            R = self.num_random_keys
-            # Random input in the original model dimension
-            rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
-            # Project through the same K and V linear layers (detach!)
-            k_rand = self.k(rand_input).view(B, R, self.num_kv_heads, self.head_dim).detach()
-            v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, self.head_dim).detach()
+        W = self.window
+        if self.pos == "wall":
+            y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
+        else:
+            align_loss = torch.tensor(0.0, device=x.device)
+            if W is None and self.pos == "nope" and _fa3 is not None:
+                # fast path: FA3 GQA causal (nope, no window) — preserves the legacy behavior
+                y = flash_attn.flash_attn_func(q_attn, k_attn, v_attn, causal=True)
+            else:
+                k_sdpa = k_attn.repeat_interleave(groups, dim=2)
+                v_sdpa = v_attn.repeat_interleave(groups, dim=2)
+                attn_mask, is_causal = None, True
+                if W is not None:
+                    # sliding window band: query i attends to keys (i-W, i]  (training-only toggle)
+                    qi = torch.arange(T, device=x.device).view(T, 1)
+                    ki = torch.arange(T, device=x.device).view(1, T)
+                    band = (ki <= qi) & (ki > qi - W)
+                    attn_mask = torch.zeros(T, T, device=x.device, dtype=q_attn.dtype).masked_fill(~band, float("-inf"))
+                    is_causal = False
+                y = F.scaled_dot_product_attention(
+                    q_attn.transpose(1, 2), k_sdpa.transpose(1, 2), v_sdpa.transpose(1, 2),
+                    attn_mask=attn_mask, is_causal=is_causal, scale=self.sdpa_scale,
+                ).transpose(1, 2)
 
-            k_dist = torch.cat([k_rand, k_attn], dim=1)
-            v_dist = torch.cat([v_rand, v_attn], dim=1)
+            # Distractor (MSE): random keys must not perturb the output (noise rejection).
+            if self.num_random_keys > 0 and self.training:  # skip during eval: custom mask forces O(T^2) memory
+                R = self.num_random_keys
+                rand_input = torch.randn(B, R, D, device=x.device, dtype=x.dtype)
+                k_rand = self.k(rand_input).view(B, R, self.num_kv_heads, dk).detach()
+                v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
+                if self.pos == "rope":
+                    k_rand = F.rms_norm(k_rand, (dk,))      # match real-key norm; noise carries no position
+                k_dist = torch.cat([k_rand, k_attn], dim=1)
+                v_dist = torch.cat([v_rand, v_attn], dim=1)
+                # queries attend freely to all R distractors; causal only over the T real keys
+                dist_mask = torch.zeros(T, R + T, device=x.device, dtype=q_attn.dtype)
+                dist_mask[:, R:] = torch.triu(
+                    torch.full((T, T), float("-inf"), device=x.device, dtype=q_attn.dtype), diagonal=1)
+                k_sdpa = k_dist.repeat_interleave(groups, dim=2)
+                v_sdpa = v_dist.repeat_interleave(groups, dim=2)
+                y_dist = F.scaled_dot_product_attention(
+                    q_attn.transpose(1, 2), k_sdpa.transpose(1, 2), v_sdpa.transpose(1, 2),
+                    attn_mask=dist_mask, scale=self.sdpa_scale,
+                ).transpose(1, 2)
+                align_loss = F.mse_loss(y_dist, y)
 
-            # All queries attend freely to all R distractors; causal only over
-            # the T real keys. is_causal=True would wrongly gate distractor
-            # visibility by query position (query t sees only min(t,R) distractors).
-            dist_mask = torch.zeros(T, R + T, device=x.device, dtype=q_attn.dtype)
-            dist_mask[:, R:] = torch.triu(
-                torch.full((T, T), float('-inf'), device=x.device, dtype=q_attn.dtype),
-                diagonal=1,
-            )
-
-            # Always use SDPA here — FA3 doesn't support arbitrary attn masks
-            groups = self.num_heads // self.num_kv_heads
-            k_sdpa = k_dist.repeat_interleave(groups, dim=2)
-            v_sdpa = v_dist.repeat_interleave(groups, dim=2)
-            y_dist = F.scaled_dot_product_attention(
-                q_attn.transpose(1, 2),
-                k_sdpa.transpose(1, 2),
-                v_sdpa.transpose(1, 2),
-                attn_mask=dist_mask,
-            ).transpose(1, 2)
-
-            align_loss = F.mse_loss(y_dist, y)
-
-        # Post-process, apply gating
-        y = y.reshape(B, T, self.num_heads * self.head_dim)
+        y = y.reshape(B, T, H * dk)
         y = y * torch.sigmoid(gate.reshape(B, T, -1))
+        out = self.proj(y)
 
-        return self.proj(y), align_loss
+        if self.mem is not None:                                  # additive Titans memory branch (MAG)
+            out = out + self.mem(x, q_mem.transpose(1, 2),
+                                 k_mem.repeat_interleave(groups, dim=2).transpose(1, 2),
+                                 v_mem.repeat_interleave(groups, dim=2).transpose(1, 2))
+        return out, align_loss
 
 
 class PolarAttention(AtmaAttnBase):
@@ -441,12 +565,14 @@ class PolarAttention(AtmaAttnBase):
     """
 
     def __init__(self, dim: int, head_dim=128, num_kv_heads: int = None, num_random_keys: int = None, kernel_size=4,
-                 online: bool = False, k_block: int = 512, attn_kernel: str = "torch"):
+                 online: bool = False, k_block: int = 512, attn_kernel: str = "torch",
+                 window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto"):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.online = online            # stream keys in blocks -> O(T*k_block) memory (fwd+bwd)
         self.k_block = k_block
-        self.window = None              # eval-only sliding window (set by eval.py --window)
+        self.window = window            # trainable sliding window (config); eval.py --window overrides
         self.attn_kernel = attn_kernel  # "torch" | "triton" (Triton flash kernel, CUDA only)
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
@@ -455,6 +581,10 @@ class PolarAttention(AtmaAttnBase):
         self.null_slope_raw = nn.Parameter(torch.full((H,), _NULL_SLOPE_INIT))
         self.len_gain_raw = nn.Parameter(torch.full((H,), _LEN_GAIN_INIT))
         self.mag_beta_raw = nn.Parameter(torch.full((H,), _MAG_BETA_INIT))
+        # MAG long-term memory branch (additive 3rd channel). None unless enabled.
+        self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
+                    if mem_enabled else None)
 
     def forward(self, x: torch.Tensor):
         B, T, D = x.shape
@@ -500,25 +630,25 @@ class PolarAttention(AtmaAttnBase):
 
         use_triton = (self.attn_kernel == "triton" and HAS_TRITON
                       and polar_attention_triton is not None and q_t.is_cuda)
-        if self.window is not None:
-            # eval-only sliding window: cap each query to its last `window` keys. Tests
-            # whether holding N in-distribution restores extrapolation, before committing
-            # to context compression. Forward/no-grad only (band backward not modeled).
-            if use_triton:
-                c, mag = polar_attention_triton_fwd(q_t, k_t, v_t, n_keys, window=self.window, **polar_params)
-            else:
-                c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block,
-                                                window=self.window, **polar_params)
-        elif use_triton:
+        # window=None -> full causal; window=W -> trainable sliding band (each query sees
+        # its last W keys). All three cores now model the band in the backward (Step 2).
+        W = self.window
+        if use_triton:
             # FlashAttention-style Triton kernel: O(T*block) memory, fused fwd+bwd.
-            c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, **polar_params)
+            c, mag = polar_attention_triton(q_t, k_t, v_t, n_keys, window=W, **polar_params)
         elif self.online:
             # Memory-efficient: never materializes the (T, T) score matrix.
-            c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, **polar_params)
+            c, mag = polar_attention_online(q_t, k_t, v_t, n_keys, k_block=self.k_block, window=W, **polar_params)
         else:
             sigma = torch.matmul(q_t, k_t.transpose(-2, -1)) / (dk ** 0.5)
             sigma = sigma + torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
-            c, mag = polar_reduce(sigma, v_t, n_keys, **polar_params)
+            n_temp = n_keys
+            if W is not None:
+                kidx = torch.arange(T, device=x.device)
+                band = kidx.view(1, 1, 1, T) < (n_keys.view(1, 1, T, 1) - W)   # older than window
+                sigma = sigma.masked_fill(band, float("-inf"))
+                n_temp = torch.minimum(n_keys, n_keys.new_tensor(float(W)))
+            c, mag = polar_reduce(sigma, v_t, n_temp, **polar_params)
 
         # Distractor (O(T*R), memory-friendly): random keys must lose to the null sink,
         # calibrating null_base/null_slope (+ Q geometry). Compares random keys vs the
@@ -539,7 +669,10 @@ class PolarAttention(AtmaAttnBase):
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
         count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, D)
-        return content + count, align_loss
+        out = content + count
+        if self.mem is not None:                            # MAG long-term memory branch
+            out = out + self.mem(x, q_t, k_t, v_t)
+        return out, align_loss
 
 
 class Block(nn.Module):
@@ -557,15 +690,31 @@ class Block(nn.Module):
         attn_online: bool = False,
         attn_k_block: int = 512,
         attn_kernel: str = "torch",
+        attn_type: str = "polar",
+        attn_window: int = None,
+        mem_enabled: bool = False,
+        mem_chunk: int = 64,
+        mem_gamma_bias: float = 3.9,
+        mem_beta_bias: float = 0.0,
+        mem_kernel: str = "auto",
+        wall_gate_bias: float = -4.0,
     ):
         super().__init__()
-        self.attn = (
-            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
-                           kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block,
-                           attn_kernel=attn_kernel)
-            if attention
-            else LFM2Conv(dim, kernel_size=conv_kernel_size)
-        )
+        if not attention:
+            self.attn = LFM2Conv(dim, kernel_size=conv_kernel_size)
+        elif attn_type == "polar":
+            self.attn = PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, num_random_keys=num_random_keys,
+                                       kernel_size=attn_kernel_size, online=attn_online, k_block=attn_k_block,
+                                       attn_kernel=attn_kernel, window=attn_window, mem_enabled=mem_enabled,
+                                       mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias,
+                                       mem_kernel=mem_kernel)
+        else:  # "nope" | "rope" | "wall" — softmax core with shared GQA+gate surround
+            self.attn = CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads,
+                                            num_random_keys=num_random_keys, kernel_size=attn_kernel_size,
+                                            pos=attn_type, window=attn_window, mem_enabled=mem_enabled,
+                                            mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias,
+                                            mem_beta_bias=mem_beta_bias, mem_kernel=mem_kernel,
+                                            wall_gate_bias=wall_gate_bias)
         self.mlp = MLP(dim, linear_cls=Linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
@@ -598,12 +747,20 @@ class Model(nn.Module):
                 attn_online=config.attn_online,
                 attn_k_block=config.attn_k_block,
                 attn_kernel=config.attn_kernel,
+                attn_type=config.attn_type,
+                attn_window=config.attn_window,
+                mem_enabled=config.mem_enabled,
+                mem_chunk=config.mem_chunk,
+                mem_gamma_bias=config.mem_gamma_bias,
+                mem_beta_bias=config.mem_beta_bias,
+                mem_kernel=config.mem_kernel,
+                wall_gate_bias=config.wall_gate_bias,
             )
             for i in range(config.num_hidden_layers)
         ])
         self.proj = Linear(config.hidden_size, config.vocab_size)
         self.norm = RMSNorm(config.hidden_size)
-        self.num_attn_layers = sum(1 for block in self.blocks if isinstance(block.attn, PolarAttention))
+        self.num_attn_layers = sum(1 for block in self.blocks if isinstance(block.attn, AtmaAttnBase))
 
     def forward(self, inputs: Tensor, targets: Tensor):
         x = self.embed(inputs)

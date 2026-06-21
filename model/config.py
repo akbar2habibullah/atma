@@ -22,6 +22,23 @@ class AtmaConfig:
     #   "triton" -> FlashAttention-style Triton kernel (kernel/polar_triton.py); CUDA only,
     #               falls back to the torch path on CPU / when triton is unavailable.
     attn_kernel: str = "triton"
+    # Attention core for the 4 attention layers:
+    #   "polar" -> PolarAttention (length-invariant direction+count, canon)   [default, shipping]
+    #   "nope"  -> softmax CausalSelfAttention, canon, no positional encoding
+    #   "rope"  -> softmax CausalSelfAttention, rotary positions, no canon
+    #   "wall"  -> softmax CausalSelfAttention, canon + Wall Attention per-channel forget gates
+    # softmax cores share the SAME GQA + output-gate surround; memory/window/distractor apply to all.
+    attn_type: str = "polar"
+    wall_gate_bias: float = -4.0     # wall: g = -softplus(W_g x + bias); bias<0 -> slow forget at init
+    # MAG compression memory (Titans-style linear gated-delta) + sliding window.
+    # Defaults leave the model byte-identical to plain polar attention (no window, no
+    # memory). Enable both together for the MAG configuration.
+    attn_window: int | None = 1024   # train-time causal sliding window for the polar core
+    mem_enabled: bool = True        # add the Titans memory branch (out += mem)
+    mem_chunk: int = 128             # chunk size for the gated-delta parallel scan (GPU-tuned: 128 ~2x faster than 64)
+    mem_gamma_bias: float = 3.9      # retention logit init: sigmoid(3.9) ~ 0.98 (long horizon)
+    mem_beta_bias: float = 0.0       # write-strength logit init: sigmoid(0) = 0.5
+    mem_kernel: str = "auto"         # "auto"|"fla"|"torch": gated-delta backend (FLA fused vs eager PyTorch)
 
     @property
     def num_attention_heads(self) -> int:

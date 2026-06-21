@@ -4,14 +4,10 @@ import torch.nn.functional as F
 
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase
+from model.blocks import AtmaConvBase, AtmaAttnBase, TitansMemory, gated_delta_chunked, polar_reduce
 from inference.layers.linear import ReplicatedLinear
 from inference.layers.embed_head import VocabParallelEmbedding, ParallelLMHead
-from inference.layers.attention import (
-    Attention, store_kvcache,
-    HAS_FLASH_ATTN2, flash_attn_varlen_func, flash_attn_with_kvcache,
-    _fa3,
-)
+from inference.layers.attention import Attention, store_kvcache
 from inference.utils.context import get_context
 
 
@@ -25,18 +21,45 @@ except Exception:
     causal_conv1d_update = None
 
 
-# FlashAttention-style polar-attention kernel, forward-only (no autograd) for inference.
-# AtmaAttention below uses it for both prefill (per-sequence, is_causal=True) and decode
-# (single query over the gathered cached context, is_causal=False, n_keys=context length),
-# adding the polar count channel. The reshape/combine plumbing matches model.reference
-# PolarAttention to ~4e-7. A standalone, validated generator is in inference/generate.py.
-# Remaining for the paged engine: cross-request prefix-cache reuse (gather cached prefix
-# K/V in prefill) and CUDA-graph capture of the per-sequence decode loop.
+# FlashAttention-style polar-attention kernels, forward-only (no autograd), for inference.
+# Prefill runs polar_attention_fwd per sequence (is_causal=True for a fresh prefill;
+# is_causal=False with offset n_keys + gathered prefix K/V for a chunked-prefill
+# continuation). Decode runs polar_attention_decode, which reads K/V DIRECTLY from the
+# paged cache via block_tables/context_lens (no gather, fixed launch shape -> CUDA-graph
+# capturable). Both fall back to the materialized polar_reduce on CPU. The sliding window
+# (attn_window) and the Titans MAG memory branch (mem_enabled) match model/reference.py.
 try:
-    from kernel.polar_triton import polar_attention_fwd, HAS_TRITON  # noqa: F401
+    from kernel.polar_triton import polar_attention_fwd, polar_attention_decode, HAS_TRITON  # noqa: F401
 except Exception:
     polar_attention_fwd = None
+    polar_attention_decode = None
     HAS_TRITON = False
+
+# Titans memory kernels:
+#  - prefill: flash-linear-attention's fused chunk_gated_delta_rule (CUDA/Triton), with
+#    initial_state / output_final_state carrying the per-sequence state across chunks.
+#  - decode: our fused single-step kernel (kernel/gated_delta_triton.py), which reads and
+#    writes the slot-indexed state table IN PLACE — one state read + one write per step,
+#    vs 3x traffic for a gather -> kernel -> scatter sequence. Exact fp32, graph-safe.
+# Falls back to the pure-PyTorch gated_delta_chunked / explicit step on CPU or when the
+# kernels are unavailable.
+# NOTE on layout: FLA states are [N, H, K, V]; the torch gated_delta_chunked state is
+# (B, H, dv, dk) — the transpose. The mem state tables store the FLA layout (so the GPU
+# hot paths run transpose-free); the torch fallback transposes at its boundary. Validate
+# the bridge on GPU with verify_fla.py.
+try:
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+    _HAS_FLA = True
+except Exception:
+    chunk_gated_delta_rule = None
+    _HAS_FLA = False
+
+try:
+    from kernel.gated_delta_triton import gated_delta_decode_step
+    from kernel.gated_delta_triton import HAS_TRITON as _HAS_STEP_KERNEL
+except Exception:
+    gated_delta_decode_step = None
+    _HAS_STEP_KERNEL = False
 
 
 def _infer_linear(in_f, out_f):
@@ -55,26 +78,32 @@ def prefill_causal_conv1d(
     bias,
     conv_state_tables: dict,
 ) -> torch.Tensor:
-    """Run causal conv over a full prefill sequence; save final state to GPU conv state table."""
+    """Run causal conv over a prefill chunk; save final state to the GPU conv state table.
+
+    A fresh prefill (seq.num_cached_tokens == 0) left-pads with zeros. A chunked-prefill
+    continuation left-pads with the conv state saved by the previous chunk, so the first
+    ks-1 outputs see the true left context (the fused CUDA kernel is only used for the
+    fresh case; the continuation runs the plain depthwise conv, which is rare and cheap)."""
     seqlen, hdim = x_seq.shape
     kernel_size = weight.shape[1]
+    cached = getattr(seq, "num_cached_tokens", 0)
     x_input = x_seq.transpose(0, 1).unsqueeze(0)  # (1, hdim, seqlen)
 
-    if causal_conv1d_fn is not None and x_input.is_cuda:
+    if causal_conv1d_fn is not None and x_input.is_cuda and cached == 0:
         out, final_state = causal_conv1d_fn(x_input, weight, bias, return_final_states=True)
         conv_state_tables[layer_id][seq.seq_slot] = final_state.squeeze(0)  # (hdim, ks-1)
         out = out.squeeze(0).transpose(0, 1)  # (seqlen, hdim)
     else:
-        x_padded = F.pad(x_input, (kernel_size - 1, 0))
+        if cached > 0:
+            state_in = conv_state_tables[layer_id][seq.seq_slot].to(x_input.dtype)  # (hdim, ks-1)
+            x_padded = torch.cat([state_in.unsqueeze(0), x_input], dim=2)
+        else:
+            x_padded = F.pad(x_input, (kernel_size - 1, 0))
         w = weight.unsqueeze(1)
         out = F.conv1d(x_padded, w, bias, stride=1, padding=0, groups=hdim)
         out = out.squeeze(0).transpose(0, 1)
-        if seqlen < kernel_size - 1:
-            pad_len = (kernel_size - 1) - seqlen
-            state = F.pad(x_seq.transpose(0, 1), (pad_len, 0))
-        else:
-            state = x_seq[-(kernel_size - 1):].transpose(0, 1).contiguous()
-        conv_state_tables[layer_id][seq.seq_slot] = state
+        # final state = last ks-1 columns of the padded stream (covers seqlen < ks-1 too)
+        conv_state_tables[layer_id][seq.seq_slot] = x_padded[0, :, -(kernel_size - 1):].contiguous()
 
     return out
 
@@ -111,19 +140,31 @@ def _gpu_conv_step(
 
 class AtmaAttention(AtmaAttnBase):
 
-    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
+    def __init__(self, layer_idx: int, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4,
+                 window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto"):
         super().__init__(dim, linear_cls=_infer_linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.layer_idx = layer_idx
         self.attn = Attention(self.num_heads, self.head_dim, self.head_dim ** -0.5, self.num_kv_heads)
         # Polar-attention parameters (per head). Replaces softmax SDPA with the
         # length-invariant direction + bounded-count reduction (kernel/polar_triton.py).
         H, dk = self.num_heads, self.head_dim
+        self.window = window                                       # causal sliding window
         self.mu_proj = _infer_linear(H, dim)                       # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))
         self.null_base = nn.Parameter(torch.full((H,), 2.0))
         self.null_slope_raw = nn.Parameter(torch.full((H,), 0.5))
         self.len_gain_raw = nn.Parameter(torch.full((H,), -1.0))
         self.mag_beta_raw = nn.Parameter(torch.full((H,), -1.5))
+        # Titans MAG memory branch (additive 3rd channel, matches model/reference.py).
+        # Inference never calls mem.forward(): the per-seq recurrent state S lives in the
+        # mem state table (context.conv_state_tables["mem_{layer_idx}"], FLA [K,V] layout)
+        # and is advanced by _mem_prefill (FLA chunked kernel / torch chunked scan) and
+        # _mem_decode (FLA fused recurrent kernel / torch step), both state-carrying and
+        # gather/scattered by seq slot. mem_kernel: "auto" | "fla" | "torch".
+        self.mem = (TitansMemory(dim, H, dk, _infer_linear, chunk=mem_chunk,
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
+                    if mem_enabled else None)
 
     def _polar_params(self):
         return dict(v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
@@ -131,15 +172,22 @@ class AtmaAttention(AtmaAttnBase):
 
     def _polar(self, q_t, k_t, v_t, n_keys, is_causal):
         """Polar reduction. q_t,k_t,v_t: (B, H, T, dk) with KV heads expanded to H.
+        n_keys: (Tq,) valid-key count per query (absolute, so a chunked-prefill
+        continuation passes start+1..start+Tq with is_causal=False).
         Returns c (B,H,Tq,dk) and mag (B,H,Tq)."""
         if polar_attention_fwd is not None and q_t.is_cuda:
-            return polar_attention_fwd(q_t, k_t, v_t, n_keys, is_causal=is_causal, **self._polar_params())
-        from model.blocks import polar_reduce
+            return polar_attention_fwd(q_t, k_t, v_t, n_keys, is_causal=is_causal,
+                                       window=self.window, **self._polar_params())
         Tk = k_t.shape[2]
         sigma = torch.matmul(q_t.float(), k_t.float().transpose(-2, -1)) / (self.head_dim ** 0.5)
         ki = torch.arange(Tk, device=q_t.device)
-        sigma = sigma.masked_fill(ki[None, None, None, :] >= n_keys.view(1, 1, -1, 1), float("-inf"))
-        return polar_reduce(sigma, v_t, n_keys, **self._polar_params())
+        invalid = ki[None, None, None, :] >= n_keys.view(1, 1, -1, 1)               # future
+        n_temp = n_keys
+        if self.window is not None:
+            invalid = invalid | (ki[None, None, None, :] < (n_keys.view(1, 1, -1, 1) - self.window))
+            n_temp = torch.minimum(n_keys, n_keys.new_tensor(float(self.window)))
+        sigma = sigma.masked_fill(invalid, float("-inf"))
+        return polar_reduce(sigma, v_t, n_temp, **self._polar_params())
 
     def _combine(self, c, mag, gate, n_tokens):
         """content = W_o(reshape(c) * sigmoid(gate)) + W_mu(mag).  c:(B,H,T,dk) mag:(B,H,T)."""
@@ -149,11 +197,100 @@ class AtmaAttention(AtmaAttnBase):
         count = self.mu_proj(mag.transpose(1, 2).reshape(n_tokens, H))
         return content + count
 
+    # ------------------------------------------------------------------
+    # Titans MAG memory branch (state-carrying inference forms of
+    # model.blocks.TitansMemory.forward; weights are shared via self.mem)
+    # ------------------------------------------------------------------
+
+    def _mem_use_fla(self, t: torch.Tensor) -> bool:
+        return _HAS_FLA and t.is_cuda and self.mem.kernel in ("auto", "fla")
+
+    def _mem_prefill(self, seq, x_seq, q_t, k_t, v_t, mem_state_table) -> torch.Tensor:
+        """x_seq: (T, D); q_t,k_t,v_t: (1, H, T, dk) fresh-chunk tensors (KV heads
+        expanded). Reads the running state S from the per-seq table (zeros for a fresh
+        sequence, carried over for a chunked-prefill continuation), runs the chunkwise
+        gated-delta scan, writes the final state back. Returns (T, D).
+
+        GPU: FLA's fused chunk_gated_delta_rule (initial_state/output_final_state carry
+        the per-seq state; in-kernel L2-norm; scale=1.0 washes out post-RMSNorm).
+        CPU/fallback: the validated torch gated_delta_chunked, whose (B,H,dv,dk) state is
+        the transpose of the table's FLA [K,V] layout."""
+        mem = self.mem
+        T = x_seq.shape[0]
+        H, dk = self.num_heads, self.head_dim
+        g_logit = mem.w_gamma(x_seq).float() + mem.gamma_bias            # (T, H)
+        b_logit = mem.w_beta(x_seq).float() + mem.beta_bias
+        S0 = mem_state_table[seq.seq_slot].unsqueeze(0)                  # (1, H, dk, dv) fp32, FLA layout
+
+        if self._mem_use_fla(x_seq):
+            g = F.logsigmoid(g_logit).view(1, T, H)                      # log-decay (<=0)
+            beta = torch.sigmoid(b_logit).view(1, T, H)
+            q = q_t.transpose(1, 2).contiguous()                         # (1, T, H, dk)
+            k = k_t.transpose(1, 2).contiguous()
+            v = v_t.transpose(1, 2).contiguous()
+            r, S = chunk_gated_delta_rule(q=q, k=k, v=v, g=g.contiguous(), beta=beta.contiguous(),
+                                          scale=1.0, initial_state=S0,
+                                          output_final_state=True, use_qk_l2norm_in_kernel=True)
+            mem_state_table[seq.seq_slot] = S.squeeze(0)
+            r = F.rms_norm(r, (dk,))                                     # (1, T, H, dk)
+        else:
+            gamma = torch.sigmoid(g_logit).transpose(0, 1).unsqueeze(0)  # (1, H, T)
+            beta = torch.sigmoid(b_logit).transpose(0, 1).unsqueeze(0)
+            qn = F.normalize(q_t.float(), dim=-1)                        # unit keys/queries
+            kn = F.normalize(k_t.float(), dim=-1)
+            r, S = gated_delta_chunked(qn, kn, v_t.float(), gamma, beta, chunk=mem.chunk,
+                                       S0=S0.transpose(-1, -2))          # -> torch (1,H,dv,dk)
+            mem_state_table[seq.seq_slot] = S.squeeze(0).transpose(-1, -2)
+            r = F.rms_norm(r.transpose(1, 2), (dk,))                     # (1, T, H, dk)
+
+        r_flat = r.reshape(T, H * dk).to(x_seq.dtype)
+        return mem.proj(r_flat * torch.sigmoid(mem.gate(x_seq)))
+
+    def _mem_decode(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
+        """x: (B, D); q_t,k_t,v_t: (B, H, dk) current-token tensors (KV heads expanded).
+        Single gated-delta step, batched over sequences (CUDA-graph compatible).
+
+        GPU: the fused step kernel (kernel/gated_delta_triton.py) — reads and writes the
+        slot-indexed state table IN PLACE in its native [K,V] layout, so the (large) fp32
+        state moves once per step instead of gather + kernel + scatter.
+        CPU/fallback: the explicit N=1 step of gated_delta_chunked (decay-first, undecayed
+        write, self-inclusive readout M_t q_t), transposing at the layout boundary."""
+        mem = self.mem
+        B = x.shape[0]
+        H, dk = self.num_heads, self.head_dim
+        g_logit = mem.w_gamma(x).float() + mem.gamma_bias                # (B, H)
+        b_logit = mem.w_beta(x).float() + mem.beta_bias
+        gamma = torch.sigmoid(g_logit)
+        beta = torch.sigmoid(b_logit)
+
+        if gated_delta_decode_step is not None and _HAS_STEP_KERNEL and x.is_cuda:
+            r = gated_delta_decode_step(q_t, k_t, v_t, gamma, beta,
+                                        mem_state_table, seq_slots)      # (B, H, dk) fp32
+        else:
+            S = mem_state_table[seq_slots]                               # (B, H, dk, dv) gather
+            qn = F.normalize(q_t.float(), dim=-1)                        # (B, H, dk)
+            kn = F.normalize(k_t.float(), dim=-1)
+            St = S.transpose(-1, -2)                                     # -> torch (B, H, dv, dk)
+            Sd = gamma[..., None, None] * St                             # decay first
+            pred = torch.einsum("bhvk,bhk->bhv", Sd, kn)
+            u = beta[..., None] * (v_t.float() - pred)                   # undecayed write
+            S_new = Sd + u.unsqueeze(-1) * kn.unsqueeze(-2)              # (B, H, dv, dk)
+            mem_state_table[seq_slots] = S_new.transpose(-1, -2)         # scatter (FLA layout)
+            r = torch.einsum("bhvk,bhk->bhv", S_new, qn)                 # readout M_t q_t
+
+        r = F.rms_norm(r, (dk,))
+        r_flat = r.reshape(B, H * dk).to(x.dtype)
+        return mem.proj(r_flat * torch.sigmoid(mem.gate(x)))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         context = get_context()
         w_q = self.canon_q.weight.squeeze(1)  # (hdim, kernel_size)
         w_k = self.canon_k.weight.squeeze(1)
         w_v = self.canon_v.weight.squeeze(1)
+        H, dk = self.num_heads, self.head_dim
+        groups = H // self.num_kv_heads
+        mem_table = (context.conv_state_tables[f"mem_{self.layer_idx}"]
+                     if self.mem is not None else None)
 
         if context.is_prefill:
             total = x.shape[0]
@@ -166,7 +303,7 @@ class AtmaAttention(AtmaAttnBase):
             k_all = F.rms_norm(k_all, (self.head_dim,))
 
             conv_state_tables = context.conv_state_tables
-            q_parts, k_parts, v_parts = [], [], []
+            q_parts, k_parts, v_parts, tok_starts = [], [], [], []
             start = 0
             for i, seqlen in enumerate(context.seqlens_q):
                 seq = context.seqs[i]
@@ -179,9 +316,9 @@ class AtmaAttention(AtmaAttnBase):
                 q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
                 k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
                 v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                tok_starts.append(start)
                 start += seqlen
 
-            q_packed = torch.cat(q_parts, dim=0)
             k_packed = torch.cat(k_parts, dim=0)
             v_packed = torch.cat(v_parts, dim=0)
 
@@ -189,26 +326,50 @@ class AtmaAttention(AtmaAttnBase):
             if self.attn.k_cache.numel() > 0 and context.slot_mapping is not None and context.slot_mapping.numel() > 0:
                 store_kvcache(k_packed, v_packed, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
-            # Polar attention per sequence (causal). Each query attends to the keys of
-            # its own sequence (n_keys = 1..seqlen). FlashAttention cannot express the
-            # polar reduction (null sink + participation ratio), so we use the polar
-            # kernel per sequence. NOTE: cross-request prefix-cache reuse (block_tables
-            # spanning a cached prefix) would need the prefix K/V gathered from the paged
-            # cache and prepended here; the fresh-prefill path below covers standard use.
-            groups = self.num_heads // self.num_kv_heads
-            c_parts, mag_parts = [], []
-            for qi, ki, vi in zip(q_parts, k_parts, v_parts):
+            # Polar attention per sequence. A fresh prefill (num_cached_tokens == 0) is
+            # standard causal (n_keys = 1..seqlen). A chunked-prefill continuation
+            # gathers its cached prefix K/V from the paged cache and runs is_causal=False
+            # with absolute n_keys = start+1..start+seqlen, so queries attend to the
+            # whole context. NOTE: a cross-request prefix-cache hit shares K/V blocks
+            # correctly here, but the per-seq conv/memory state tables start from zeros
+            # for the new sequence, so its early outputs can drift — see docs/inference.md.
+            c_parts, mag_parts, mem_parts = [], [], []
+            for i, (qi, ki, vi) in enumerate(zip(q_parts, k_parts, v_parts)):
+                seq = context.seqs[i]
                 seqlen = qi.shape[0]
-                qh = qi.transpose(0, 1).unsqueeze(0).contiguous()                                  # (1,H,T,dk)
-                kh = ki.repeat_interleave(groups, dim=1).transpose(0, 1).unsqueeze(0).contiguous()
-                vh = vi.repeat_interleave(groups, dim=1).transpose(0, 1).unsqueeze(0).contiguous()
-                n_keys = torch.arange(1, seqlen + 1, device=x.device, dtype=torch.float32)
-                c, mag = self._polar(qh, kh, vh, n_keys, is_causal=True)
+                cached = seq.num_cached_tokens
+                qh = qi.transpose(0, 1).unsqueeze(0).contiguous()                    # (1,H,T,dk)
+                if cached > 0:
+                    bt = torch.as_tensor(seq.block_table, device=x.device, dtype=torch.long)
+                    block_size = self.attn.k_cache.shape[1]
+                    n_blk = (cached + block_size - 1) // block_size
+                    k_pref = self.attn.k_cache[bt[:n_blk]].reshape(-1, self.num_kv_heads, dk)[:cached]
+                    v_pref = self.attn.v_cache[bt[:n_blk]].reshape(-1, self.num_kv_heads, dk)[:cached]
+                    k_seq = torch.cat([k_pref, ki], dim=0)
+                    v_seq = torch.cat([v_pref, vi], dim=0)
+                    n_keys = torch.arange(cached + 1, cached + seqlen + 1, device=x.device, dtype=torch.float32)
+                    is_causal = False
+                else:
+                    k_seq, v_seq = ki, vi
+                    n_keys = torch.arange(1, seqlen + 1, device=x.device, dtype=torch.float32)
+                    is_causal = True
+                kh = k_seq.repeat_interleave(groups, dim=1).transpose(0, 1).unsqueeze(0).contiguous()
+                vh = v_seq.repeat_interleave(groups, dim=1).transpose(0, 1).unsqueeze(0).contiguous()
+                c, mag = self._polar(qh, kh, vh, n_keys, is_causal=is_causal)
                 c_parts.append(c)
                 mag_parts.append(mag)
+                if self.mem is not None:
+                    # memory consumes only the fresh chunk (the table state covers the
+                    # prefix); kh/vh time-sliced past `cached` are the fresh expanded k/v.
+                    x_seq = x[tok_starts[i]:tok_starts[i] + seqlen]
+                    mem_parts.append(self._mem_prefill(seq, x_seq, qh,
+                                                       kh[:, :, cached:], vh[:, :, cached:], mem_table))
             c = torch.cat(c_parts, dim=2)        # (1, H, total, dk)
             mag = torch.cat(mag_parts, dim=2)    # (1, H, total)
-            return self._combine(c, mag, gate_all, total)
+            out = self._combine(c, mag, gate_all, total)
+            if self.mem is not None:
+                out = out + torch.cat(mem_parts, dim=0)
+            return out
 
         else:
             # Decode — all GPU-indexed ops, CUDA-graph-compatible
@@ -238,36 +399,51 @@ class AtmaAttention(AtmaAttnBase):
 
             store_kvcache(k_attn, v_attn, self.attn.k_cache, self.attn.v_cache, context.slot_mapping)
 
-            # Polar decode: the single new query attends to its full cached context.
-            # FlashAttention can't express the polar reduction, so gather the per-sequence
-            # K/V from the paged cache (like the old SDPA fallback) and run the polar kernel
-            # with is_causal=False, n_keys = context length. The per-sequence loop trades
-            # CUDA-graph capture for correctness (context lengths differ across the batch).
-            max_seqlen = int(context.context_lens.max().item())
-            block_size = self.attn.k_cache.shape[1]
-            n_blocks = context.block_tables.shape[1]
-            H, dk = self.num_heads, self.head_dim
-            groups = H // self.num_kv_heads
-            k_full = self.attn.k_cache[context.block_tables.clamp(min=0)].reshape(
-                batch_size, n_blocks * block_size, self.num_kv_heads, dk)[:, :max_seqlen]
-            v_full = self.attn.v_cache[context.block_tables.clamp(min=0)].reshape(
-                batch_size, n_blocks * block_size, self.num_kv_heads, dk)[:, :max_seqlen]
-            k_full = k_full.repeat_interleave(groups, dim=2)        # (B, S, H, dk)
-            v_full = v_full.repeat_interleave(groups, dim=2)
-            ctx = context.context_lens
-            c_list, mag_list = [], []
-            for b in range(batch_size):
-                n = int(ctx[b])
-                qh = q_attn[b].unsqueeze(0).unsqueeze(2).contiguous()               # (H,dk)->(1,H,1,dk)
-                kh = k_full[b, :n].transpose(0, 1).unsqueeze(0).contiguous()         # (1, H, n, dk)
-                vh = v_full[b, :n].transpose(0, 1).unsqueeze(0).contiguous()
-                n_keys = torch.tensor([float(n)], device=x.device)
-                cc, mm = self._polar(qh, kh, vh, n_keys, is_causal=False)
-                c_list.append(cc)          # (1, H, 1, dk)
-                mag_list.append(mm)        # (1, H, 1)
-            c = torch.cat(c_list, dim=0)       # (B, H, 1, dk)
-            mag = torch.cat(mag_list, dim=0)   # (B, H, 1)
-            return self._combine(c, mag, gate_all, batch_size)
+            # Polar decode: the single new query attends to its cached context. On CUDA
+            # the paged Triton kernel reads K/V directly from the cache via block_tables +
+            # context_lens (no gather, no host sync, fixed shapes -> CUDA-graph capturable,
+            # GQA done in-kernel). The CPU fallback gathers per sequence and runs the
+            # materialized polar_reduce.
+            if polar_attention_decode is not None and HAS_TRITON and x.is_cuda:
+                c, mag = polar_attention_decode(
+                    q_attn, self.attn.k_cache, self.attn.v_cache,
+                    context.block_tables, context.context_lens,
+                    window=self.window, **self._polar_params())
+                c = c.unsqueeze(2)         # (B, H, 1, dk)
+                mag = mag.unsqueeze(-1)    # (B, H, 1)
+            else:
+                max_seqlen = int(context.context_lens.max().item())
+                block_size = self.attn.k_cache.shape[1]
+                n_blocks = context.block_tables.shape[1]
+                k_full = self.attn.k_cache[context.block_tables.clamp(min=0)].reshape(
+                    batch_size, n_blocks * block_size, self.num_kv_heads, dk)[:, :max_seqlen]
+                v_full = self.attn.v_cache[context.block_tables.clamp(min=0)].reshape(
+                    batch_size, n_blocks * block_size, self.num_kv_heads, dk)[:, :max_seqlen]
+                k_full = k_full.repeat_interleave(groups, dim=2)        # (B, S, H, dk)
+                v_full = v_full.repeat_interleave(groups, dim=2)
+                ctx = context.context_lens
+                W = self.window
+                c_list, mag_list = [], []
+                for b in range(batch_size):
+                    n = int(ctx[b])
+                    # window: slice to the last min(n, W) keys — equivalent to the band
+                    # mask, and _polar's temp/null then see the capped count directly.
+                    lo = 0 if W is None else max(0, n - W)
+                    qh = q_attn[b].unsqueeze(0).unsqueeze(2).contiguous()                # (H,dk)->(1,H,1,dk)
+                    kh = k_full[b, lo:n].transpose(0, 1).unsqueeze(0).contiguous()       # (1, H, n-lo, dk)
+                    vh = v_full[b, lo:n].transpose(0, 1).unsqueeze(0).contiguous()
+                    n_keys = torch.tensor([float(n - lo)], device=x.device)
+                    cc, mm = self._polar(qh, kh, vh, n_keys, is_causal=False)
+                    c_list.append(cc)          # (1, H, 1, dk)
+                    mag_list.append(mm)        # (1, H, 1)
+                c = torch.cat(c_list, dim=0)       # (B, H, 1, dk)
+                mag = torch.cat(mag_list, dim=0)   # (B, H, 1)
+            out = self._combine(c, mag, gate_all, batch_size)
+            if self.mem is not None:
+                k_mem = k_attn.repeat_interleave(groups, dim=1)         # (B, H, dk)
+                v_mem = v_attn.repeat_interleave(groups, dim=1)
+                out = out + self._mem_decode(x, q_attn, k_mem, v_mem, seq_slots, mem_table)
+            return out
 
 
 # ---------------------------------------------------------------------------
@@ -326,10 +502,18 @@ class AtmaDecoderBlock(nn.Module):
         num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
+        attn_window: int = None,
+        mem_enabled: bool = False,
+        mem_chunk: int = 64,
+        mem_gamma_bias: float = 3.9,
+        mem_beta_bias: float = 0.0,
+        mem_kernel: str = "auto",
     ):
         super().__init__()
         self.attn = (
-            AtmaAttention(layer_idx, dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
+            AtmaAttention(layer_idx, dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size,
+                          window=attn_window, mem_enabled=mem_enabled, mem_chunk=mem_chunk,
+                          mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias, mem_kernel=mem_kernel)
             if attention
             else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
         )
@@ -356,6 +540,12 @@ class Atma(nn.Module):
                 num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
+                attn_window=config.attn_window,
+                mem_enabled=config.mem_enabled,
+                mem_chunk=config.mem_chunk,
+                mem_gamma_bias=config.mem_gamma_bias,
+                mem_beta_bias=config.mem_beta_bias,
+                mem_kernel=config.mem_kernel,
             )
             for i in range(config.num_hidden_layers)
         ])

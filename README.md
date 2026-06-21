@@ -9,7 +9,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch 2.1+](https://img.shields.io/badge/pytorch-2.1%2B-orange.svg)](https://pytorch.org/)
-[![Verify Status](https://img.shields.io/badge/numerical_verification-passed-success.svg)](verify.py)
+[![Verify Status](https://img.shields.io/badge/numerical_verification-passed-success.svg)](tests/verify.py)
 
 **Atma** is a hybrid transformer-convolutional language model that integrates three parallel forward implementations—**reference**, **training**, and **inference**—into a single repository. Because every layer is numerically cross-verified, implementing and testing new architectural variants is straightforward.
 
@@ -18,7 +18,8 @@
 Atma uses a **3:1 conv-to-attention ratio** across 16 decoder layers:
 
 - **LFM2 Gated Convolution** (12 layers): inspired by Liquid Foundation Models 2. Gated depthwise causal conv1d provides linear-complexity sequence mixing.
-- **Polar Attention** (4 layers, **default**): a length-invariant replacement for softmax SDPA. It keeps the Canon-B surround (GQA, horizontal residual convs on Q/K/V, QK-norm, `output * sigmoid(gate)`) but replaces the softmax core with two channels — a count-blind **direction** unit vector and a bounded **magnitude** (participation ratio through an extreme-value-corrected null sink). This bounds the attention output at any length, where softmax dilutes and blows up. Full derivation: **[POLAR_ATTENTION.md](POLAR_ATTENTION.md)**. (The legacy softmax `CausalSelfAttention` remains in the tree but is no longer wired into the model.)
+- **Polar Attention** (4 layers, **default**): a length-invariant replacement for softmax SDPA. It keeps the Canon-B surround (GQA, horizontal residual convs on Q/K/V, QK-norm, `output * sigmoid(gate)`) but replaces the softmax core with two channels — a count-blind **direction** unit vector and a bounded **magnitude** (participation ratio through an extreme-value-corrected null sink). This bounds the attention output at any length, where softmax dilutes and blows up. Full derivation: **[POLAR_ATTENTION.md](docs/POLAR_ATTENTION.md)**. (The legacy softmax `CausalSelfAttention` remains in the tree but is no longer wired into the model.)
+- **Titans compression memory (MAG, default-on)**: each polar layer carries a length-invariant linear long-term memory (a per-head gated-delta fast-weight store), added as an **additive third channel** alongside a sliding-window short-term branch — `out = content + count + memory`. It resolves the window-vs-retrieval tradeoff (window wins perplexity, full wins recall, neither both): the memory supplies the diffuse long-context perplexity gain while full polar + the distractor supply exact retrieval. Full derivation, the FLA fused-kernel integration, and the first end-to-end results: **[TITANS_MEMORY.md](docs/TITANS_MEMORY.md)**.
 
 Each decoder block is pre-norm: `x = x + sublayer(norm(x))` then `x = x + MLP(norm(x))`. The MLP uses squared-ReLU gating with 4× hidden expansion.
 
@@ -46,13 +47,13 @@ The repo maintains strict numerical equivalence across its optimized pipelines (
              └─────────────────────────────────────────────┘
 ```
 
-> Equivalence currently holds for **training ↔ reference**. The paged inference engine still runs legacy softmax attention; the Polar port is the main tracked task — see [docs/inference.md](docs/inference.md).
+> Equivalence holds across **training ↔ reference ↔ inference** (Polar attention + Titans memory): `verify.py` passes 30/30 on CPU and 30/30 with `--cuda` through the Triton kernels (validated on NVIDIA L4) — see [docs/inference.md](docs/inference.md).
 
 ## Quick start
 
 ```bash
 python train.py          # train (downloads FineWebEdu-10B, GPT-2 tokenized)
-python verify.py         # cross-check training vs reference at atol=1e-4
+python -m tests.verify         # cross-check training vs reference at atol=1e-4
 ```
 
 ```python
@@ -65,38 +66,45 @@ print(outputs[0]["text"])
 
 ## Highlights — train short, infer long
 
-Polar Attention keeps the attention output bounded at any length, where softmax dilutes and explodes:
+The full **120-cell ablation** (identical 370M models, `seq_len=2048`, ~1B tokens, evaluated out to 64K = 32× train length; browsable in [pages/dashboard.html](pages/dashboard.html)) settles the recipe:
 
-| validation loss @ 512× context | Softmax | **Polar** |
-|---|---|---|
-| (trained at seq_len 4096) | 13.55 | **6.48** |
+- **The Titans memory is the unlock.** The winning recipe — **full polar + memory, no window, no distractor** — holds induction-needle retrieval **flat at 91–98% across the entire 2K→64K sweep** (`94%` length-weighted) while clean-document perplexity *improves monotonically* to **`1.96 @ 64×`**. Convergence and quality rank **Polar+Titans > Softmax+Titans > Polar-only**, at ~6–9% MFU overhead (`FLA_CUSTOM_OP=1`).
+- **Polar earns its keep at extreme length.** Paired with the memory, polar holds `93%` needle / `1.96` ppl at 64×, where softmax + the *same* memory collapses to `16%` / `2.34` (its `n_eff` blows up). Without any memory, neither core extrapolates — both needle-collapse past ~4×.
+- **Simpler is better.** With the memory present, the distractor and sliding window are no longer needed — both *reduce* needle accuracy in the sweep.
 
-And the optional distractor loss (`num_random_keys > 0`) extends long-range **retrieval** dramatically — an induction needle planted **32× beyond** the training length is still recalled (6.3% vs 0% / chance without it). Full evidence, the perplexity-vs-window analysis, and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
+Full per-length tables and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
 
 ## Documentation
 
 | Doc | Contents |
 |---|---|
-| [POLAR_ATTENTION.md](POLAR_ATTENTION.md) | Polar Attention: derivation, design rationale, verification |
+| [POLAR_ATTENTION.md](docs/POLAR_ATTENTION.md) | Polar Attention: derivation, design rationale, verification |
+| [TITANS_MEMORY.md](docs/TITANS_MEMORY.md) | Titans compression memory (MAG): gated-delta math, FLA fused kernel, results |
 | [docs/training.md](docs/training.md) | Training pipeline, performance, checkpoints, tokenizing custom data |
 | [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
-| [docs/inference.md](docs/inference.md) | Inference engine, usage, throughput, the Polar-port status |
+| [docs/inference.md](docs/inference.md) | Inference engine: usage, verification status, Polar+Titans throughput |
 | [kernel/README.md](kernel/README.md) | FlashAttention-style Triton polar kernels |
 
 ## Project structure
 
 ```
 atma/
-├── train.py / eval.py / verify.py     # train · evaluate (extrapolation, window, needle) · cross-verify
-├── POLAR_ATTENTION.md                 # Polar Attention derivation
+├── train.py / eval.py             # train · evaluate (extrapolation, window, needle)
 ├── model/      # config, layers, blocks (Polar reductions), reference.py (pure-PyTorch oracle)
 ├── kernel/     # FlashAttention-style Triton polar kernels (fwd/bwd, decode, sliding window) + tests
 ├── train/      # TrainModel (Polar + FP16/FP8 matmuls), data loader, Muon optimizer, SigReg
-└── inference/  # paged engine (softmax; Polar port pending) + generate.py (self-contained Polar)
+├── inference/  # paged engine (Polar + Titans, paged decode kernel) + generate.py (self-contained Polar)
+├── tests/      # numerical verification + parity suite — `python -m tests.verify` (and verify_{fla,mag,titans,polar_window})
+├── scripts/    # standalone prototypes, benchmarks, examples (titans_proto, bench_*, example_inference)
+├── ablation/   # 120-cell factorial: config grid, multi-GPU runner, dashboard builder
+├── benchmarks/ # long-context benchmark harness (BABILong, retrieval) over the inference engine
+├── pages/      # GitHub Pages site: research teaser (index.html) + ablation dashboard
+└── docs/       # POLAR_ATTENTION.md · TITANS_MEMORY.md · FUTURE.md · training · evaluation · inference
 ```
 
 ## References
 
+- [Titans: Learning to Memorize at Test Time](https://arxiv.org/abs/2501.00663)
 - [LFM2: Liquid Foundation Models 2](https://arxiv.org/abs/2511.23404)
 - [NanoGPT speedrun](https://github.com/KellerJordan/modded-nanogpt)
 - [Physics of Language Models: Part 4.1, Architecture Design and the Magic of Canon Layers](https://arxiv.org/abs/2512.17351)

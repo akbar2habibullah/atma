@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -15,6 +16,70 @@ except Exception:
     polar_attention_triton = None
     polar_attention_triton_fwd = None
     HAS_TRITON = False
+
+# flash-linear-attention's fused chunked gated-delta kernel (CUDA/Triton). When present
+# it replaces the pure-PyTorch gated_delta_chunked for the memory branch -- far faster and,
+# being a custom autograd.Function, opaque to torch.compile (no inductor blow-up). Optional.
+try:
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+    _HAS_FLA = True
+except Exception:
+    chunk_gated_delta_rule = None
+    _HAS_FLA = False
+
+# FLA's kernel is a Triton autograd.Function -> torch.compile graph-breaks at every memory
+# layer (lost fusion + lost cross-break memory planning = the ~2x time/RAM regression). The
+# DEFAULT path is the plain call (graph break, but known-correct and trains fine).
+#
+# Opt-in FLA_CUSTOM_OP=1 removes the break by wrapping FLA as opaque custom ops. BOTH the
+# forward AND the backward must be opaque: a single custom op with a python backward fails
+# because AOTAutograd traces the backward into the joint graph and re-enters the Triton
+# kernel (autotuner chokes: "unhashable type: non-nested SymInt"). So fwd and bwd are each a
+# custom_op with register_fake; the bwd recomputes FLA's autograd eagerly (correct grads +
+# fwd activations not stored). Experimental on a given torch/FLA combo -> verify_fla.py first.
+_fla_gated_delta = None
+if _HAS_FLA:
+    def _fla_raw(q, k, v, g, beta):                     # default: plain call (graph-breaks, works)
+        # beta keyword-bound on purpose: FLA's fused_recurrent variant has gk/gv params
+        # between g and beta, and chunk may grow them too — positional beta would bind
+        # to gk and be indexed as [B, T, H, K] (out-of-bounds reads).
+        return chunk_gated_delta_rule(q=q, k=k, v=v, g=g, beta=beta,
+                                      scale=1.0, use_qk_l2norm_in_kernel=True)[0]
+    _fla_gated_delta = _fla_raw
+
+    if os.environ.get("FLA_CUSTOM_OP", "0") == "1":
+        try:
+            @torch.library.custom_op("atma::fla_gd_fwd", mutates_args=())
+            def _fla_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                         g: torch.Tensor, beta: torch.Tensor) -> torch.Tensor:
+                return _fla_raw(q, k, v, g, beta)
+
+            @_fla_fwd.register_fake
+            def _(q, k, v, g, beta):
+                return torch.empty_like(v)
+
+            @torch.library.custom_op("atma::fla_gd_bwd", mutates_args=())
+            def _fla_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                         v: torch.Tensor, g: torch.Tensor, beta: torch.Tensor) -> list[torch.Tensor]:
+                with torch.enable_grad():                # recompute FLA fwd -> its autograd graph
+                    ins = [t.detach().requires_grad_(True) for t in (q, k, v, g, beta)]
+                    o = _fla_raw(*ins)
+                    return list(torch.autograd.grad(o, ins, grad_o))
+
+            @_fla_bwd.register_fake
+            def _(grad_o, q, k, v, g, beta):
+                return [torch.empty_like(t) for t in (q, k, v, g, beta)]
+
+            def _setup(ctx, inputs, output):
+                ctx.save_for_backward(*inputs)
+
+            def _bwd(ctx, grad_o):
+                return tuple(_fla_bwd(grad_o, *ctx.saved_tensors))   # opaque bwd op (not traced)
+
+            _fla_fwd.register_autograd(_bwd, setup_context=_setup)
+            _fla_gated_delta = _fla_fwd
+        except Exception:
+            _fla_gated_delta = _fla_raw                  # fall back to the safe path on any error
 
 
 # --- Diagnostic probe ---------------------------------------------------------
@@ -179,14 +244,14 @@ class _PolarOnline(torch.autograd.Function):
         _probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
-        ctx.k_block, ctx.eps = k_block, eps
+        ctx.k_block, ctx.eps, ctx.window = k_block, eps, window
         return c.to(out_dtype), mag.to(out_dtype)
 
     @staticmethod
     def backward(ctx, gc, gm):
         (q, k, v, n_keys, v_null, null_base, null_slope_raw,
          len_gain_raw, mag_beta_raw, M, L, Q2, s) = ctx.saved_tensors
-        k_block, eps = ctx.k_block, ctx.eps
+        k_block, eps, window = ctx.k_block, ctx.eps, ctx.window
         out_dtype = q.dtype
         cd = _compute_dtype(out_dtype)
         B, H, T, dk = q.shape
@@ -196,7 +261,10 @@ class _PolarOnline(torch.autograd.Function):
         gm = gm.to(cd)
         scale = dk ** -0.5
 
-        n = n_keys.to(cd).clamp(min=1.0)
+        # windowed count: temp/null use min(n_keys, window) so backward matches the
+        # forward's band (each query attends only to its last `window` keys).
+        n_count = n_keys if window is None else torch.minimum(n_keys, n_keys.new_tensor(float(window)))
+        n = n_count.to(cd).clamp(min=1.0)
         spg = F.softplus(len_gain_raw.to(cd)).view(1, H, 1)
         sps = F.softplus(null_slope_raw.to(cd)).view(1, H, 1)
         logn = torch.log(n).view(1, 1, T)
@@ -249,7 +317,10 @@ class _PolarOnline(torch.autograd.Function):
             kb, vb = kd[:, :, ks:ke], vd[:, :, ks:ke]
             sig = torch.matmul(qd, kb.transpose(-2, -1)) * scale
             a = sig * t.unsqueeze(-1)
-            invalid = key_idx[ks:ke].view(1, 1, 1, -1) >= n_keys.view(1, 1, T, 1)
+            kidx = key_idx[ks:ke].view(1, 1, 1, -1)
+            invalid = kidx >= n_keys.view(1, 1, T, 1)                      # future
+            if window is not None:
+                invalid = invalid | (kidx < (n_keys.view(1, 1, T, 1) - window))  # older than window
             a = a.masked_fill(invalid, torch.finfo(cd).min)
             p = torch.exp(a - M.unsqueeze(-1))                             # (B,H,T,Kb); invalid->0
 
@@ -284,14 +355,137 @@ def polar_attention_online(q, k, v, n_keys, *, v_null, null_base, null_slope_raw
     Streams keys in blocks of k_block -> O(B*H*T*k_block) peak (fwd and bwd).
     Numerically equals materialized scores + polar_reduce.
 
-    window (int, optional): eval-only causal sliding window — each query attends to
-    only its last `window` keys. The streaming backward does not model the band, so
-    this is forward/no-grad only."""
-    if window is not None and torch.is_grad_enabled():
-        raise NotImplementedError("polar_attention_online(window=...) is forward/eval-only "
-                                  "(the streaming backward does not model the band).")
+    window (int, optional): causal sliding window — each query attends to only its last
+    `window` keys. The streaming backward now models the band (temp/null use the windowed
+    count and the key loop masks keys older than n_keys - window), so this is trainable."""
     return _PolarOnline.apply(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, k_block, eps, window)
+
+
+# --- Titans-style linear compression memory (MAG branch) -------------------------
+# Validated standalone in titans_proto.py / verify_titans.py (chunked == sequential
+# scan, fp64). The Titans neural memory with momentum eta=0 reparametrizes exactly to
+# the Gated DeltaNet recurrence  M_t = gamma_t (M_{t-1} + w_t k_t^T),  w_t = beta_t
+# (v_t - M_{t-1} k_t),  with gamma = 1 - alpha (decay), beta = theta / (1 - alpha).
+
+@torch.compiler.disable   # the unrolled chunk loop + linalg solve blows up inductor compile;
+                          # run it eager (FLA's kernel is the compiled fast path instead).
+def gated_delta_chunked(q, k, v, gamma, beta, chunk=64, S0=None):
+    """Chunkwise-parallel gated delta rule (flash-linear-attention convention). q,k:
+    (B,H,N,dk); v: (B,H,N,dv); gamma,beta: (B,H,N) in (0,1). Returns (R (B,H,N,dv),
+    S_final (B,H,dv,dk)). Matches gated_delta_sequential (decay-first, write undecayed,
+    self-inclusive readout M_t q_t) and fla.ops.gated_delta_rule.
+
+    Within a chunk the running-state coupling is removed by solving the unit lower-
+    triangular UT system  (I + diag(beta) D) U = diag(beta)(V - C_carry),  where the
+    increment u_t = beta_t(v_t - gamma_t M_{t-1} k_t), D[p,s] = (g_p/g_s)(k_s . k_p) for
+    s<p, g_p = prod_{l<=p} gamma_l (INCLUSIVE -> decay applied before the write). Readout
+    r_p = g_p(M_0 q_p) + sum_{s<=p} (g_p/g_s)(k_s . q_p) u_s  (s<=p is self-inclusive).
+    Sequential only across chunks; intra-chunk is batched matmuls + one triangular solve.
+    NOTE: keys/queries must be unit-norm for delta-rule stability (see TitansMemory)."""
+    B, H, N, dk = q.shape
+    dv = v.shape[-1]
+    dtype, device = q.dtype, q.device
+    S = torch.zeros(B, H, dv, dk, dtype=dtype, device=device) if S0 is None else S0
+    Rs = []
+    for cs in range(0, N, chunk):
+        ce = min(cs + chunk, N)
+        C = ce - cs
+        qc, kc, vc = q[:, :, cs:ce], k[:, :, cs:ce], v[:, :, cs:ce]
+        gc_, bc = gamma[:, :, cs:ce], beta[:, :, cs:ce]
+
+        clg = torch.cumsum(torch.log(gc_), dim=-1)                       # clg[p]=log g_p (inclusive)
+        idx = torch.arange(C, device=device)
+        diff = clg[..., :, None] - clg[..., None, :]                     # log(g_p/g_s)  (B,H,C,C)
+        strict = idx[:, None] > idx[None, :]                             # s < p
+        incl = idx[:, None] >= idx[None, :]                              # s <= p (self-inclusive)
+        dec_strict = torch.exp(diff.masked_fill(~strict, float("-inf")))  # g_p/g_s, 0 where s>=p
+        dec_incl = torch.exp(diff.masked_fill(~incl, float("-inf")))      # g_p/g_s, 0 where s>p
+
+        D = dec_strict * torch.einsum("bhpd,bhsd->bhps", kc, kc)         # (g_p/g_s)(k_s.k_p), s<p
+        Rq = dec_incl * torch.einsum("bhpd,bhsd->bhps", qc, kc)          # (g_p/g_s)(k_s.q_p), s<=p
+        carry = torch.exp(clg)                                           # g_p (decay incl. step p)
+        c_mat = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, kc)   # g_p M_0 k_p
+        cprime = carry[..., None] * torch.einsum("bhvd,bhcd->bhcv", S, qc)  # g_p M_0 q_p
+
+        # (I + diag(beta) D) is unit lower-triangular (D strictly lower) -> exact triangular
+        # solve. unitriangular=True treats the diagonal as 1, so pass the strictly-lower part.
+        L = bc[..., :, None] * D
+        U = torch.linalg.solve_triangular(L, bc[..., :, None] * (vc - c_mat),
+                                          upper=False, unitriangular=True)
+        Rs.append(cprime + torch.einsum("bhij,bhjv->bhiv", Rq, U))
+
+        out_ratio = torch.exp(clg[..., -1:] - clg)                      # g_C/g_s
+        gC = torch.exp(clg[..., -1])                                    # g_C
+        S = gC[..., None, None] * S + torch.einsum("bhcv,bhcd->bhvd", out_ratio[..., None] * U, kc)
+    return torch.cat(Rs, dim=2), S
+
+
+class TitansMemory(nn.Module):
+    """Titans-style linear long-term memory (MAG branch) for PolarAttention.
+
+    Per-head matrix memory M (dv x dk) updated by the gated delta rule with
+    data-dependent per-head retention gamma_t = sigmoid(W_gamma x + b_gamma) (init high
+    ~0.98) and write strength beta_t = sigmoid(W_beta x + b_beta). Keys/queries are
+    L2-normalized (UNIT norm) for delta-rule stability -- distinct from polar's RMS-norm,
+    which would make ||k||^2 = dk and the rule expansive. The readout M q is RMS-normed,
+    output-gated, and projected to the residual as an additive third channel
+    (out = content + count + mem). proj is zero-init so the branch starts as a no-op.
+
+    Two backends (`kernel`):
+      "fla"   -> flash-linear-attention's fused chunk_gated_delta_rule (CUDA, fast,
+                 torch.compile-safe). Used when available on a CUDA tensor.
+      "torch" -> the pure-PyTorch gated_delta_chunked (eager, compile-disabled).
+      "auto"  -> fla if installed + CUDA, else torch.
+    Both backends use FLA's native convention (decay-first, undecayed write, self-inclusive
+    readout M_t q_t), so the FLA path passes q,k,v straight through -- NO value pre-scaling.
+    g = logsigmoid(gamma_logit) = log(gamma) (log-decay), beta = sigmoid(beta_logit),
+    use_qk_l2norm_in_kernel=True handles the unit-key requirement, and scale=1.0 washes out
+    because the readout is RMS-normed afterwards. They agree up to bf16-vs-fp32 numerics
+    (validate with verify_fla.py)."""
+
+    def __init__(self, dim, num_heads, head_dim, linear_cls, chunk=64,
+                 gamma_bias=3.9, beta_bias=0.0, kernel="auto"):
+        super().__init__()
+        self.H, self.dk, self.chunk, self.kernel = num_heads, head_dim, chunk, kernel
+        self.gamma_bias, self.beta_bias = gamma_bias, beta_bias
+        H, dk = num_heads, head_dim
+        self.w_gamma = linear_cls(dim, H)         # data-dependent retention logits
+        self.w_beta = linear_cls(dim, H)          # data-dependent write logits
+        self.gate = linear_cls(dim, H * dk)       # output gate (per head-channel)
+        self.proj = linear_cls(H * dk, dim)       # readout -> residual (zero-init)
+        nn.init.zeros_(self.proj.weight)
+        if self.proj.bias is not None:
+            nn.init.zeros_(self.proj.bias)
+
+    def forward(self, x, q_t, k_t, v_t):
+        """x: (B,T,D); q_t,k_t,v_t: (B,H,T,dk) (KV heads already expanded). -> (B,T,D)."""
+        B, H, T, dk = q_t.shape
+        g_logit = self.w_gamma(x).float() + self.gamma_bias            # (B,T,H)
+        b_logit = self.w_beta(x).float() + self.beta_bias
+        use_fla = (self.kernel in ("auto", "fla") and _HAS_FLA and q_t.is_cuda)
+
+        if use_fla:
+            # gated_delta_chunked / gated_delta_sequential now use FLA's native convention,
+            # so pass q,k,v straight through (no value pre-scaling). g = log(gamma) decay,
+            # in-kernel L2-norm handles the unit-key requirement; scale washes out post-RMSNorm.
+            g = F.logsigmoid(g_logit)                                  # log-decay (<=0), (B,T,H)
+            beta = torch.sigmoid(b_logit)
+            q = q_t.transpose(1, 2).contiguous()                       # (B,T,H,dk)
+            k = k_t.transpose(1, 2).contiguous()
+            v = v_t.transpose(1, 2).contiguous()
+            r = _fla_gated_delta(q, k, v, g.contiguous(), beta.contiguous())  # (B,T,H,dk), compile-opaque
+        else:
+            q = F.normalize(q_t.float(), dim=-1)                       # unit keys/queries
+            k = F.normalize(k_t.float(), dim=-1)
+            gamma = torch.sigmoid(g_logit).transpose(1, 2)             # (B,H,T)
+            beta = torch.sigmoid(b_logit).transpose(1, 2)
+            r, _ = gated_delta_chunked(q, k, v_t.float(), gamma, beta, chunk=self.chunk)  # (B,H,T,dk)
+            r = r.transpose(1, 2)                                      # -> (B,T,H,dk)
+
+        r = F.rms_norm(r, (dk,))                                       # bf16 from FLA (no fp32 upcast copy)
+        r_flat = r.reshape(B, T, H * dk).to(x.dtype)
+        return self.proj(r_flat * torch.sigmoid(self.gate(x)))
 
 
 class AtmaConvBase(nn.Module):

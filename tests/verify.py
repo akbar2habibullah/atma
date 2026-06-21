@@ -14,7 +14,9 @@ For each layer type:
                   reference output at the last position
 
 Usage:
-    python verify.py
+    python verify.py          # CPU: validates the math via the pure-PyTorch fallbacks
+    python verify.py --cuda   # GPU: same checks through the Triton kernels (polar
+                              # prefill, paged polar decode incl. WINDOW, fused conv)
 """
 
 import os
@@ -49,6 +51,7 @@ TEST_CONFIG = AtmaConfig(
     head_dim=64,           # 4 heads, 1 KV head (1:4 GQA)
     attn_kernel_size=4,
     conv_kernel_size=3,
+    mem_kernel="torch",    # exact fp32 parity at ATOL; FLA bf16 numerics are verify_fla.py's job
 )
 SEQ_LEN = 8   # full sequence length; prefill = SEQ_LEN-1, decode = last token
 ATOL = 1e-4   # absolute tolerance for float32 comparisons
@@ -82,9 +85,9 @@ def _copy(src: torch.nn.Module, dst: torch.nn.Module):
 
 # ─── inference context helpers ───────────────────────────────────────────────
 
-def _ctx_prefill(seq: Sequence, seqlen: int, conv_state_tables: dict = None):
+def _ctx_prefill(seq: Sequence, seqlen: int, conv_state_tables: dict = None, first_slot: int = 0):
     cu = torch.tensor([0, seqlen], dtype=torch.int32)
-    slots = torch.arange(seqlen, dtype=torch.int32)
+    slots = torch.arange(first_slot, first_slot + seqlen, dtype=torch.int32)
     set_context(
         is_prefill=True,
         cu_seqlens_q=cu, cu_seqlens_k=cu,
@@ -129,8 +132,9 @@ def _fresh_seq(n_tokens: int) -> Sequence:
     return seq
 
 
-def _alloc_conv_state_tables(config: AtmaConfig, layers: list) -> dict:
-    """Allocate conv state tensors (1 seq slot).
+def _alloc_conv_state_tables(config: AtmaConfig, layers: list, mem: bool = False) -> dict:
+    """Allocate per-seq state tensors (1 seq slot): conv states + (mem=True) Titans
+    memory states (1, H, dk, dv) fp32 per attention layer (FLA [K, V] state layout).
 
     layers: list of ints (uses i%4==2 to detect attn) or (layer_idx, is_attn) tuples.
     """
@@ -146,6 +150,11 @@ def _alloc_conv_state_tables(config: AtmaConfig, layers: list) -> dict:
                 dim = config.hidden_size if suffix == "q" else kv_hidden
                 tables[f"attn_{i}_{suffix}"] = torch.zeros(
                     1, dim, config.attn_kernel_size - 1
+                )
+            if mem:
+                tables[f"mem_{i}"] = torch.zeros(
+                    1, config.num_attention_heads, config.head_dim, config.head_dim,
+                    dtype=torch.float32,
                 )
         else:
             tables[f"conv_{i}_gated"] = torch.zeros(
@@ -333,6 +342,121 @@ def verify_attention(config: AtmaConfig):
         print(f"  SKIP  train ({e})")
 
 
+def verify_attention_mag(config: AtmaConfig):
+    """PolarAttention with sliding window + Titans MAG memory (the shipping config),
+    including a chunked-prefill continuation (cached prefix gathered from the paged
+    KV cache, conv/mem state carried in the per-seq tables)."""
+    print("\n── PolarAttention (window + Titans mem) ──")
+    dim = config.hidden_size
+    hd = config.head_dim
+    nkv = config.num_key_value_heads
+    k = config.attn_kernel_size
+    window = 4                 # < SEQ_LEN so the band actually masks keys
+    mem_chunk = 4              # < SEQ_LEN so the chunked scan crosses a boundary
+    prefill_len = SEQ_LEN - 1
+
+    ref_attn = ref_mod.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k,
+                                      window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                                      mem_kernel="torch")
+    # mem.proj is zero-init (branch starts as a no-op); randomize it so the memory
+    # branch actually contributes and a state bug would be visible.
+    torch.nn.init.normal_(ref_attn.mem.proj.weight, std=0.05)
+    infer_attn = InferAttn(layer_idx=0, dim=dim, head_dim=hd, num_kv_heads=nkv, kernel_size=k,
+                           window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                           mem_kernel="torch")
+    _copy(ref_attn, infer_attn)
+    _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)
+
+    x = torch.randn(1, SEQ_LEN, dim)
+    x_prefill = x[0, :prefill_len, :]
+    x_decode = x[0, prefill_len:, :]
+
+    with torch.no_grad():
+        y_ref_all = ref_attn(x).squeeze(0)   # (T, H)
+
+    cst = _alloc_conv_state_tables(config, [(0, True)], mem=True)
+    seq_slots = torch.tensor([0])
+
+    # ── prefill (single chunk) ──
+    seq_p = _fresh_seq(prefill_len)
+    _ctx_prefill(seq_p, prefill_len, conv_state_tables=cst)
+    with torch.no_grad():
+        y_infer_prefill = infer_attn(x_prefill)
+    reset_context()
+
+    _result("infer prefill == ref (window+mem)", y_ref_all[:prefill_len], y_infer_prefill)
+
+    # ── decode ── re-seed all state via a fresh prefill, then one decode step
+    _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)
+    cst = _alloc_conv_state_tables(config, [(0, True)], mem=True)
+    seq_d = _fresh_seq(prefill_len)
+    _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
+    with torch.no_grad():
+        _ = infer_attn(x_prefill)
+    reset_context()
+
+    seq_d.num_cached_tokens = prefill_len
+    seq_d.append_token(0)
+    decode_slot = seq_d.block_table[-1] * Sequence.block_size + seq_d.last_block_num_tokens - 1
+    _ctx_decode(seq_d, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32),
+                conv_state_tables=cst, seq_slots=seq_slots)
+    with torch.no_grad():
+        y_infer_decode = infer_attn(x_decode)
+    reset_context()
+
+    _result("infer decode == ref (window+mem)", y_ref_all[prefill_len], y_infer_decode.squeeze(0))
+
+    # ── chunked prefill ── prefill in two chunks, then decode the last token.
+    # The second chunk must gather its cached prefix K/V and continue conv/mem state.
+    chunk1 = 4
+    chunk2 = prefill_len - chunk1   # 3
+    _alloc_kv(infer_attn, config, capacity=SEQ_LEN + 4)
+    cst = _alloc_conv_state_tables(config, [(0, True)], mem=True)
+
+    seq_c = _fresh_seq(prefill_len)
+    seq_c.num_scheduled_tokens = chunk1
+    _ctx_prefill(seq_c, chunk1, conv_state_tables=cst)
+    with torch.no_grad():
+        y_chunk1 = infer_attn(x[0, :chunk1, :])
+    reset_context()
+
+    _result("infer chunked prefill (chunk 1) == ref", y_ref_all[:chunk1], y_chunk1)
+
+    seq_c.num_cached_tokens = chunk1
+    seq_c.num_scheduled_tokens = chunk2
+    _ctx_prefill(seq_c, chunk2, conv_state_tables=cst, first_slot=chunk1)
+    with torch.no_grad():
+        y_chunk2 = infer_attn(x[0, chunk1:prefill_len, :])
+    reset_context()
+
+    _result("infer chunked prefill (chunk 2) == ref", y_ref_all[chunk1:prefill_len], y_chunk2)
+
+    seq_c.num_cached_tokens = prefill_len
+    seq_c.append_token(0)
+    decode_slot = seq_c.block_table[-1] * Sequence.block_size + seq_c.last_block_num_tokens - 1
+    _ctx_decode(seq_c, decode_slot, SEQ_LEN, block_tables=torch.tensor([[0]], dtype=torch.int32),
+                conv_state_tables=cst, seq_slots=seq_slots)
+    with torch.no_grad():
+        y_infer_decode = infer_attn(x_decode)
+    reset_context()
+
+    _result("infer decode after chunked prefill == ref", y_ref_all[prefill_len], y_infer_decode.squeeze(0))
+
+    # ── train ──
+    try:
+        import train.model as tm
+        tm.causal_conv1d_fn = tm._causal_conv1d_fallback  # pure-PyTorch conv so train runs on CPU
+        train_attn = tm.PolarAttention(dim, head_dim=hd, num_kv_heads=nkv, num_random_keys=0, kernel_size=k,
+                                       window=window, mem_enabled=True, mem_chunk=mem_chunk,
+                                       mem_kernel="torch")
+        _copy(ref_attn, train_attn)
+        with torch.no_grad():
+            y_train, _ = train_attn(x)
+        _result("train == ref (window+mem)", y_ref_all, y_train.squeeze(0))
+    except Exception as e:
+        print(f"  SKIP  train ({e})")
+
+
 def verify_block(config: AtmaConfig):
     """Verify a full decoder block (pre-norm + attn/conv + MLP with residuals)."""
     for layer_idx in range(config.num_hidden_layers):
@@ -429,6 +553,12 @@ def verify_model(config: AtmaConfig):
     block_size = Sequence.block_size
 
     ref_model = ref_mod.ReferenceModel(config)
+    # mem.proj is zero-init (no-op branch); randomize so the Titans memory state
+    # (incl. its prefill->decode carry) is actually exercised end to end.
+    if config.mem_enabled:
+        for m in ref_model.modules():
+            if isinstance(m, ref_mod.PolarAttention) and m.mem is not None:
+                torch.nn.init.normal_(m.mem.proj.weight, std=0.05)
     infer_model = InferModel(config)
     _copy(ref_model, infer_model)
 
@@ -439,7 +569,7 @@ def verify_model(config: AtmaConfig):
         _alloc_kv(attn_mod, config, capacity=capacity)
 
     all_layer_idxs = list(range(config.num_hidden_layers))
-    cst = _alloc_conv_state_tables(config, all_layer_idxs)
+    cst = _alloc_conv_state_tables(config, all_layer_idxs, mem=config.mem_enabled)
     seq_slots = torch.tensor([0])
 
     input_ids = torch.randint(0, config.vocab_size, (SEQ_LEN,))
@@ -462,7 +592,7 @@ def verify_model(config: AtmaConfig):
     # Reset KV caches and conv state tables
     for attn_mod in attn_modules:
         _alloc_kv(attn_mod, config, capacity=capacity)
-    cst = _alloc_conv_state_tables(config, all_layer_idxs)
+    cst = _alloc_conv_state_tables(config, all_layer_idxs, mem=config.mem_enabled)
 
     seq_d = _fresh_seq(prefill_len)
     _ctx_prefill(seq_d, prefill_len, conv_state_tables=cst)
@@ -490,17 +620,30 @@ def verify_model(config: AtmaConfig):
 # ─── entry point ─────────────────────────────────────────────────────────────
 
 def main():
+    # --cuda: run the whole suite on the GPU so the inference layer takes its Triton
+    # paths (polar_attention_fwd prefill, the paged polar decode kernel incl. the
+    # WINDOW band, fused causal-conv prefill) instead of the CPU fallbacks. The memory
+    # branch stays on the torch kernel (TEST_CONFIG.mem_kernel) for exact fp32 parity.
+    if "--cuda" in sys.argv:
+        if not torch.cuda.is_available():
+            print("--cuda requested but CUDA is unavailable"); sys.exit(1)
+        torch.set_default_device("cuda")
+        # exact fp32 everywhere: TF32 (10-bit mantissa) would eat the 1e-4 ATOL
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+
     torch.manual_seed(42)
     config = TEST_CONFIG
 
     print(f"Verifying model: hidden_size={config.hidden_size}, "
           f"num_layers={config.num_hidden_layers}, head_dim={config.head_dim}, "
-          f"seq_len={SEQ_LEN}")
+          f"seq_len={SEQ_LEN}, device={torch.get_default_device()}")
 
     verify_rmsnorm(config)
     verify_mlp(config)
     verify_conv(config)
     verify_attention(config)
+    verify_attention_mag(config)
     verify_block(config)
     verify_model(config)
 

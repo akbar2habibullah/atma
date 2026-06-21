@@ -1,6 +1,6 @@
 # `kernel/` — FlashAttention-style Triton kernel for Polar Attention
 
-An efficient, fused Triton implementation of [Polar Attention](../POLAR_ATTENTION.md).
+An efficient, fused Triton implementation of [Polar Attention](../docs/POLAR_ATTENTION.md).
 It reproduces the validated PyTorch reductions in `model/blocks.py`
 (`polar_reduce` materialized / `polar_attention_online` streamed) to floating-point
 tolerance, but runs **7–27× faster** and uses **~5× less memory** than those paths
@@ -19,7 +19,7 @@ Polar attention factors each query's result into two length-invariant channels f
 - **magnitude** `mag` — bounded "how much", participation ratio gated by null
   confidence, `tanh`-squashed into `[0,1)`, `(B,H,T)`
 
-See [`POLAR_ATTENTION.md`](../POLAR_ATTENTION.md) §2 for the full math. The streaming
+See [`POLAR_ATTENTION.md`](../docs/POLAR_ATTENTION.md) §2 for the full math. The streaming
 formulation keeps four running accumulators — `M` (max), `L` (Σp), `S` (Σp·v), and the
 **extra** `Q2` (Σp²) needed for the participation ratio `n_eff = L²/Q2` — rescaling
 `Q2` by `α²` on each max update.
@@ -99,10 +99,11 @@ accurate than the existing online path.
   unavailable. Default is `"torch"` to preserve the bit-exact parity tests.
 - **model** — re-exported as `model.blocks.polar_attention_triton` /
   `polar_attention_triton_fwd` (guarded by `model.blocks.HAS_TRITON`).
-- **inference** — `polar_attention_fwd` is imported in `inference/models/atma.py`; use
-  `is_causal=True` for single-sequence prefill and `is_causal=False` with explicit
-  `n_keys` for decode / offset prefill. (A full paged-KV-cache `PolarAttention` port is
-  the remaining inference step — see `POLAR_ATTENTION.md` §10.)
+- **inference** — `inference/models/atma.py` uses `polar_attention_fwd` for prefill
+  (`is_causal=True` for a fresh sequence; `is_causal=False` + explicit `n_keys` for a
+  chunked-prefill continuation) and `polar_attention_decode` for paged decode (reads K/V
+  directly from the paged cache via `block_tables`/`context_lens`; supports `window=`;
+  CUDA-graph capturable).
 
 ## Tests
 

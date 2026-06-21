@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from model.config import AtmaConfig
 from model.layers import RMSNorm, MLP
-from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce
+from model.blocks import AtmaConvBase, AtmaAttnBase, polar_reduce, TitansMemory
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
@@ -105,15 +105,22 @@ class PolarAttention(AtmaAttnBase):
     replaced by the validated polar_reduce, and a per-head count channel is injected.
     """
 
-    def __init__(self, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4):
+    def __init__(self, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4,
+                 window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto"):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         H, dk = self.num_heads, self.head_dim
+        self.window = window                                           # trainable sliding window
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
         self.null_base = nn.Parameter(torch.full((H,), _NULL_BASE_INIT))
         self.null_slope_raw = nn.Parameter(torch.full((H,), _NULL_SLOPE_INIT))
         self.len_gain_raw = nn.Parameter(torch.full((H,), _LEN_GAIN_INIT))
         self.mag_beta_raw = nn.Parameter(torch.full((H,), _MAG_BETA_INIT))
+        # MAG long-term memory branch (additive 3rd channel). None unless enabled.
+        self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
+                                 gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
+                    if mem_enabled else None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, _ = x.shape
@@ -155,9 +162,15 @@ class PolarAttention(AtmaAttnBase):
         mask = torch.triu(torch.full((T, T), float("-inf"), device=x.device, dtype=sigma.dtype), diagonal=1)
         sigma = sigma + mask
         n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
+        n_temp = n_keys
+        if self.window is not None:
+            kidx = torch.arange(T, device=x.device)
+            band = kidx.view(1, 1, 1, T) < (n_keys.view(1, 1, T, 1) - self.window)   # older than window
+            sigma = sigma.masked_fill(band, float("-inf"))
+            n_temp = torch.minimum(n_keys, n_keys.new_tensor(float(self.window)))
 
         c, mag = polar_reduce(
-            sigma, v_t, n_keys,
+            sigma, v_t, n_temp,
             v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
             len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
         )
@@ -165,7 +178,10 @@ class PolarAttention(AtmaAttnBase):
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
         count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, dim)
-        return content + count
+        out = content + count
+        if self.mem is not None:                            # MAG long-term memory branch
+            out = out + self.mem(x, q_t, k_t, v_t)
+        return out
 
 
 class Block(nn.Module):
@@ -179,10 +195,18 @@ class Block(nn.Module):
         num_kv_heads: int = None,
         attn_kernel_size: int = 4,
         conv_kernel_size: int = 3,
+        attn_window: int = None,
+        mem_enabled: bool = False,
+        mem_chunk: int = 64,
+        mem_gamma_bias: float = 3.9,
+        mem_beta_bias: float = 0.0,
+        mem_kernel: str = "auto",
     ):
         super().__init__()
         self.attn = (
-            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size)
+            PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size,
+                           window=attn_window, mem_enabled=mem_enabled, mem_chunk=mem_chunk,
+                           mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias, mem_kernel=mem_kernel)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -210,6 +234,12 @@ class ReferenceModel(nn.Module):
                 num_kv_heads=config.num_key_value_heads,
                 attn_kernel_size=config.attn_kernel_size,
                 conv_kernel_size=config.conv_kernel_size,
+                attn_window=config.attn_window,
+                mem_enabled=config.mem_enabled,
+                mem_chunk=config.mem_chunk,
+                mem_gamma_bias=config.mem_gamma_bias,
+                mem_beta_bias=config.mem_beta_bias,
+                mem_kernel=config.mem_kernel,
             )
             for i in range(config.num_hidden_layers)
         ])

@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polar Attention &middot; Train Short, Infer Long &mdash; Kreasof AI</title>
+<meta name="description" content="Polar Attention: a length-invariant replacement for softmax attention. Paired with a Titans compression memory, it keeps needle-in-a-haystack recall flat above 90% across a 32x context-length sweep where softmax collapses to zero. Research preview by Kreasof AI.">
+<meta property="og:title" content="Polar Attention — Train Short, Infer Long">
+<meta property="og:description" content="A length-invariant attention core + Titans compression memory. Needle recall flat >90% across a 32x length sweep where softmax collapses. By Kreasof AI.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    if (typeof renderMathInElement === "function") {
+      renderMathInElement(document.body, {
+        delimiters: [
+          {left: "$$", right: "$$", display: true},
+          {left: "\\[", right: "\\]", display: true},
+          {left: "\\(", right: "\\)", display: false}
+        ],
+        throwOnError: false
+      });
+    }
+  });
+</script>
+<style>
+  :root{
+    --bg:#05060d; --bg2:#0a0d1a; --panel:rgba(255,255,255,.025);
+    --panel-brd:rgba(255,255,255,.08); --ink:#e8ebf5; --mut:#9aa3bd; --dim:#6b7390;
+    --blue:#6ea8ff; --purple:#b57bff; --pink:#e85bbf; --mint:#4fe3b0;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    line-height:1.65; -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 70% -10%, rgba(110,168,255,.10), transparent 60%),
+      radial-gradient(1000px 700px at 10% 5%, rgba(181,123,255,.10), transparent 55%),
+      radial-gradient(900px 600px at 90% 30%, rgba(232,91,191,.06), transparent 60%);
+    background-attachment:fixed;
+  }
+  a{color:var(--blue); text-decoration:none}
+  a:hover{color:#a9c8ff}
+  h1,h2,h3{font-family:'Space Grotesk',Inter,sans-serif; letter-spacing:-.02em; line-height:1.1}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  .grad{background:linear-gradient(100deg,#fff 0%,var(--blue) 42%,var(--purple) 72%,var(--pink) 100%);
+        -webkit-background-clip:text; background-clip:text; color:transparent}
+  .mono{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+
+  /* nav */
+  nav{position:sticky; top:0; z-index:50; backdrop-filter:blur(14px);
+     background:rgba(5,6,13,.6); border-bottom:1px solid var(--panel-brd)}
+  nav .wrap{display:flex; align-items:center; justify-content:space-between; height:64px}
+  .brand{display:flex; align-items:center; gap:11px; font-family:'Space Grotesk'; font-weight:700;
+        font-size:18px; color:#fff; letter-spacing:-.01em}
+  .brand:hover{color:#fff}
+  .navlinks{display:flex; gap:26px; align-items:center; font-size:14.5px; font-weight:500}
+  .navlinks a{color:var(--mut)} .navlinks a:hover{color:#fff}
+  .navlinks .cta{padding:8px 16px; border:1px solid var(--panel-brd); border-radius:9px; color:#fff;
+        background:rgba(255,255,255,.04)}
+  .navlinks .cta:hover{background:rgba(255,255,255,.09)}
+  @media(max-width:720px){.navlinks .hidem{display:none}}
+
+  /* hero */
+  header.hero{padding:84px 0 36px; text-align:center}
+  .chip{display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:500;
+      color:var(--mut); border:1px solid var(--panel-brd); background:rgba(255,255,255,.03);
+      padding:6px 14px; border-radius:999px; margin-bottom:26px}
+  .chip .dot{width:7px; height:7px; border-radius:50%;
+      background:linear-gradient(90deg,var(--blue),var(--pink)); box-shadow:0 0 10px var(--purple)}
+  header.hero h1{font-size:clamp(34px,6vw,62px); font-weight:700; margin:0 0 6px}
+  header.hero .sub{font-size:clamp(17px,2.4vw,22px); color:var(--mut); font-weight:500;
+      max-width:760px; margin:14px auto 0}
+  .authors{margin:30px auto 4px; max-width:720px; color:var(--ink); font-size:15px; font-weight:500}
+  .affil{color:var(--dim); font-size:13.5px; margin-top:2px}
+
+  /* buttons */
+  .btns{display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin:34px 0 8px}
+  .btn{display:inline-flex; align-items:center; gap:9px; padding:11px 20px; border-radius:11px;
+     font-weight:600; font-size:14.5px; border:1px solid var(--panel-brd);
+     background:rgba(255,255,255,.04); color:#fff; transition:.15s}
+  .btn:hover{background:rgba(255,255,255,.1); color:#fff; transform:translateY(-1px)}
+  .btn.primary{border:none; color:#0a0a14;
+     background:linear-gradient(100deg,#fff,#cfe0ff 55%,#e6d2ff)}
+  .btn.primary:hover{filter:brightness(1.05); color:#0a0a14}
+  .btn.disabled{opacity:.45; pointer-events:none}
+  .btn svg{width:17px; height:17px}
+
+  /* sections */
+  section{padding:30px 0}
+  .eyebrow{font-family:'Space Grotesk'; text-transform:uppercase; letter-spacing:.16em; font-size:12.5px;
+      font-weight:600; color:var(--purple); margin:0 0 10px}
+  section h2{font-size:clamp(24px,3.4vw,34px); margin:0 0 18px; font-weight:600}
+  p.lead{color:var(--mut); font-size:16.5px;}
+
+  /* figure / chart */
+  .figure{border:1px solid var(--panel-brd); border-radius:18px; padding:26px 22px 18px;
+      background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.01))}
+  .figure svg{width:100%; height:auto; display:block}
+  .legend{display:flex; flex-wrap:wrap; gap:18px 26px; justify-content:center; margin-top:10px; font-size:13.5px}
+  .legend span{display:inline-flex; align-items:center; gap:8px; color:var(--mut)}
+  .legend i{width:22px; height:3px; border-radius:2px; display:inline-block}
+  .cap{color:var(--dim); font-size:13.5px; text-align:center; margin:16px auto 0; max-width:780px}
+
+  /* tldr */
+  .tldr{border:1px solid var(--panel-brd); border-left:3px solid var(--purple); border-radius:14px;
+      background:rgba(181,123,255,.06); padding:22px 26px; font-size:16.5px}
+  .tldr b{color:#fff}
+
+  /* cards */
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+  @media(max-width:820px){.grid3{grid-template-columns:1fr}}
+  .card{border:1px solid var(--panel-brd); border-radius:16px; padding:22px;
+     background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.008))}
+  .card .ic{width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center;
+     background:rgba(181,123,255,.14); margin-bottom:14px; font-size:19px}
+  .card h3{font-size:18px; margin:0 0 8px; font-weight:600}
+  .card p{color:var(--mut); font-size:14.5px; margin:0}
+  .card .mono{color:var(--blue); font-size:13px}
+
+  /* table */
+  .tbl{width:100%; border-collapse:collapse; font-size:14.5px; overflow:hidden; border-radius:12px}
+  .tbl th,.tbl td{padding:11px 14px; text-align:right; border-bottom:1px solid var(--panel-brd)}
+  .tbl th:first-child,.tbl td:first-child{text-align:left}
+  .tbl thead th{color:var(--mut); font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:.05em}
+  .tbl tbody tr:hover{background:rgba(255,255,255,.02)}
+  .tbl .win{color:var(--mint); font-weight:600}
+  .tbl .bad{color:var(--dim)}
+  .tblwrap{overflow-x:auto; border:1px solid var(--panel-brd); border-radius:14px}
+
+  /* big CTA */
+  .megacta{border:1px solid var(--panel-brd); border-radius:20px; padding:38px 32px; text-align:center;
+     background:
+       radial-gradient(600px 300px at 50% 0%, rgba(110,168,255,.12), transparent 70%),
+       linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}
+  .megacta h2{margin:0 0 8px}
+  .megacta p{color:var(--mut); max-width:640px; margin:0 auto 22px}
+  .stats{display:flex; flex-wrap:wrap; gap:34px; justify-content:center; margin:6px 0 24px}
+  .stat .n{font-family:'Space Grotesk'; font-size:30px; font-weight:700}
+  .stat .l{color:var(--dim); font-size:13px}
+
+  /* derivation */
+  .deriv{display:grid; grid-template-columns:1fr 1fr; gap:26px 40px; margin-top:8px}
+  @media(max-width:860px){.deriv{grid-template-columns:1fr}}
+  .deriv h3{font-size:19px; font-weight:600; margin:0 0 4px; display:flex; align-items:center; gap:10px}
+  .deriv h3 .tag{font-family:'JetBrains Mono'; font-size:11px; font-weight:500; color:var(--blue);
+     border:1px solid var(--panel-brd); border-radius:6px; padding:2px 8px; background:rgba(110,168,255,.08)}
+  .deriv > div > p{color:var(--mut); font-size:14.5px; margin:8px 0}
+  .step{font-size:13px; font-weight:600; color:var(--purple); font-family:'Space Grotesk';
+     letter-spacing:.04em; text-transform:uppercase; margin:18px 0 6px}
+  .eq{background:rgba(0,0,0,.32); border:1px solid var(--panel-brd); border-left:3px solid rgba(110,168,255,.45);
+     border-radius:10px; padding:14px 18px; margin:9px 0; color:#e3e8f5; overflow-x:auto; overflow-y:hidden}
+  .eq .katex-display{margin:0}
+  .eq .katex{font-size:1.05em; color:#e3e8f5}
+  .katex .mathnormal,.katex{color:inherit}
+  .deriv .katex{color:#c3ccdf} /* inline math in prose */
+  .note{font-size:13.5px; color:var(--dim); border-left:2px solid var(--panel-brd); padding-left:14px; margin:12px 0}
+  .note b{color:var(--mut)}
+
+  /* machinery */
+  .pills{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px}
+  .pill{display:inline-flex; align-items:center; gap:9px; font-size:13px; font-weight:500; color:var(--mut);
+     border:1px solid var(--panel-brd); background:rgba(255,255,255,.03); padding:7px 14px; border-radius:999px}
+  .pill b{color:var(--mint); font-family:'JetBrains Mono'; font-weight:500; font-size:12.5px}
+  .pill code{font-family:'JetBrains Mono'; color:var(--ink); font-size:12.5px}
+  .card .kpi{margin-top:14px; padding-top:12px; border-top:1px solid var(--panel-brd); font-size:13px; color:var(--dim)}
+  .card .kpi b{color:var(--blue); font-family:'Space Grotesk'; font-size:15px}
+  .pipe{border:1px solid var(--panel-brd); border-radius:16px; padding:22px; margin-top:6px;
+     background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.008))}
+  .pipe svg{width:100%; height:auto; display:block}
+
+  /* viz / animation */
+  .vizgrid{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:860px){.vizgrid{grid-template-columns:1fr}}
+  .viz{margin:0; border:1px solid var(--panel-brd); border-radius:16px; padding:18px 18px 14px;
+     background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.008))}
+  .viz figcaption{font-family:'Space Grotesk'; font-size:15.5px; color:var(--ink); margin-bottom:12px}
+  .viz figcaption b{font-weight:600}
+  .viz svg{width:100%; height:auto; display:block; border-radius:10px; background:rgba(0,0,0,.18)}
+  .vcap{color:var(--mut); font-size:13px; margin:13px 2px 0; line-height:1.55}
+  .vcap b.good{color:var(--mint)} .vcap b.bad{color:#ff7a7a}
+
+  /* bibtex */
+  pre.bib{background:rgba(0,0,0,.35); border:1px solid var(--panel-brd); border-radius:12px;
+     padding:18px 20px; overflow-x:auto; font-size:13px; color:var(--mut); line-height:1.6}
+  pre.bib .k{color:var(--purple)}
+
+  footer{border-top:1px solid var(--panel-brd); margin-top:48px; padding:40px 0 60px; color:var(--dim)}
+  footer .wrap{display:flex; flex-wrap:wrap; gap:18px; justify-content:space-between; align-items:center}
+  .hr{height:1px; background:var(--panel-brd); border:0; margin:8px 0}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="https://kreasof.my.id/">
+      <img src="logo-white.webp" alt="Kreasof AI" width="26" height="26" style="display:block;">
+      Kreasof AI
+    </a>
+    <div class="navlinks">
+      <a class="hidem" href="#abstract">Abstract</a>
+      <a class="hidem" href="#method">Method</a>
+      <a class="hidem" href="#intuition">Intuition</a>
+      <a class="hidem" href="#derivation">Derivation</a>
+      <a class="hidem" href="#machinery">Systems</a>
+      <a class="hidem" href="#results">Results</a>
+      <a class="cta" href="dashboard.html">Ablation&nbsp;Dashboard&nbsp;&rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<a id="top"></a>
+<header class="hero">
+  <div class="wrap">
+    <div class="chip"><span class="dot"></span> Research Preview &middot; Kreasof AI</div>
+    <h1><span class="grad">Polar Attention</span></h1>
+    <div class="sub">Train short, infer long &mdash; a length-invariant replacement for softmax attention, with a Titans compression memory.</div>
+
+    <!-- TODO(authors): replace with the real byline -->
+    <div class="authors">Kreasof AI Research</div>
+    <div class="affil">Kreasof AI &middot; Independent AI Research Lab &middot; Jakarta, Indonesia</div>
+
+    <div class="btns">
+      <a class="btn disabled" href="#" title="Coming soon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        Paper (coming soon)
+      </a>
+      <a class="btn primary" href="dashboard.html">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+        Full Ablation Results
+      </a>
+      <a class="btn" href="https://github.com/kreasof-ai/atma" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.5 2.87 8.32 6.84 9.67.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.2-3.37-1.2-.46-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.94.85.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.04 10.04 0 0 0 22 12.26C22 6.58 17.52 2 12 2z"/></svg>
+        Code
+      </a>
+      <a class="btn" href="https://kreasof.my.id/" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+        Kreasof AI
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- TEASER FIGURE -->
+<section>
+  <div class="wrap">
+    <div class="figure">
+      <svg viewBox="0 0 760 360" role="img" aria-label="Needle-in-a-haystack accuracy versus context length">
+        <!-- gridlines + y labels -->
+        <g stroke="rgba(255,255,255,.07)" stroke-width="1">
+          <line x1="60" y1="30"  x2="700" y2="30"/>
+          <line x1="60" y1="97.5" x2="700" y2="97.5"/>
+          <line x1="60" y1="165" x2="700" y2="165"/>
+          <line x1="60" y1="232.5" x2="700" y2="232.5"/>
+          <line x1="60" y1="300" x2="700" y2="300"/>
+        </g>
+        <g fill="#6b7390" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="end">
+          <text x="50" y="34">100%</text><text x="50" y="101">75%</text>
+          <text x="50" y="169">50%</text><text x="50" y="236">25%</text><text x="50" y="304">0%</text>
+        </g>
+        <!-- x labels -->
+        <g fill="#6b7390" font-size="11" font-family="JetBrains Mono, monospace" text-anchor="middle">
+          <text x="60"  y="320">2K</text><text x="188" y="320">4K</text><text x="316" y="320">8K</text>
+          <text x="444" y="320">16K</text><text x="572" y="320">32K</text><text x="700" y="320">64K</text>
+          <text x="380" y="346" fill="#9aa3bd" font-family="Inter">context length (eval) &mdash; trained at 2K</text>
+        </g>
+        <!-- train length marker -->
+        <line x1="60" y1="30" x2="60" y2="300" stroke="rgba(255,255,255,.18)" stroke-dasharray="3 4"/>
+        <text x="66" y="44" fill="#9aa3bd" font-size="10.5" font-family="Inter">train length</text>
+
+        <!-- Softmax, no memory (gray dashed) -->
+        <polyline fill="none" stroke="#7d8597" stroke-width="2" stroke-dasharray="5 5" opacity=".8"
+          points="60,36.8 188,94.1 316,225.8 444,279.8 572,293.3 700,296.6"/>
+        <!-- Polar, no memory (purple dashed) -->
+        <polyline fill="none" stroke="#c08bff" stroke-width="2" stroke-dasharray="5 5" opacity=".85"
+          points="60,40.1 188,192 316,259.5 444,279.8 572,293.3 700,300"/>
+        <!-- Softmax + Titans (blue) -->
+        <polyline fill="none" stroke="#7aa2ff" stroke-width="2.4"
+          points="60,36.8 188,36.8 316,46.9 444,70.5 572,171.8 700,256.1"/>
+        <!-- Polar + Titans (winner, mint, glow) -->
+        <polyline fill="none" stroke="#4fe3b0" stroke-width="3.4"
+          points="60,53.6 188,43.5 316,50.2 444,36.8 572,40.1 700,50.2"
+          style="filter:drop-shadow(0 0 6px rgba(79,227,176,.55))"/>
+        <g fill="#4fe3b0">
+          <circle cx="60" cy="53.6" r="3.6"/><circle cx="188" cy="43.5" r="3.6"/><circle cx="316" cy="50.2" r="3.6"/>
+          <circle cx="444" cy="36.8" r="3.6"/><circle cx="572" cy="40.1" r="3.6"/><circle cx="700" cy="50.2" r="3.6"/>
+        </g>
+        <text x="694" y="44" fill="#4fe3b0" font-size="12" font-weight="600" text-anchor="end" font-family="Space Grotesk">Polar + Titans</text>
+      </svg>
+      <div class="legend">
+        <span><i style="background:#4fe3b0"></i> Polar + Titans memory <b style="color:#4fe3b0">(ours)</b></span>
+        <span><i style="background:#7aa2ff"></i> Softmax + Titans memory</span>
+        <span><i style="background:#c08bff"></i> Polar, no memory</span>
+        <span><i style="background:#7d8597"></i> Softmax, no memory</span>
+      </div>
+      <p class="cap">Needle-in-a-haystack retrieval accuracy as evaluation context grows to <b>32&times; the training length</b> (2K&rarr;64K tokens). Polar Attention with the Titans memory stays <b>flat above 90%</b>; every other variant collapses toward chance. Identical 370M-parameter model, identical 1B-token training budget &mdash; only the attention recipe differs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- TL;DR -->
+<section>
+  <div class="wrap">
+    <div class="tldr">
+      <b>TL;DR.</b> Softmax attention is not length-invariant: a model trained at a few thousand tokens dilutes and breaks far beyond that length. We introduce <b>Polar Attention</b>, which factors each query's result into a count-blind <b>direction</b> channel and a bounded <b>magnitude</b> channel &mdash; bounding the output at <i>any</i> length. Paired with a <b>Titans gated-delta compression memory</b>, a 370M model trained at 2K tokens holds <b>retrieval accuracy above 90% out to 64K tokens</b> and keeps perplexity <b>monotonically improving</b> with length, while softmax collapses.
+    </div>
+  </div>
+</section>
+
+<!-- ABSTRACT -->
+<section id="abstract">
+  <div class="wrap">
+    <p class="eyebrow">Abstract</p>
+    <h2>Length-invariant sequence mixing</h2>
+    <p class="lead">
+      Softmax scaled-dot-product attention is numerically stable but <b>not length-invariant</b>: as the key set grows, softmax mass spreads thinner, so a model trained at length <span class="mono">T</span> behaves differently at <span class="mono">32&middot;T</span> &mdash; it never learned to scale its computation with length, and "how many things matched" is entangled with "what matched" in a single normalized output. Borrowing the size-invariance of convolution, <b>Polar Attention</b> derives two channels from one temperature-sharpened softmax with a learned, extreme-value-corrected null sink: a unit-vector <b>direction</b> (size-invariant, count-blind) and a bounded <b>magnitude</b> read from the participation ratio of effective matches. The output stays bounded with infinite dynamic range at any context length, where softmax both dilutes and explodes.
+    </p>
+    <p class="lead" style="margin-top:14px">
+      Attention alone forces a tradeoff &mdash; a sliding window wins perplexity but is retrieval-blind, full attention preserves recall but leaks perplexity. We resolve it by attaching a <b>Titans-style compression memory</b> (a per-head gated-delta fast-weight store, in the Memory-as-Gate configuration) as an additive third channel: <span class="mono">out = content + count + memory</span>. The memory supplies the diffuse long-context perplexity gain; full polar plus a distractor objective supplies exact pinpoint retrieval. The combined stack is implemented across three numerically cross-verified pipelines &mdash; reference, training, and a paged inference engine &mdash; with a FlashAttention-style Triton kernel and a fused gated-delta kernel. We validate the design with a <b>120-cell factorial ablation</b> over the attention core, regularizer, distractor, memory, and window axes.
+    </p>
+  </div>
+</section>
+
+<!-- METHOD -->
+<section id="method">
+  <div class="wrap">
+    <p class="eyebrow">Method</p>
+    <h2>Three channels into the residual</h2>
+    <p class="lead" style="margin-bottom:24px">Each attention layer writes <span class="mono">out = content + count + memory</span>. The first two come from one shared softmax; the third is a recurrent associative memory trained in-loop.</p>
+    <div class="grid3">
+      <div class="card">
+        <div class="ic">&#129517;</div>
+        <h3>Direction &mdash; <span class="mono">content</span></h3>
+        <p>A unit vector over values: <i>what</i> was attended to. Projected to the sphere, it is invariant to how many keys matched and to total length. <span class="mono">c = s / &#8214;s&#8214;</span></p>
+      </div>
+      <div class="card">
+        <div class="ic">&#128202;</div>
+        <h3>Magnitude &mdash; <span class="mono">count</span></h3>
+        <p>The participation ratio of effective matches, gated by a null-sink confidence and squashed by <span class="mono">tanh(&beta;&middot;log1p)</span> into <span class="mono">[0,1)</span> &mdash; bounded, ordered, length-invariant. 1K vs 1M matches stay distinguishable but bounded.</p>
+      </div>
+      <div class="card">
+        <div class="ic">&#129504;</div>
+        <h3>Memory &mdash; <span class="mono">memory</span></h3>
+        <p>A per-head linear memory updated by a <b>gated delta rule</b> (Titans / Gated DeltaNet). Self-stabilizing in norm across length; <span class="mono">&gamma;</span> is a per-head horizon dial. A lossy gist that carries long-context perplexity.</p>
+      </div>
+    </div>
+    <p class="lead" style="margin-top:22px">
+      The extreme-value-corrected null floor (<span class="mono">+ slope&middot;&radic;log&nbsp;n</span>) tracks the noise maximum so pure noise never reads as a match at long context; a length temperature (<span class="mono">1 + softplus&middot;log&nbsp;n</span>) sharpens the softmax as context grows. A small <b>distractor objective</b> pushes random keys below the floor, widening the signal/noise margin &mdash; this is what buys exact retrieval far beyond the training length. The full derivation follows.
+    </p>
+  </div>
+</section>
+
+<!-- INTUITION / ANIMATION -->
+<section id="intuition">
+  <div class="wrap">
+    <p class="eyebrow">Intuition</p>
+    <h2>See it move</h2>
+    <p class="lead" style="margin-bottom:22px">Two animations for the two ideas: why polar stays bounded as context grows, and how the memory writes a token once and recalls it later.</p>
+
+    <div class="vizgrid">
+      <figure class="viz">
+        <figcaption><b>Polar Attention</b> &mdash; direction locks, magnitude saturates</figcaption>
+        <svg id="vizPolar" viewBox="0 0 520 300" role="img" aria-label="Animation: as context length grows, softmax output norm blows up while polar direction stays fixed and magnitude stays bounded">
+          <text x="22" y="26" fill="#9aa3bd" font-size="12" font-family="Inter">context length</text>
+          <text id="pCtx" x="22" y="54" fill="#e8ebf5" font-size="24" font-weight="700" font-family="Space Grotesk">2K</text>
+          <line x1="26" y1="150" x2="288" y2="150" stroke="rgba(255,255,255,.12)"/>
+          <circle cx="26" cy="150" r="5" fill="#6ea8ff"/>
+          <text x="20" y="173" fill="#6b7390" font-size="10" font-family="JetBrains Mono, monospace">q</text>
+          <g id="pKeys"></g>
+          <text x="150" y="118" fill="#6b7390" font-size="10.5" font-family="Inter">keys (signal + noise)</text>
+          <!-- unit circle -->
+          <circle cx="412" cy="116" r="72" fill="none" stroke="rgba(255,255,255,.14)"/>
+          <circle cx="412" cy="116" r="2.5" fill="#9aa3bd"/>
+          <text x="412" y="208" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">direction c (unit)</text>
+          <line id="pGhost" x1="412" y1="116" x2="473" y2="78" stroke="#7d8597" stroke-width="2" stroke-dasharray="4 4"/>
+          <line id="pArrow" x1="412" y1="116" x2="473" y2="78" stroke="#4fe3b0" stroke-width="3"/>
+          <circle id="pTip" cx="473" cy="78" r="4.5" fill="#4fe3b0"/>
+          <!-- meters -->
+          <text x="22" y="244" fill="#9aa3bd" font-size="11" font-family="Inter">softmax &#8214;out&#8214;</text>
+          <rect x="150" y="236" width="320" height="10" rx="5" fill="rgba(255,255,255,.06)"/>
+          <rect id="pSoftBar" x="150" y="236" width="18" height="10" rx="5" fill="#ff7a7a"/>
+          <text id="pSoftVal" x="500" y="245" fill="#ff7a7a" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">1.0</text>
+          <text x="22" y="276" fill="#9aa3bd" font-size="11" font-family="Inter">polar mag</text>
+          <rect x="150" y="268" width="320" height="10" rx="5" fill="rgba(255,255,255,.06)"/>
+          <rect id="pMagBar" x="150" y="268" width="150" height="10" rx="5" fill="#4fe3b0"/>
+          <text id="pMagVal" x="500" y="277" fill="#4fe3b0" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">0.66</text>
+        </svg>
+        <p class="vcap">As context grows toward 64&times;, softmax weight dilutes and its output norm blows up (<b class="bad">red</b>); polar locks the <b>direction</b> to a unit vector and keeps the <b>magnitude</b> bounded in [0,1) (<b class="good">green</b>).</p>
+      </figure>
+
+      <figure class="viz">
+        <figcaption><b>Titans Memory</b> &mdash; gated-delta write &amp; recall</figcaption>
+        <svg id="vizTitans" viewBox="0 0 520 300" role="img" aria-label="Animation: tokens stream into a matrix memory; a needle token is written once and recalled by a later query while the state norm stays bounded">
+          <text x="22" y="26" fill="#9aa3bd" font-size="12" font-family="Inter">token stream</text>
+          <g id="tStream"></g>
+          <text id="tStatus" x="498" y="26" fill="#9aa3bd" font-size="11.5" text-anchor="end" font-family="JetBrains Mono, monospace"></text>
+          <text x="200" y="92" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">memory M (per head)</text>
+          <g id="tGrid"></g>
+          <text x="392" y="92" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">readout r = M&middot;q</text>
+          <g id="tRead"></g>
+          <text x="22" y="282" fill="#9aa3bd" font-size="11" font-family="Inter">state norm (bounded)</text>
+          <rect x="170" y="274" width="326" height="9" rx="4.5" fill="rgba(255,255,255,.06)"/>
+          <rect id="tNorm" x="170" y="274" width="150" height="9" rx="4.5" fill="#6ea8ff"/>
+        </svg>
+        <p class="vcap">Each token: the state <span class="mono">M</span> decays, then takes a rank-1 write. A <b style="color:var(--pink)">needle</b> is written once; a later <b style="color:var(--blue)">query</b> reads it back &mdash; while the state norm stays <b class="good">flat in length</b> (self-stabilizing).</p>
+      </figure>
+    </div>
+    <p class="note" style="margin-top:18px">Schematic, built to convey the mechanism &mdash; not a live model. <span style="opacity:.7">Animations pause off-screen and respect <span class="mono">prefers-reduced-motion</span>.</span></p>
+  </div>
+</section>
+
+<!-- DERIVATION -->
+<section id="derivation">
+  <div class="wrap">
+    <p class="eyebrow">Derivation</p>
+    <h2>The math, end to end</h2>
+    <p class="lead" style="margin-bottom:26px">A single query \(i\) attends over keys \(j&lt;n_i\) (causal, \(n_i=i+1\) visible keys). With QK-norm on \(q,k\), scores are \(\sigma_{ij}=(q_i\cdot k_j)/\sqrt{d_k}\). Two length-aware scalars per head do the work.</p>
+
+    <div class="deriv">
+      <!-- POLAR COLUMN -->
+      <div>
+        <h3>Polar Attention <span class="tag">content + count</span></h3>
+
+        <div class="step">1 &middot; Length temperature</div>
+        <p>Sharpens the softmax as context grows (Scalable-Softmax style), so weight does not spread thinner with more keys:</p>
+        <div class="eq">\[ \mathrm{temp}_i \;=\; 1 + \operatorname{softplus}(\text{len\_gain})\cdot \log n_i \]</div>
+
+        <div class="step">2 &middot; Extreme-value null floor</div>
+        <p>The logit of an off-by-one "null sink" key. The \(\sqrt{\log n}\) growth is load-bearing &mdash; the <i>maximum</i> of \(n\) noisy scores grows like \(\sqrt{2\ln n}\), so any <b>fixed</b> floor is eventually overtaken by noise:</p>
+        <div class="eq">\[ \mathrm{null}_i \;=\; \text{null\_base} + \operatorname{softplus}(\text{null\_slope})\cdot \sqrt{\log(n_i+1)} \]</div>
+
+        <div class="step">3 &middot; Direction channel &mdash; "what"</div>
+        <p>Append the null logit, softmax over real keys + sink, mix the values (plus a learned default \(v_{\text{null}}\)), project to the sphere:</p>
+        <div class="eq">\[ \begin{aligned}
+          w_i &amp;= \operatorname{softmax}\!\big([\,\mathrm{temp}_i\,\sigma_{i\bullet},\ \ \mathrm{temp}_i\,\mathrm{null}_i\,]\big) \\[2pt]
+          s_i &amp;= \textstyle\sum_j w_{ij}\,v_j \;+\; w_{iN}\,v_{\text{null}} \\[2pt]
+          \mathbf{c_i} &amp;= s_i/\lVert s_i\rVert \qquad\triangleright\ \text{unit vector, count-blind}
+        \end{aligned} \]</div>
+
+        <div class="step">4 &middot; Magnitude channel &mdash; "how much"</div>
+        <p>Reuse the same weights. Renormalize over real keys, take the <b>participation ratio</b> (effective match count), gate by confidence, then bound with a saturating map:</p>
+        <div class="eq">\[ \begin{aligned}
+          \hat w_{ij} &amp;= w_{ij}\big/\textstyle\sum_k w_{ik} \\[2pt]
+          n_{\text{eff}} &amp;= 1\big/\textstyle\sum_j \hat w_{ij}^{\,2} \qquad\triangleright\ \text{inverse Simpson} \\[2pt]
+          m_{\text{eff}} &amp;= n_{\text{eff}}\,(1-w_{iN}) \\[2pt]
+          \mathbf{mag_i} &amp;= \tanh\!\big(\operatorname{softplus}(\text{mag\_}\beta)\cdot \operatorname{log1p}(m_{\text{eff}})\big)\in[0,1)
+        \end{aligned} \]</div>
+
+        <div class="step">5 &middot; Assembly into the residual</div>
+        <div class="eq">\[ \mathbf{out} \;=\; \underbrace{W_o\big(\operatorname{reshape}(c)\cdot \sigma(\text{gate})\big)}_{\text{content}} \;+\; \underbrace{W_\mu(\mathrm{mag})}_{\text{count}} \]</div>
+
+        <div class="step">6 &middot; Length-invariance condition</div>
+        <p>The count is invariant in length when \(\text{len\_gain}\cdot\Delta \ge 1\) (\(\Delta\) = the QK margin between signal and noise): the temperature then suppresses each noise weight faster than \(n\) grows. End-to-end, the same key population at 1&times; and 64&times; yields identical \(c\) (cosine 1.0) and identical \(\mathrm{mag}\).</p>
+
+        <div class="step">7 &middot; Distractor objective (optional)</div>
+        <p>Random keys, pushed through the same \(k\) projection, must lose to the sink &mdash; this widens \(\Delta\) and is what buys retrieval far past train length:</p>
+        <div class="eq">\[ \mathcal{L}_{\text{align}} \;=\; \operatorname{mean}\ \operatorname{softmax}\!\big([\,\mathrm{temp}\cdot\sigma_{\text{rand}},\ \ \mathrm{temp}\cdot\mathrm{null}\,]\big)\big|_{\text{rand}} \]</div>
+        <p class="note"><b>Designed by falsification.</b> An additive soft-count \(\sum\sigma(\sigma-\theta)\) leaks \(\mathcal{O}(N)\) (89&times; drift over a 1000&times; sweep); the participation ratio is flat. Raw \(\log(m)\) pushes the projection out of distribution &mdash; the bounded \(\tanh\!\cdot\operatorname{log1p}\) keeps it in range. A fixed null floor is overtaken by the noise maximum. The distractor alone collapses the count (floor \(\to\infty\)); the task loss is its counterweight.</p>
+      </div>
+
+      <!-- TITANS COLUMN -->
+      <div>
+        <h3>Titans Memory <span class="tag">memory</span></h3>
+        <p>Each head carries a matrix memory \(M\in\mathbb{R}^{d_v\times d_k}\) &mdash; a fast-weight key&rarr;value store &mdash; reusing the layer's \(q,k,v\) plus two data-dependent scalar gates per head.</p>
+
+        <div class="step">1 &middot; Gates</div>
+        <div class="eq">\[ \begin{aligned}
+          \gamma_t &amp;= \sigma(W_\gamma x_t + b_\gamma) \qquad\triangleright\ \text{retention},\ b\!:3.9\!\to\!\approx\!0.98 \\[2pt]
+          \beta_t &amp;= \sigma(W_\beta x_t + b_\beta) \qquad\triangleright\ \text{write strength}\to 0.5
+        \end{aligned} \]</div>
+
+        <div class="step">2 &middot; Gated-delta recurrence</div>
+        <p>The Titans neural memory (momentum \(\eta=0\)) reparametrizes <b>exactly</b> to the Gated DeltaNet recurrence. FLA's convention is canonical &mdash; decay-first, undecayed write, self-inclusive readout:</p>
+        <div class="eq">\[ \begin{aligned}
+          M_t &amp;= \gamma_t\,M_{t-1}\,(I-\beta_t\,k_t k_t^{\top}) + \beta_t\,v_t k_t^{\top} \\[2pt]
+          r_t &amp;= M_t\,q_t \qquad\triangleright\ \text{readout after the write}
+        \end{aligned} \]</div>
+
+        <div class="step">3 &middot; Per-step view</div>
+        <div class="eq">\[ \begin{aligned}
+          M &amp;\leftarrow \gamma_t M &amp;&amp;\triangleright\ \text{decay first} \\[2pt]
+          \mathrm{pred} &amp;= M k_t &amp;&amp;\triangleright\ \text{predict on decayed state} \\[2pt]
+          M &amp;\leftarrow M + \beta_t(v_t-\mathrm{pred})k_t^{\top} &amp;&amp;\triangleright\ \text{delta write} \\[2pt]
+          r_t &amp;= M q_t &amp;&amp;\triangleright\ \text{self-inclusive read}
+        \end{aligned} \]</div>
+
+        <div class="step">4 &middot; Readout assembly</div>
+        <p>Pulled back into polar's discipline before it enters the residual (zero-init \(\mathrm{proj}\) &rarr; enabling the branch is a safe no-op at step 0):</p>
+        <div class="eq">\[ \mathbf{mem} \;=\; \operatorname{proj}\!\big(\operatorname{RMSNorm}(r)\cdot \sigma(\operatorname{gate}(x))\big) \]</div>
+
+        <div class="step">Finding 1 &middot; Keys must be unit-norm</div>
+        <p>The delta rule's per-step eigenvalue along the key is \(\gamma\,(1-\beta\lVert k\rVert^2)\). Polar's RMS-norm gives \(\lVert k\rVert^2=d_k\) &rarr; eigenvalue \(\approx-7\) &rarr; the state diverges (oracle blew up to \(\sim\!10^{57}\)). <b>L2-normalized keys</b> give \(\gamma(1-\beta)\in(0,1)\) &mdash; stable.</p>
+
+        <div class="step">Finding 2 &middot; \(\gamma\) is a horizon dial, not a safety gate</div>
+        <p>The delta memory self-stabilizes: state-norm is <b>flat in \(N\)</b> (256&rarr;16384) even at \(\gamma=1\), because the \((I-\beta k k^{\top})\) key-replacement converges toward the least-squares solution \(M\approx V K^{+}\) (capacity \(\sim d_k\)). So \(\gamma\) is learned <b>per-head</b>: some heads hold \(\gamma\approx1\) for distant recall, others \(\gamma&lt;1\) for recency.</p>
+
+        <p class="note"><b>Division of labor.</b> The linear memory is a lossy gist (capacity \(\sim d_k\)) &mdash; it carries diffuse long-context perplexity but <i>cannot</i> exact-recall a planted needle. Full polar + the distractor does the pinpoint retrieval. The recurrence has a closed <b>chunkwise-parallel</b> form so it trains in-loop at ~6&ndash;9% MFU overhead (fused FLA / Triton kernel).</p>
+      </div>
+    </div>
+
+    <p class="lead" style="margin-top:28px; font-size:14.5px; color:var(--dim)">
+      Full write-ups with verification (float64 gradcheck, bit-exact train&harr;reference&harr;inference parity):
+      <a href="https://github.com/kreasof-ai/atma/blob/main/docs/POLAR_ATTENTION.md" target="_blank" rel="noopener">POLAR_ATTENTION.md</a> &middot;
+      <a href="https://github.com/kreasof-ai/atma/blob/main/docs/TITANS_MEMORY.md" target="_blank" rel="noopener">TITANS_MEMORY.md</a>.
+    </p>
+  </div>
+</section>
+
+<!-- MACHINERY -->
+<section id="machinery">
+  <div class="wrap">
+    <p class="eyebrow">Systems</p>
+    <h2>The machinery</h2>
+    <p class="lead" style="margin-bottom:18px">The architecture lives in <b>three implementations that are kept numerically identical</b>: a pure-PyTorch <b>reference</b> oracle, an optimized <b>training</b> path (FP16/FP8 matmuls, Muon), and a paged <b>inference</b> engine. Every layer is cross-checked, so a new variant is safe to ship the moment parity holds.</p>
+
+    <div class="pipe">
+      <svg viewBox="0 0 760 132" role="img" aria-label="Training, reference and inference pipelines verified to atol 1e-4">
+        <defs><linearGradient id="pg" x1="0" y1="0" x2="760" y2="0">
+          <stop stop-color="#6ea8ff"/><stop offset=".5" stop-color="#b57bff"/><stop offset="1" stop-color="#e85bbf"/></linearGradient></defs>
+        <g font-family="Space Grotesk, sans-serif">
+          <g><rect x="30" y="28" width="200" height="50" rx="11" fill="rgba(110,168,255,.10)" stroke="#6ea8ff" stroke-width="1.3"/>
+            <text x="130" y="51" fill="#e8ebf5" font-size="15" font-weight="600" text-anchor="middle">TRAINING</text>
+            <text x="130" y="68" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">FP16/FP8 &middot; Muon</text></g>
+          <g><rect x="280" y="28" width="200" height="50" rx="11" fill="rgba(181,123,255,.10)" stroke="#b57bff" stroke-width="1.3"/>
+            <text x="380" y="51" fill="#e8ebf5" font-size="15" font-weight="600" text-anchor="middle">REFERENCE</text>
+            <text x="380" y="68" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">pure-PyTorch oracle</text></g>
+          <g><rect x="530" y="28" width="200" height="50" rx="11" fill="rgba(232,91,191,.10)" stroke="#e85bbf" stroke-width="1.3"/>
+            <text x="630" y="51" fill="#e8ebf5" font-size="15" font-weight="600" text-anchor="middle">INFERENCE</text>
+            <text x="630" y="68" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">paged engine</text></g>
+        </g>
+        <g stroke="url(#pg)" stroke-width="1.6" fill="none">
+          <path d="M232 53 H278" marker-end="url(#ar)" marker-start="url(#ar)"/>
+          <path d="M482 53 H528" marker-end="url(#ar)" marker-start="url(#ar)"/>
+        </g>
+        <defs><marker id="ar" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 z" fill="#b57bff"/></marker></defs>
+        <line x1="30" y1="100" x2="730" y2="100" stroke="rgba(255,255,255,.10)" stroke-dasharray="3 4"/>
+        <text x="380" y="120" fill="#9aa3bd" font-size="12.5" text-anchor="middle" font-family="JetBrains Mono, monospace">verify.py &middot; atol 1e-4 &middot; 30/30 CPU &middot; 30/30 CUDA (L4)</text>
+      </svg>
+    </div>
+
+    <div class="grid3" style="margin-top:20px">
+      <div class="card">
+        <div class="ic">&#9889;</div>
+        <h3>FlashAttention-style kernel</h3>
+        <p>A fused Triton kernel streams the polar reduction with query- and key-blocking &mdash; fully <span class="mono">O(block)</span> memory on tensor cores. The count channel needs <b>one extra streamed accumulator</b> <span class="mono">Q2 = &Sigma;exp(&middot;)&sup2;</span> for the participation ratio, rescaled by <span class="mono">&alpha;&sup2;</span> on every online-softmax max update. The backward keeps a cheap per-query preamble in PyTorch and runs only the two <span class="mono">O(T&sup2;)</span> matmul loops as Triton.</p>
+        <div class="kpi"><b>7&ndash;27&times;</b> faster &middot; <b>~5&times;</b> less memory vs. the PyTorch paths (L4)</div>
+      </div>
+      <div class="card">
+        <div class="ic">&#128268;</div>
+        <h3>Paged inference engine</h3>
+        <p>Paged KV cache with prefix caching; <b>centralized per-sequence state tables</b> hold the conv states and the Titans memory (per-head <span class="mono">M</span>, fp32, FLA <span class="mono">[K,V]</span> layout). Prefill runs FLA's fused <span class="mono">chunk_gated_delta_rule</span>; decode runs a <b>GQA-grouped paged kernel</b> plus an in-place gated-delta step &mdash; one state read+write per token, CUDA-graph capturable.</p>
+        <div class="kpi"><b>19,270</b> tok/s decode @ bs=512 (L4) &middot; state ~512&nbsp;KB/seq/layer</div>
+      </div>
+      <div class="card">
+        <div class="ic">&#9989;</div>
+        <h3>Verification first</h3>
+        <p>Every reduction is established against a token-by-token oracle: <b>float64 <span class="mono">gradcheck</span></b> on the streaming polar autograd and the gated-delta recurrence, then <b>train == reference bit-exact</b> in the default config. The same per-layer and end-to-end checks route through the Triton kernels on GPU. Nothing merges until parity holds.</p>
+        <div class="kpi"><b>156</b> parity / gradcheck / integration tests green</div>
+      </div>
+    </div>
+
+    <div class="pills">
+      <span class="pill"><code>verify.py</code> <b>30/30</b> CPU + 30/30 CUDA</span>
+      <span class="pill"><code>test_polar_kernel.py</code> <b>104/104</b></span>
+      <span class="pill"><code>test_integration.py</code> <b>21/21</b></span>
+      <span class="pill"><code>verify_titans / mag / window</code> <b>fp64 gradcheck</b></span>
+      <span class="pill">train &harr; reference <b>bit-exact</b></span>
+    </div>
+
+    <p class="note" style="margin-top:22px"><b>The torch.compile saga.</b> FLA's gated-delta kernel is a custom autograd function that graph-breaks at every memory layer under <span class="mono">torch.compile</span> &mdash; a ~2&times; time / ~2&times; peak-RAM regression, since the memory's FLOPs are only ~5% of the model (overhead, not compute). Wrapping it as <b>two opaque custom ops</b> (<span class="mono">FLA_CUSTOM_OP=1</span>) with <span class="mono">register_fake</span> shapes restores fusion and recomputes activations in the backward &mdash; bringing the real cost down to <b>~6&ndash;9% MFU</b>.</p>
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results">
+  <div class="wrap">
+    <p class="eyebrow">Results</p>
+    <h2>Train at 2K, evaluate to 64K</h2>
+    <p class="lead" style="margin-bottom:22px">370M parameters (16 layers, 12 gated-conv + 4 attention), ~1B tokens of FineWeb-Edu, sequence length 2K. Every cell evaluates at full context. The winning recipe is <span class="mono">polar + memory</span> (no window, no distractor, baseline regularizer).</p>
+
+    <div class="grid3" style="grid-template-columns:1fr 1fr; gap:18px">
+      <div>
+        <h3 style="font-size:17px; color:var(--mut); font-weight:600; margin:0 0 10px">Needle retrieval accuracy</h3>
+        <div class="tblwrap">
+          <table class="tbl">
+            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax+Titans</th><th>Polar only</th></tr></thead>
+            <tbody>
+              <tr><td>2K (1&times;)</td><td class="win">91%</td><td>98%</td><td>96%</td></tr>
+              <tr><td>8K (4&times;)</td><td class="win">93%</td><td>94%</td><td class="bad">15%</td></tr>
+              <tr><td>16K (8&times;)</td><td class="win">98%</td><td>85%</td><td class="bad">8%</td></tr>
+              <tr><td>32K (16&times;)</td><td class="win">96%</td><td class="bad">48%</td><td class="bad">3%</td></tr>
+              <tr><td>64K (32&times;)</td><td class="win">93%</td><td class="bad">16%</td><td class="bad">0%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <h3 style="font-size:17px; color:var(--mut); font-weight:600; margin:0 0 10px">Clean-document perplexity</h3>
+        <div class="tblwrap">
+          <table class="tbl">
+            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax+Titans</th><th>Polar only</th></tr></thead>
+            <tbody>
+              <tr><td>2K (1&times;)</td><td class="win">2.70</td><td>2.66</td><td>2.83</td></tr>
+              <tr><td>8K (4&times;)</td><td class="win">2.44</td><td>2.39</td><td class="bad">3.32</td></tr>
+              <tr><td>16K (8&times;)</td><td class="win">2.28</td><td>2.29</td><td class="bad">3.53</td></tr>
+              <tr><td>32K (16&times;)</td><td class="win">2.14</td><td>2.29</td><td class="bad">3.60</td></tr>
+              <tr><td>64K (32&times;)</td><td class="win">1.96</td><td>2.34</td><td class="bad">3.60</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <p class="cap" style="text-align:left; margin-top:14px">
+      Polar + Titans is the only recipe whose perplexity <b>improves monotonically</b> as context grows (2.70&rarr;1.96 across a 32&times; sweep) while retrieval stays flat. Softmax holds early then collapses past ~16&times;; polar without the memory loses long-context perplexity. Convergence and quality rank <b>Polar+Titans &gt; Causal &gt; Polar-only</b> at ~6&ndash;9% MFU overhead.
+    </p>
+  </div>
+</section>
+
+<!-- ABLATION MEGA CTA -->
+<section>
+  <div class="wrap">
+    <div class="megacta">
+      <p class="eyebrow" style="color:var(--blue)">The Ablation</p>
+      <h2>A 120-cell factorial, fully browsable</h2>
+      <p>Five regularizers &times; distractor on/off &times; memory on/off &times; window on/off &times; three attention cores (<span class="mono">polar</span>, <span class="mono">softmax/nope</span>, <span class="mono">rope</span>) &mdash; with a second batch adding <span class="mono">wall</span> attention. Every cell: clean &amp; junk perplexity and needle accuracy at six lengths, plus MFU and wall-clock &mdash; in one interactive dashboard.</p>
+      <div class="stats">
+        <div class="stat"><div class="n grad">120</div><div class="l">cells in the grid</div></div>
+        <div class="stat"><div class="n grad">92</div><div class="l">completed so far</div></div>
+        <div class="stat"><div class="n grad">6</div><div class="l">eval lengths / cell</div></div>
+        <div class="stat"><div class="n grad">32&times;</div><div class="l">max extrapolation</div></div>
+      </div>
+      <a class="btn primary" href="dashboard.html" style="font-size:16px; padding:13px 26px">
+        Open the interactive dashboard &rarr;
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- CITATION -->
+<section>
+  <div class="wrap">
+    <p class="eyebrow">Cite</p>
+    <h2>BibTeX</h2>
+    <pre class="bib"><span class="k">@misc</span>{kreasof2026polar,
+  title  = {Polar Attention: Length-Invariant Sequence Mixing with Compression Memory},
+  author = {Kreasof AI Research},
+  year   = {2026},
+  note   = {Research preview},
+  url    = {https://github.com/kreasof-ai/atma}
+}</pre>
+    <p class="lead" style="font-size:14.5px; color:var(--dim); margin-top:12px">A full technical report is in preparation. Documentation: <a href="https://github.com/kreasof-ai/atma/blob/main/docs/POLAR_ATTENTION.md" target="_blank" rel="noopener">Polar Attention</a> &middot; <a href="https://github.com/kreasof-ai/atma/blob/main/docs/TITANS_MEMORY.md" target="_blank" rel="noopener">Titans Memory</a> &middot; <a href="https://github.com/kreasof-ai/atma/blob/main/README.md" target="_blank" rel="noopener">Atma overview</a>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <div class="brand" style="margin-bottom:6px">
+      <img src="logo-white.webp" alt="Kreasof AI" width="26" height="26" style="display:block;">
+        Kreasof AI
+      </div>
+      <div style="font-size:13.5px; max-width:420px">Independent AI research lab producing rigorous, internationally published work in machine learning. Based in Jakarta, Indonesia.</div>
+    </div>
+    <div style="font-size:13.5px; text-align:right">
+      <a href="https://github.com/kreasof-ai/atma" target="_blank" rel="noopener">Code</a> &middot;
+      <a href="dashboard.html">Ablation Dashboard</a> &middot;
+      <a href="https://kreasof.my.id/" target="_blank" rel="noopener">Kreasof AI</a>
+      <div style="margin-top:8px; color:var(--dim)">&copy; 2026 Kreasof AI. Research preview.</div>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* Self-contained explainer animations (no deps). Pause off-screen; honor reduced-motion. */
+(function () {
+  var SVG = "http://www.w3.org/2000/svg";
+  function mk(tag, attrs) {
+    var e = document.createElementNS(SVG, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  var $ = function (id) { return document.getElementById(id); };
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------------- POLAR ---------------- */
+  var pKeys = $("pKeys"), keyDots = [];
+  if (pKeys) {
+    for (var i = 0; i < 36; i++) {
+      var x = 44 + i * 6.7, jy = 150 + (((i * 37) % 23) - 11) * 0.9;
+      var d = mk("circle", { cx: x.toFixed(1), cy: jy.toFixed(1), r: i < 3 ? 4.2 : 2.6,
+        fill: i < 3 ? "#4fe3b0" : "#55607a", opacity: 0 });
+      pKeys.appendChild(d); keyDots.push(d);
+    }
+  }
+  var pCtx = $("pCtx"), pGhost = $("pGhost"), pSoftBar = $("pSoftBar"), pSoftVal = $("pSoftVal"),
+      pMagBar = $("pMagBar"), pMagVal = $("pMagVal");
+  function polar(ms) {
+    if (!pCtx) return;
+    var t = (ms / 6000) % 1;
+    var m = Math.pow(2, t * 5);                 // 1x .. 32x
+    pCtx.textContent = Math.round(2 * m) + "K"; // 2K .. 64K
+    var vis = Math.round(3 + (m - 1) / 31 * 33);
+    for (var i = 0; i < keyDots.length; i++)
+      keyDots[i].setAttribute("opacity", i < vis ? (i < 3 ? 1 : 0.5) : 0.05);
+    // softmax direction wobbles more as context grows; polar arrow stays fixed
+    var base = -32 * Math.PI / 180;
+    var wob = Math.sin(ms / 480) * ((m - 1) / 31) * (30 * Math.PI / 180);
+    var ga = base + wob;
+    pGhost.setAttribute("x2", (412 + 72 * Math.cos(ga)).toFixed(1));
+    pGhost.setAttribute("y2", (116 + 72 * Math.sin(ga)).toFixed(1));
+    // softmax output norm blows up 1 -> 13.55 (the measured 512x figure, here over the visible sweep)
+    var soft = 1 + 12.55 * (Math.log(m) / Math.log(2)) / 5;
+    pSoftBar.setAttribute("width", (18 + (soft - 1) / 12.55 * 302).toFixed(1));
+    pSoftVal.textContent = soft.toFixed(1);
+    // polar magnitude bounded & ~invariant
+    var mag = 0.66 + 0.02 * Math.sin(ms / 850);
+    pMagBar.setAttribute("width", (mag * 320).toFixed(1));
+    pMagVal.textContent = mag.toFixed(2);
+  }
+
+  /* ---------------- TITANS ---------------- */
+  var NT = 14, NEEDLE = 4, QUERY = 11, G = 6;
+  var tStream = $("tStream"), tGrid = $("tGrid"), tRead = $("tRead"),
+      tNorm = $("tNorm"), tStatus = $("tStatus");
+  var toks = [], cells = [], reads = [];
+  var M = [], Mdisp = [], readT = [], readD = [], needle = [];
+  if (tStream) {
+    for (var k = 0; k < NT; k++) {
+      var tx = 22 + k * 19.6;
+      var r = mk("rect", { x: tx.toFixed(1), y: 34, width: 15, height: 15, rx: 3,
+        fill: k === NEEDLE ? "#e85bbf" : (k === QUERY ? "#6ea8ff" : "#39425e"), opacity: 0.28 });
+      tStream.appendChild(r); toks.push(r);
+    }
+  }
+  if (tGrid) {
+    for (var rr = 0; rr < G; rr++) {
+      cells[rr] = []; M[rr] = []; Mdisp[rr] = [];
+      for (var cc = 0; cc < G; cc++) {
+        var gx = 134 + cc * 22, gy = 100 + rr * 22;
+        var rect = mk("rect", { x: gx, y: gy, width: 20, height: 20, rx: 3, fill: "#6ea8ff", opacity: 0.06 });
+        tGrid.appendChild(rect); cells[rr][cc] = rect; M[rr][cc] = 0.05; Mdisp[rr][cc] = 0.05;
+      }
+    }
+  }
+  if (tRead) {
+    for (var s = 0; s < G; s++) {
+      var ry = 100 + s * 22;
+      var seg = mk("rect", { x: 372, y: ry, width: 20, height: 20, rx: 3, fill: "#4fe3b0", opacity: 0.08 });
+      tRead.appendChild(seg); reads.push(seg); readT[s] = 0.08; readD[s] = 0.08; needle[s] = 0.35 + 0.6 * (((s * 53) % 7) / 7);
+    }
+  }
+  var ti = -1;
+  function titansStep() {
+    ti = (ti + 1) % NT;
+    for (var i = 0; i < toks.length; i++) toks[i].setAttribute("opacity", i === ti ? 1 : 0.28);
+    // decay
+    for (var rr = 0; rr < G; rr++) for (var cc = 0; cc < G; cc++) M[rr][cc] *= 0.86;
+    if (ti === NEEDLE) {
+      // write a recognizable bright pattern (anti-diagonal + needle column)
+      for (var r2 = 0; r2 < G; r2++) { M[r2][G - 1 - r2] = 1.0; M[r2][2] = 0.5 + 0.5 * needle[r2]; }
+      for (var s2 = 0; s2 < G; s2++) readT[s2] = 0.1;
+      if (tStatus) { tStatus.textContent = "write needle"; tStatus.setAttribute("fill", "#e85bbf"); }
+    } else if (ti === QUERY) {
+      // recall: readout reflects the needle pattern
+      for (var s3 = 0; s3 < G; s3++) readT[s3] = needle[s3];
+      if (tStatus) { tStatus.textContent = "recall ✓"; tStatus.setAttribute("fill", "#4fe3b0"); }
+    } else {
+      var c = ti % G;
+      for (var r3 = 0; r3 < G; r3++) M[r3][c] = Math.min(1, M[r3][c] + 0.18 + 0.22 * (((r3 * (ti + 1)) % 5) / 4));
+      for (var s4 = 0; s4 < G; s4++) readT[s4] = 0.08 + 0.04 * (((s4 + ti) % 3));
+      if (tStatus) { tStatus.textContent = "write"; tStatus.setAttribute("fill", "#9aa3bd"); }
+    }
+  }
+  function titansRender() {
+    var sum = 0;
+    for (var rr = 0; rr < G; rr++) for (var cc = 0; cc < G; cc++) {
+      Mdisp[rr][cc] += (M[rr][cc] - Mdisp[rr][cc]) * 0.18;
+      var v = Mdisp[rr][cc];
+      cells[rr][cc].setAttribute("opacity", (0.06 + v * 0.92).toFixed(3));
+      cells[rr][cc].setAttribute("fill", v > 0.72 ? "#b57bff" : "#6ea8ff");
+      sum += v;
+    }
+    for (var s = 0; s < G; s++) {
+      readD[s] += (readT[s] - readD[s]) * 0.18;
+      reads[s].setAttribute("opacity", (0.08 + readD[s] * 0.92).toFixed(3));
+    }
+    // Frobenius-ish energy mapped into a deliberately narrow band -> visibly "bounded"
+    var nrm = Math.max(0, Math.min(1, (sum - 8) / 12));
+    tNorm.setAttribute("width", (150 + nrm * 90).toFixed(1));
+  }
+
+  /* ---------------- driver ---------------- */
+  var running = false, raf = 0, last = 0, acc = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    var dt = ts - last; last = ts;
+    polar(ts);
+    acc += dt;
+    if (acc > 620) { acc = 0; titansStep(); }
+    titansRender();
+    if (running) raf = requestAnimationFrame(frame);
+  }
+  function staticFrame() { polar(2600); for (var i = 0; i < 12; i++) titansStep(); for (var j = 0; j < 30; j++) titansRender(); }
+
+  var sec = $("intuition");
+  if (!sec) return;
+  if (reduce) { staticFrame(); return; }
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (entries) {
+      var vis = entries[0].isIntersecting;
+      if (vis && !running) { running = true; last = 0; raf = requestAnimationFrame(frame); }
+      else if (!vis && running) { running = false; cancelAnimationFrame(raf); }
+    }, { threshold: 0.12 }).observe(sec);
+  } else { running = true; raf = requestAnimationFrame(frame); }
+})();
+</script>
+
+</body>
+</html>

@@ -3,7 +3,7 @@
 Polar attention factors each query's result into a length-invariant *direction*
 channel ``c`` (unit vector) and a bounded *magnitude* channel ``mag`` derived from
 a single temperature-sharpened softmax with an EV-corrected null sink.  See
-``atma/POLAR_ATTENTION.md`` for the full derivation and ``model/blocks.py`` for the
+``atma/docs/POLAR_ATTENTION.md`` for the full derivation and ``model/blocks.py`` for the
 pure-PyTorch oracle (``polar_reduce`` materialized / ``polar_attention_online``
 streamed) that these kernels reproduce.
 
@@ -358,38 +358,61 @@ if HAS_TRITON:
         stride_btb, stride_btn,
         stride_cb, stride_ch, stride_cd,
         stride_mb, stride_mh,
-        H, NUM_KV_HEADS, scale, eps,
+        scale, eps,
         BLOCK_SIZE: tl.constexpr, MAX_BLOCKS: tl.constexpr,
         BLOCK_N: tl.constexpr, DK: tl.constexpr,
+        G: tl.constexpr, GP: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        WINDOW: tl.constexpr,
     ):
+        # One program per (sequence, KV head): the G query heads of the GQA group are
+        # the rows of a (GP, ...) tile (GP = G padded to >=16 for tl.dot), so each
+        # cached K/V byte is read ONCE per group instead of once per query head
+        # (a `groups`-fold cut of decode's dominant memory traffic).
         b = tl.program_id(0)
-        h = tl.program_id(1)
+        kv_h = tl.program_id(1)
         scale = scale.to(tl.float32)     # python-float args are fp64 on some Triton versions
         eps = eps.to(tl.float32)
-        groups = H // NUM_KV_HEADS
-        kv_h = h // groups
         offs_d = tl.arange(0, DK)
+        offs_g = tl.arange(0, GP)                          # query-head rows (padded)
+        g_valid = offs_g < G
+        heads = tl.where(g_valid, kv_h * G + offs_g, 0)    # global query-head ids (0-clamped pad)
 
-        q = tl.load(Q + b * stride_qb + h * stride_qh + offs_d * stride_qd).to(tl.float32)  # (DK,)
+        q = tl.load(Q + b * stride_qb + heads[:, None] * stride_qh + offs_d[None, :] * stride_qd,
+                    mask=g_valid[:, None], other=0.0).to(DOT_DTYPE)        # (GP, DK)
 
         n_i = tl.load(CONTEXT_LENS + b)                  # int32 valid-key count
-        n_f = tl.maximum(n_i.to(tl.float32), 1.0)
-        spg = tl.load(SPG + h).to(tl.float32)
-        sps = tl.load(SPS + h).to(tl.float32)
-        beta = tl.load(BETA + h).to(tl.float32)
-        nb = tl.load(NULLBASE + h).to(tl.float32)
+        # WINDOW>0: causal sliding window — the query sees only its last WINDOW keys,
+        # so temp/null use the capped count min(n_i, WINDOW) and the key loop masks
+        # positions older than n_i - WINDOW. WINDOW==0 disables it (full context).
+        if WINDOW > 0:
+            n_f = tl.maximum(tl.minimum(n_i.to(tl.float32), float(WINDOW)), 1.0)
+        else:
+            n_f = tl.maximum(n_i.to(tl.float32), 1.0)
+        spg = tl.load(SPG + heads, mask=g_valid, other=0.0).to(tl.float32)   # (GP,)
+        sps = tl.load(SPS + heads, mask=g_valid, other=0.0).to(tl.float32)
+        beta = tl.load(BETA + heads, mask=g_valid, other=0.0).to(tl.float32)
+        nb = tl.load(NULLBASE + heads, mask=g_valid, other=0.0).to(tl.float32)
         temp = 1.0 + spg * tl.log(n_f)
         nullv = nb + sps * tl.sqrt(tl.log(n_f + 1.0))
 
-        m_i = -1e38
-        l_i = 0.0
-        q2_i = 0.0
-        acc = tl.zeros([DK], tl.float32)
+        m_i = tl.full([GP], -1e38, tl.float32)
+        l_i = tl.zeros([GP], tl.float32)
+        q2_i = tl.zeros([GP], tl.float32)
+        acc = tl.zeros([GP, DK], tl.float32)
 
-        total = MAX_BLOCKS * BLOCK_SIZE
-        for start in range(0, total, BLOCK_N):
+        # dynamic loop bounds: only scan the live context (and, with a window, skip
+        # keys older than the band) — in CUDA-graph mode MAX_BLOCKS*BLOCK_SIZE is the
+        # padded max_model_len, which would otherwise be scanned in full every step.
+        hi = tl.minimum(tl.cdiv(n_i, BLOCK_N) * BLOCK_N, MAX_BLOCKS * BLOCK_SIZE)
+        if WINDOW > 0:
+            lo = (tl.maximum(n_i - WINDOW, 0) // BLOCK_N) * BLOCK_N
+        else:
+            lo = 0
+        for start in range(lo, hi, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)        # global key positions
             valid = offs_n < n_i
+            if WINDOW > 0:
+                valid = valid & (offs_n >= (n_i - WINDOW))  # older than window
             blk = offs_n // BLOCK_SIZE                     # logical block index
             within = offs_n % BLOCK_SIZE
             phys = tl.load(BLOCK_TABLES + b * stride_btb + blk * stride_btn,
@@ -398,48 +421,50 @@ if HAS_TRITON:
                      + kv_h * stride_kc_h + offs_d[None, :] * stride_kc_d)
             v_ptr = (V_CACHE + phys[:, None] * stride_vc_blk + within[:, None] * stride_vc_pos
                      + kv_h * stride_vc_h + offs_d[None, :] * stride_vc_d)
-            k = tl.load(k_ptr, mask=valid[:, None], other=0.0).to(tl.float32)
-            v = tl.load(v_ptr, mask=valid[:, None], other=0.0).to(tl.float32)
+            k = tl.load(k_ptr, mask=valid[:, None], other=0.0).to(DOT_DTYPE)   # (BLOCK_N, DK)
+            v = tl.load(v_ptr, mask=valid[:, None], other=0.0).to(DOT_DTYPE)
 
-            sig = tl.sum(q[None, :] * k, axis=1) * scale  # (BLOCK_N,)
-            a = sig * temp
-            a = tl.where(valid, a, -1e38)
-            m_new = tl.maximum(m_i, tl.max(a, 0))
+            sig = tl.dot(q, tl.trans(k), input_precision="ieee") * scale       # (GP, BLOCK_N)
+            a = sig * temp[:, None]
+            a = tl.where(valid[None, :] & g_valid[:, None], a, -1e38).to(tl.float32)
+            m_new = tl.maximum(m_i, tl.max(a, 1))
             alpha = tl.exp(m_i - m_new)
-            p = tl.exp(a - m_new)
-            p = tl.where(valid, p, 0.0)
-            l_i = l_i * alpha + tl.sum(p, 0)
-            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 0)
-            acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+            p = tl.exp(a - m_new[:, None])
+            p = tl.where(valid[None, :], p, 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(p.to(DOT_DTYPE), v, input_precision="ieee")
             m_i = m_new
 
         # fold null sink
-        a_n = temp * nullv
+        a_n = temp * nullv                                 # (GP,)
         m_new = tl.maximum(m_i, a_n)
         alpha = tl.exp(m_i - m_new)
         l_i = l_i * alpha
         q2_i = q2_i * alpha * alpha
-        acc = acc * alpha
+        acc = acc * alpha[:, None]
         m_i = m_new
         p_n = tl.exp(a_n - m_i)
         Z = l_i + p_n
 
-        vnull = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
-        s = acc + p_n * vnull
-        snorm = tl.maximum(tl.sqrt(tl.sum(s * s)), eps)
-        c = s / snorm
+        vnull = tl.load(VNULL + heads[:, None] * DK + offs_d[None, :],
+                        mask=g_valid[:, None], other=0.0).to(tl.float32)        # (GP, DK)
+        s = acc + p_n[:, None] * vnull
+        snorm = tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)
+        c = s / snorm[:, None]
         n_eff = l_i * l_i / tl.maximum(q2_i, eps)
         m_eff = n_eff * (l_i / tl.maximum(Z, eps))
         mag = 2.0 * tl.sigmoid(2.0 * (beta * tl.log(1.0 + m_eff))) - 1.0
 
-        tl.store(C_OUT + b * stride_cb + h * stride_ch + offs_d * stride_cd, c)
-        tl.store(MAG_OUT + b * stride_mb + h * stride_mh, mag)
+        tl.store(C_OUT + b * stride_cb + heads[:, None] * stride_ch + offs_d[None, :] * stride_cd,
+                 c, mask=g_valid[:, None])
+        tl.store(MAG_OUT + b * stride_mb + heads * stride_mh, mag, mask=g_valid)
 
 
 @torch.no_grad()
 def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
                            v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
-                           eps=1e-6, block_n=64):
+                           eps=1e-6, block_n=64, window=None):
     """Paged polar decode. One query per sequence over its cached context.
 
     q            : (B, H, dk)  current-token query (KV heads NOT expanded; GQA done in-kernel)
@@ -447,16 +472,25 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
     v_cache      : same shape as k_cache
     block_tables : (B, max_blocks) int32  logical->physical block map
     context_lens : (B,) int32  valid key count per sequence (incl. current token)
+    window       : (int, optional) causal sliding window — the query attends to only its
+                   last `window` cached keys (temp/null use min(context_len, window)),
+                   matching polar_attention_fwd(window=...).
 
     Returns c (B, H, dk), mag (B, H). CUDA-graph capturable (no host sync, fixed shapes).
     Matches model.blocks.polar_reduce for the equivalent dense computation to ~1e-3 (bf16).
+
+    GQA-aware: one program per (sequence, KV head) computes all `H // num_kv_heads`
+    query heads of the group, so the paged K/V is read once per group (not per head).
     """
     B, H, dk = q.shape
     num_kv_heads = k_cache.shape[2]
+    groups = H // num_kv_heads
+    gp = max(16, triton.next_power_of_2(groups))   # tl.dot needs M >= 16; pad + mask
     max_blocks = block_tables.shape[1]
     block_size = k_cache.shape[1]
     out_dtype = q.dtype
     dev = q.device
+    dot_dtype, _, _ = _dtype_meta(out_dtype)
 
     spg = F.softplus(len_gain_raw.float()).contiguous()
     sps = F.softplus(null_slope_raw.float()).contiguous()
@@ -469,7 +503,7 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
     mag = torch.empty((B, H), device=dev, dtype=torch.float32)
     scale = 1.0 / math.sqrt(dk)
 
-    grid = (B, H)
+    grid = (B, num_kv_heads)
     _polar_decode_kernel[grid](
         q, k_cache, v_cache, block_tables, context_lens,
         vnull, spg, nb, sps, beta,
@@ -480,8 +514,10 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
         block_tables.stride(0), block_tables.stride(1),
         c.stride(0), c.stride(1), c.stride(2),
         mag.stride(0), mag.stride(1),
-        H, num_kv_heads, scale, eps,
+        scale, eps,
         BLOCK_SIZE=block_size, MAX_BLOCKS=max_blocks, BLOCK_N=block_n, DK=dk,
+        G=groups, GP=gp, DOT_DTYPE=dot_dtype,
+        WINDOW=(0 if window is None else int(window)),
         num_warps=4, num_stages=2,
     )
     return c.to(out_dtype), mag.to(out_dtype)
@@ -508,6 +544,7 @@ if HAS_TRITON:
         B, H, Tq, Tk, scale,
         BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, DK: tl.constexpr,
         IS_CAUSAL: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        WINDOW: tl.constexpr,
     ):
         pid_m = tl.program_id(0)
         pid_bh = tl.program_id(1)
@@ -548,7 +585,9 @@ if HAS_TRITON:
                         mask=n_valid[:, None], other=0.0).to(DOT_DTYPE)
 
             sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
-            valid = offs_n[None, :] < n_i[:, None]
+            valid = offs_n[None, :] < n_i[:, None]                            # future
+            if WINDOW > 0:
+                valid = valid & (offs_n[None, :] >= (n_i[:, None] - WINDOW))  # older than window
             a = sig * temp[:, None]
             a = tl.where(valid, a, -1e38).to(tl.float32)   # stay fp32 (sentinel literal guard)
             p = tl.exp(a - M_i[:, None])
@@ -581,6 +620,7 @@ if HAS_TRITON:
         B, H, Tq, Tk, scale,
         BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, DK: tl.constexpr,
         IS_CAUSAL: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        WINDOW: tl.constexpr,
     ):
         pid_n = tl.program_id(0)
         pid_bh = tl.program_id(1)
@@ -621,7 +661,9 @@ if HAS_TRITON:
             n_i = tl.load(NKEYS + offs_m, mask=m_valid, other=0.0).to(tl.float32)
 
             sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
-            valid = offs_n[None, :] < n_i[:, None]
+            valid = offs_n[None, :] < n_i[:, None]                            # future
+            if WINDOW > 0:
+                valid = valid & (offs_n[None, :] >= (n_i[:, None] - WINDOW))  # older than window
             a = sig * temp[:, None]
             a = tl.where(valid, a, -1e38).to(tl.float32)   # stay fp32 (sentinel literal guard)
             p = tl.exp(a - M_i[:, None])
@@ -646,8 +688,12 @@ if HAS_TRITON:
 
 def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
                     len_gain_raw, mag_beta_raw, M, L, Q2, s, eps, is_causal,
-                    input_precision):
-    """Backward: cheap per-query preamble (PyTorch) + dq / dk,dv loops (Triton)."""
+                    input_precision, window=None):
+    """Backward: cheap per-query preamble (PyTorch) + dq / dk,dv loops (Triton).
+
+    window (int, optional): causal sliding window — temp/null use the windowed count
+    min(n_keys, window) and the dq / dk,dv loops mask keys older than n_keys - window,
+    mirroring the forward kernel's WINDOW path so the band backward is exact."""
     B, H, Tq, dk = q.shape
     Tk = k.shape[2]
     dev = q.device
@@ -656,7 +702,8 @@ def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
     gc = gc.to(fdt)
     gm = gm.to(fdt)
     n_raw = n_keys.to(dev).to(fdt)                                  # raw, for the causal mask
-    n = n_raw.clamp(min=1.0)                                        # clamped, for temp/null/param-grads
+    n_cnt = n_raw if window is None else torch.minimum(n_raw, n_raw.new_tensor(float(window)))
+    n = n_cnt.clamp(min=1.0)                                        # windowed clamp, for temp/null/param-grads
     spg = _softplus(len_gain_raw.to(fdt)).view(1, H, 1)
     sps = _softplus(null_slope_raw.to(fdt)).view(1, H, 1)
     beta = _softplus(mag_beta_raw.to(fdt)).view(1, H, 1)
@@ -724,18 +771,19 @@ def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
         temp_ht.stride(0),
         B, H, Tq, Tk, scale,
     )
+    win = 0 if window is None else int(window)
     grid_q = (triton.cdiv(Tq, cq["block_m"]), B * H)
     _polar_bwd_dq_kernel[grid_q](
         q, k, v, gs, gL, gQ2, temp_ht, M, n_keys_f, dq, dt_real, *common,
         BLOCK_M=cq["block_m"], BLOCK_N=cq["block_n"], DK=dk, IS_CAUSAL=is_causal,
-        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype, WINDOW=win,
         num_warps=cq["num_warps"], num_stages=cq["num_stages"],
     )
     grid_kv = (triton.cdiv(Tk, ckv["block_n"]), B * H)
     _polar_bwd_dkdv_kernel[grid_kv](
         q, k, v, gs, gL, gQ2, temp_ht, M, n_keys_f, dk_out, dv_out, *common,
         BLOCK_M=ckv["block_m"], BLOCK_N=ckv["block_n"], DK=dk, IS_CAUSAL=is_causal,
-        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype, WINDOW=win,
         num_warps=ckv["num_warps"], num_stages=ckv["num_stages"],
     )
 
@@ -762,16 +810,17 @@ class PolarAttentionTriton(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                len_gain_raw, mag_beta_raw, eps, is_causal, input_precision):
+                len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window):
         q = q.contiguous(); k = k.contiguous(); v = v.contiguous()
         c, mag, M, L, Q2, s = _polar_forward(
             q, k, v, n_keys, v_null, null_base, null_slope_raw,
-            len_gain_raw, mag_beta_raw, eps, is_causal, input_precision)
+            len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window=window)
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
         ctx.eps = eps
         ctx.is_causal = is_causal
         ctx.input_precision = input_precision
+        ctx.window = window
         return c, mag
 
     @staticmethod
@@ -782,7 +831,7 @@ class PolarAttentionTriton(torch.autograd.Function):
          grad_len_gain, grad_mag_beta) = _polar_backward(
             gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
             len_gain_raw, mag_beta_raw, M, L, Q2, s,
-            ctx.eps, ctx.is_causal, ctx.input_precision)
+            ctx.eps, ctx.is_causal, ctx.input_precision, window=ctx.window)
 
         def cast(x, ref):
             return x.to(ref.dtype)
@@ -790,18 +839,22 @@ class PolarAttentionTriton(torch.autograd.Function):
         return (cast(dq, q), cast(dk_out, k), cast(dv_out, v), None,
                 cast(grad_v_null, v_null), cast(grad_null_base, null_base),
                 cast(grad_null_slope, null_slope_raw), cast(grad_len_gain, len_gain_raw),
-                cast(grad_mag_beta, mag_beta_raw), None, None, None)
+                cast(grad_mag_beta, mag_beta_raw), None, None, None, None)
 
 
 def polar_attention(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
                     len_gain_raw, mag_beta_raw, eps=1e-6, is_causal=True,
-                    input_precision="ieee"):
+                    input_precision="ieee", window=None):
     """Autograd-aware FlashAttention-style polar attention. q,k,v: (B,H,T,dk)
     with GQA KV-heads already expanded to H. Drop-in for
     ``model.blocks.polar_attention_online`` (the streaming PyTorch oracle).
+
+    window (int, optional): trainable causal sliding window — each query attends to only
+    its last `window` keys (temp/null use the windowed count). The backward models the
+    band, so unlike ``polar_attention_fwd(window=...)`` this is usable in training.
 
     Returns (c, mag): direction unit vectors (B,H,T,dk) and bounded magnitude (B,H,T).
     """
     return PolarAttentionTriton.apply(
         q, k, v, n_keys, v_null, null_base, null_slope_raw,
-        len_gain_raw, mag_beta_raw, eps, is_causal, input_precision)
+        len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window)

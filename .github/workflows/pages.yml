@@ -1,0 +1,49 @@
+name: Deploy GitHub Pages
+
+# Publishes the static research site in pages/ (landing page + ablation dashboard)
+# to GitHub Pages. Requires: repo Settings -> Pages -> "Build and deployment" ->
+# Source = "GitHub Actions" (one-time setup).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pages/**"
+      - ".github/workflows/pages.yml"
+  # Manually trigger from the Actions tab (e.g. to deploy from a non-main branch).
+  workflow_dispatch:
+
+# Least-privilege token scopes the deploy needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deployment at a time; let a newer push supersede an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # The site is fully static (HTML + webp + the self-contained dashboard),
+      # so there is no build step — just upload the pages/ directory as-is.
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

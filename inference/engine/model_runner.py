@@ -38,8 +38,10 @@ class ModelRunner:
         self.sampler = Sampler()
         self.model.eval()
 
-        self.allocate_kv_cache()
+        # State tables first: the fp32 Titans memory tables can be GB-scale, and
+        # allocate_kv_cache sizes the KV cache from the memory left after them.
         self.allocate_conv_state_tables()
+        self.allocate_kv_cache()
         self.warmup_model()
         if not self.enforce_eager and self.device.type == "cuda":
             self.capture_cudagraph()
@@ -109,6 +111,11 @@ class ModelRunner:
                         dummy_cst[f"attn_{i}_{s}"] = torch.zeros(
                             1, dim, hf_config.attn_kernel_size - 1, device="cuda"
                         )
+                    if hf_config.mem_enabled:
+                        dummy_cst[f"mem_{i}"] = torch.zeros(
+                            1, hf_config.num_attention_heads, hf_config.head_dim,
+                            hf_config.head_dim, dtype=torch.float32, device="cuda"
+                        )
             seqlens_q = [seq_len] * num_seqs
             set_context(True,
                 cu_seqlens_q=torch.tensor([i * seq_len for i in range(num_seqs + 1)], dtype=torch.int32),
@@ -150,7 +157,12 @@ class ModelRunner:
     # ------------------------------------------------------------------
 
     def allocate_conv_state_tables(self):
-        """Allocate centralized GPU conv state tables: (max_seqs, hdim, ks-1) per state key."""
+        """Allocate centralized GPU per-sequence state tables.
+
+        Conv states: (max_seqs, hdim, ks-1) per conv/canon key, model dtype.
+        Titans memory states (mem_enabled): (max_seqs, H, dk, dv) per attention layer,
+        fp32, in FLA's native [K, V] state layout (the torch fallback's (dv, dk) state is
+        the transpose — see inference/models/atma.py). FLA keeps recurrent states fp32."""
         hf = self.config.hf_config
         hidden = hf.hidden_size
         attn_ks = hf.attn_kernel_size
@@ -167,6 +179,11 @@ class ModelRunner:
                     self.conv_state_tables[key] = torch.zeros(
                         max_seqs, dim, attn_ks - 1, dtype=hf.dtype,
                     )
+                if hf.mem_enabled:
+                    self.conv_state_tables[f"mem_{i}"] = torch.zeros(
+                        max_seqs, hf.num_attention_heads, hf.head_dim, hf.head_dim,
+                        dtype=torch.float32,
+                    )
             else:            # LFM2 conv layer
                 key = f"conv_{i}_gated"
                 self.conv_state_tables[key] = torch.zeros(
@@ -175,7 +192,7 @@ class ModelRunner:
 
         # Sequence slot free list
         self._free_slots: deque[int] = deque(range(max_seqs))
-        print(f"Conv state tables: {len(self.conv_state_tables)} keys, "
+        print(f"Per-seq state tables (conv + mem): {len(self.conv_state_tables)} keys, "
               f"{sum(t.numel() * t.element_size() for t in self.conv_state_tables.values()) / 1e6:.1f} MB")
 
     def alloc_seq_slot(self, seq: Sequence) -> int:
@@ -227,9 +244,11 @@ class ModelRunner:
 
     @torch.inference_mode()
     def capture_cudagraph(self):
-        from inference.layers.attention import HAS_FLASH_ATTN2, _fa3
-        if not HAS_FLASH_ATTN2 and _fa3 is None:
-            print("Skipping CUDA graph capture: neither FA2 nor FA3 available (SDPA path not graph-compatible).")
+        # Decode runs the paged polar Triton kernel (kernel/polar_triton.py); the
+        # per-sequence CPU gather fallback is not graph-compatible.
+        from inference.models.atma import polar_attention_decode, HAS_TRITON
+        if polar_attention_decode is None or not HAS_TRITON:
+            print("Skipping CUDA graph capture: polar Triton decode kernel unavailable.")
             return
 
         hf = self.config.hf_config

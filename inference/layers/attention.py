@@ -4,33 +4,6 @@ import triton
 import triton.language as tl
 
 
-try:
-    from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
-    HAS_FLASH_ATTN2 = True
-except ImportError:
-    HAS_FLASH_ATTN2 = False
-    flash_attn_varlen_func = None
-    flash_attn_with_kvcache = None
-
-
-def _load_fa3():
-    if not torch.cuda.is_available():
-        return None
-    try:
-        import os
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-        from kernels import get_kernel
-        return get_kernel('kernels-community/flash-attn3').flash_attn_interface
-    except Exception:
-        return None
-
-
-_fa3 = _load_fa3()
-
-if not HAS_FLASH_ATTN2 and _fa3 is None:
-    print("Warning: neither flash-attn2 nor FA3 found; attention will fall back to SDPA (slow path).")
-
-
 @triton.jit
 def _store_kvcache_kernel(
     key_ptr,
@@ -86,8 +59,8 @@ def store_kvcache(
 class Attention(nn.Module):
     """Holds per-layer KV cache references and attention scale.
 
-    Actual attention computation is handled by AtmaAttention which calls
-    store_kvcache + flash_attn_with_kvcache / flash_attn_varlen_func directly.
+    Actual attention computation is handled by AtmaAttention, which calls
+    store_kvcache + the polar Triton kernels (kernel/polar_triton.py) directly.
     """
 
     def __init__(self, num_heads: int, head_dim: int, scale: float, num_kv_heads: int):
