@@ -6,7 +6,7 @@ Tracking doc for potential development beyond the current architecture
 they survive until there's bandwidth to pursue them.
 
 > Most of the experimental items are **blocked on the 120-way ablation sweep** (5×2×2×2×3,
-> see [ablation/README.md](ablation/README.md)) currently running (~2–3 weeks). Do not start
+> see [ablation/README.md](../ablation/README.md)) currently running (~2–3 weeks). Do not start
 > new diagnostic interventions until that grid lands — they are *post-sweep* candidates.
 
 ---
@@ -49,9 +49,9 @@ of kernel regression.
   by the current batch size → a well-posed 1-D root find per query (differentiable, or
   solve-then-straight-through).
 - This makes the read **length-invariant by construction** rather than by meta-learned
-  approximation. Folds into the existing `polar_temp_null` in [model/blocks.py](model/blocks.py).
+  approximation. Folds into the existing `polar_temp_null` in [model/blocks.py](../model/blocks.py).
 
-**Falsifiable prediction.** The [eval.py](eval.py) `--diagnose` `n_eff`-vs-N curve goes **flat**
+**Falsifiable prediction.** The [eval.py](../eval.py) `--diagnose` `n_eff`-vs-N curve goes **flat**
 where it currently shows a 12–37× ramp. That single curve settles whether the closed loop works.
 
 **Caveat.** This fixes the *non-parametric* read's calibration; it does not make it
@@ -75,7 +75,7 @@ length even with full (un-windowed) polar attention** (`full` reversed from wors
 - **Training-time reshaping** (hypothesis B): training *with* memory lets the attention channel
   offload diffuse averaging and specialize to a *lower, flatter* `n_eff` — a partial real repair.
 
-**Test (deferred — needs the memory-trained checkpoints + GPU).** Run [eval.py](eval.py)
+**Test (deferred — needs the memory-trained checkpoints + GPU).** Run [eval.py](../eval.py)
 `--diagnose --no_mem` on a memory-trained checkpoint and compare the `n_eff`-vs-N curve to the
 memory-on curve and to a no-mem-trained model:
 - Ramp **identical** with/without mem at eval, output OOD only when mem ablated → **compensation**
@@ -138,7 +138,7 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
   memory partially redundant *for quality*, while the memory still wins on compute/KV-cache?
 
 **Status — wired as a 2nd-batch axis (2026-06-20).** `attn_type="wall"` is implemented in
-[train/model.py](train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
+[train/model.py](../train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
 the matched comparison to `nope` — isolates the gating; all params used → no Muon issue), adds a
 per-channel log-forget gate `g = -softplus(W_g·x + wall_gate_bias)` (slow-forget init), and applies
 Wall's score `q_i·k_j·exp(P_i−P_j)` per channel via the stable rescale `q̃=exp(P)q, k̃=exp(−P)k`
@@ -146,7 +146,7 @@ into standard attention. Two backends: a **pure-PyTorch fallback** (recentered p
 exact at the training length, compile-friendly, CPU-testable; used for the compiled training pass)
 and **Tilde's `wall_attn` Triton kernel** (per-chunk anchors → faithful at long context; used at
 eval on CUDA when installed). The 40 wall cells (5×2×2×2) are generated at
-[ablation/shards/shard5](ablation/shards/shard5) (grid is now 160). **Caveat:** the torch fallback
+[ablation/shards/shard5](../ablation/shards/shard5) (grid is now 160). **Caveat:** the torch fallback
 recenters+clamps the prefix sum, which is exact only while the centred range is small (≈ train
 length); for faithful long-context eval (>~4k) the host must `pip install` the `wall_attn` kernel —
 validate it (à la `verify_fla.py`) before trusting wall's 65k needle/perplexity numbers.

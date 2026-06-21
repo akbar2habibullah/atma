@@ -1,6 +1,6 @@
 # `kernel/` — FlashAttention-style Triton kernel for Polar Attention
 
-An efficient, fused Triton implementation of [Polar Attention](../POLAR_ATTENTION.md).
+An efficient, fused Triton implementation of [Polar Attention](../docs/POLAR_ATTENTION.md).
 It reproduces the validated PyTorch reductions in `model/blocks.py`
 (`polar_reduce` materialized / `polar_attention_online` streamed) to floating-point
 tolerance, but runs **7–27× faster** and uses **~5× less memory** than those paths
@@ -19,7 +19,7 @@ Polar attention factors each query's result into two length-invariant channels f
 - **magnitude** `mag` — bounded "how much", participation ratio gated by null
   confidence, `tanh`-squashed into `[0,1)`, `(B,H,T)`
 
-See [`POLAR_ATTENTION.md`](../POLAR_ATTENTION.md) §2 for the full math. The streaming
+See [`POLAR_ATTENTION.md`](../docs/POLAR_ATTENTION.md) §2 for the full math. The streaming
 formulation keeps four running accumulators — `M` (max), `L` (Σp), `S` (Σp·v), and the
 **extra** `Q2` (Σp²) needed for the participation ratio `n_eff = L²/Q2` — rescaling
 `Q2` by `α²` on each max update.

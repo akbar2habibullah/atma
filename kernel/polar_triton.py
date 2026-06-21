@@ -3,7 +3,7 @@
 Polar attention factors each query's result into a length-invariant *direction*
 channel ``c`` (unit vector) and a bounded *magnitude* channel ``mag`` derived from
 a single temperature-sharpened softmax with an EV-corrected null sink.  See
-``atma/POLAR_ATTENTION.md`` for the full derivation and ``model/blocks.py`` for the
+``atma/docs/POLAR_ATTENTION.md`` for the full derivation and ``model/blocks.py`` for the
 pure-PyTorch oracle (``polar_reduce`` materialized / ``polar_attention_online``
 streamed) that these kernels reproduce.
 

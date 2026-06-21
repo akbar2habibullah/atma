@@ -6,11 +6,11 @@ goal: give the attention layer a *length-invariant long-term memory* so the mode
 low perplexity at length **and** distant retrieval — the two properties the polar diagnosis
 showed a single attention core cannot deliver at once.
 
-> Status: integrated and parity-verified in **training** ([train/model.py](train/model.py)) and
-> the **reference** ([model/reference.py](model/reference.py)); the standalone recurrence is
-> float64-gradchecked ([verify_titans.py](verify_titans.py)). First end-to-end training runs
+> Status: integrated and parity-verified in **training** ([train/model.py](../train/model.py)) and
+> the **reference** ([model/reference.py](../model/reference.py)); the standalone recurrence is
+> float64-gradchecked ([verify_titans.py](../tests/verify_titans.py)). First end-to-end training runs
 > (2026-06-04) confirm the memory earns its cost. The inference path is **ported to the paged
-> engine and GPU-verified** (2026-06-10, NVIDIA L4: `verify.py --cuda` 30/30, `verify_fla.py`
+> engine and GPU-verified** (2026-06-10, NVIDIA L4: `python -m tests.verify --cuda` 30/30, `verify_fla.py`
 > bridge all green), and the *softmax-SWA-vs-polar ablation* (does the polar core still pay
 > for itself once memory is present?) is **deferred** — see
 > [Open & deferred work](#9-open--deferred-work).
@@ -91,14 +91,14 @@ The RMSNorm re-imposes a fixed output scale (the same reason polar projects `c` 
 sphere); the sigmoid gate lets the layer route the memory in per head-channel; `proj` is
 zero-initialized so enabling the branch on a trained polar checkpoint is a safe no-op at step 0.
 
-Implementation: [`TitansMemory`](model/blocks.py) (class), wired in
-[`PolarAttention.forward`](train/model.py) as `out = out + self.mem(x, q_t, k_t, v_t)`.
+Implementation: [`TitansMemory`](../model/blocks.py) (class), wired in
+[`PolarAttention.forward`](../train/model.py) as `out = out + self.mem(x, q_t, k_t, v_t)`.
 
 ---
 
 ## 3. Two load-bearing findings (validated in the prototype)
 
-Both were discovered in [titans_proto.py](titans_proto.py) / [verify_titans.py](verify_titans.py)
+Both were discovered in [titans_proto.py](../scripts/titans_proto.py) / [verify_titans.py](../tests/verify_titans.py)
 before touching the model, and both **corrected the original plan's premise**.
 
 ### Finding 1 — memory keys must be **L2-normalized (unit norm)**, not RMS-normed
@@ -132,7 +132,7 @@ learned **per-head and data-dependent** (some heads can hold `γ ≈ 1` for dist
 The recurrence is sequential, but it has a closed **chunkwise-parallel** form so it trains
 in-loop cheaply. There are two interchangeable backends, selected by `mem_kernel`:
 
-### `torch` — `gated_delta_chunked` ([model/blocks.py](model/blocks.py))
+### `torch` — `gated_delta_chunked` ([model/blocks.py](../model/blocks.py))
 
 A pure-PyTorch UT-transform: within a chunk the running-state coupling is removed by an exact
 unit-lower-triangular solve
@@ -181,7 +181,7 @@ measured overhead (~6–9% relative MFU, not 2×).
 
 ## 5. Configuration
 
-In [model/config.py](model/config.py):
+In [model/config.py](../model/config.py):
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -193,7 +193,7 @@ In [model/config.py](model/config.py):
 | `mem_kernel` | `"auto"` | `"auto"｜"fla"｜"torch"` gated-delta backend |
 
 > Defaults with `mem_enabled=False` / `attn_window=None` leave the model **byte-identical** to
-> plain polar attention (so [verify.py](verify.py) is unchanged). Enable `mem_enabled` and set a
+> plain polar attention (so [verify.py](../tests/verify.py) is unchanged). Enable `mem_enabled` and set a
 > finite `attn_window` together for the MAG configuration. The `FLA_CUSTOM_OP=1` env var
 > (separate from the config) is what makes the FLA path compile-clean — set it for real runs.
 
@@ -206,12 +206,12 @@ token-by-token oracles, mirroring the polar workflow:
 
 | Script | Checks |
 |---|---|
-| [verify_titans.py](verify_titans.py) | `gated_delta_chunked` == sequential scan, forward (~1e-15) + backward (~1e-14) + fp64 `gradcheck`. |
-| [verify_polar_window.py](verify_polar_window.py) | the trainable windowed polar core (band-aware backward) == a masked materialized oracle (fp64 gradcheck), windows `{None, 4, 7, 32}`. |
-| [verify_mag.py](verify_mag.py) | train == reference **bit-exact** with the memory branch active + window; zero-init `proj` verified to be an exact no-op. |
-| [verify_fla.py](verify_fla.py) | (GPU) FLA path vs the torch reference; expect `rel_err < 0.05` (bf16-vs-fp32 only). Also smoke-checks `FLA_CUSTOM_OP=1` grads. |
+| [verify_titans.py](../tests/verify_titans.py) | `gated_delta_chunked` == sequential scan, forward (~1e-15) + backward (~1e-14) + fp64 `gradcheck`. |
+| [verify_polar_window.py](../tests/verify_polar_window.py) | the trainable windowed polar core (band-aware backward) == a masked materialized oracle (fp64 gradcheck), windows `{None, 4, 7, 32}`. |
+| [verify_mag.py](../tests/verify_mag.py) | train == reference **bit-exact** with the memory branch active + window; zero-init `proj` verified to be an exact no-op. |
+| [verify_fla.py](../tests/verify_fla.py) | (GPU) FLA path vs the torch reference; expect `rel_err < 0.05` (bf16-vs-fp32 only). Also smoke-checks `FLA_CUSTOM_OP=1` grads. |
 
-The invariance sweep in [titans_proto.py](titans_proto.py) is the Finding-2 gate: memory
+The invariance sweep in [titans_proto.py](../scripts/titans_proto.py) is the Finding-2 gate: memory
 state-norm and readout RMS must be flat across `N` (256 → 16384) before any perplexity claim.
 
 ---
@@ -263,7 +263,7 @@ full polar + distractor = exact pinpoint retrieval (the needle)
 
 ### Ablation — memory is essential
 
-[eval.py](eval.py) `--no_mem` (sets `attn.mem = None` on the checkpoint) breaks the model
+[eval.py](../eval.py) `--no_mem` (sets `attn.mem = None` on the checkpoint) breaks the model
 **globally**: loss `2.8 → 5.7` at 1×, needle `0%` everywhere, baseline CE `5.98 → 8.43`. The
 trained model relies on the memory at *all* lengths — it is a general capacity/convergence
 contribution, not just a long-context add-on. (The ablation is too blunt to isolate the
@@ -288,14 +288,14 @@ Per-step **speed** ranks the reverse of quality:
 
 | File | Role |
 |---|---|
-| [model/blocks.py](model/blocks.py) | `TitansMemory` module, `gated_delta_chunked` (torch backend), `_fla_gated_delta` (FLA wrapper + `FLA_CUSTOM_OP` opaque custom ops), band-aware `_PolarOnline` backward |
-| [train/model.py](train/model.py) | `PolarAttention` memory branch (`out += self.mem(...)`) + trainable window |
-| [model/reference.py](model/reference.py) | reference mirror (train == reference parity) |
-| [model/config.py](model/config.py) | `mem_enabled`, `attn_window`, `mem_chunk`, `mem_gamma_bias`, `mem_beta_bias`, `mem_kernel` |
-| [kernel/polar_triton.py](kernel/polar_triton.py) | windowed (`WINDOW`) band mask in the polar fwd/bwd kernels (GPU band-backward **unvalidated** — see below) |
-| [titans_proto.py](titans_proto.py) | standalone oracle (sequential scan) + chunked form + invariance sweep |
-| [verify_titans.py](verify_titans.py), [verify_polar_window.py](verify_polar_window.py), [verify_mag.py](verify_mag.py), [verify_fla.py](verify_fla.py) | parity / gradcheck / integration tests |
-| [bench_mem.py](bench_mem.py) | GPU profiling harness (chunk size, tri-solve vs Neumann, dtype, eager vs compiled) |
+| [model/blocks.py](../model/blocks.py) | `TitansMemory` module, `gated_delta_chunked` (torch backend), `_fla_gated_delta` (FLA wrapper + `FLA_CUSTOM_OP` opaque custom ops), band-aware `_PolarOnline` backward |
+| [train/model.py](../train/model.py) | `PolarAttention` memory branch (`out += self.mem(...)`) + trainable window |
+| [model/reference.py](../model/reference.py) | reference mirror (train == reference parity) |
+| [model/config.py](../model/config.py) | `mem_enabled`, `attn_window`, `mem_chunk`, `mem_gamma_bias`, `mem_beta_bias`, `mem_kernel` |
+| [kernel/polar_triton.py](../kernel/polar_triton.py) | windowed (`WINDOW`) band mask in the polar fwd/bwd kernels (GPU band-backward **unvalidated** — see below) |
+| [titans_proto.py](../scripts/titans_proto.py) | standalone oracle (sequential scan) + chunked form + invariance sweep |
+| [verify_titans.py](../tests/verify_titans.py), [verify_polar_window.py](../tests/verify_polar_window.py), [verify_mag.py](../tests/verify_mag.py), [verify_fla.py](../tests/verify_fla.py) | parity / gradcheck / integration tests |
+| [bench_mem.py](../scripts/bench_mem.py) | GPU profiling harness (chunk size, tri-solve vs Neumann, dtype, eager vs compiled) |
 
 ---
 
@@ -311,20 +311,20 @@ Per-step **speed** ranks the reverse of quality:
   extend the distractor so random keys also incur a *write* penalty (memory must not memorize
   noise). Reuse the `align_loss` plumbing. **Not yet implemented.**
 - **Triton band-backward (GPU).** The windowed band mask in
-  [kernel/polar_triton.py](kernel/polar_triton.py) mirrors the validated forward + torch
+  [kernel/polar_triton.py](../kernel/polar_triton.py) mirrors the validated forward + torch
   backward but is **unvalidated on CUDA** (no GPU in the dev loop) — gradcheck it on a box.
 - **`mem_layers` perf lever.** Restricting the memory to the last N attention layers is a
   compile-agnostic overhead cut, offered but not built (overhead is already ~6–9%, so low
   priority).
 - **Inference port — done & GPU-verified** (2026-06-10). The paged engine carries the per-head
   `M` in fp32 per-sequence state tables, FLA `[K, V]` layout
-  ([inference/models/atma.py](inference/models/atma.py)): `_mem_prefill` runs FLA's
+  ([inference/models/atma.py](../inference/models/atma.py)): `_mem_prefill` runs FLA's
   `chunk_gated_delta_rule` (`initial_state`/`output_final_state` for the chunk carry),
   `_mem_decode` runs the fused in-place step kernel
-  ([kernel/gated_delta_triton.py](kernel/gated_delta_triton.py)) — one state read+write per
+  ([kernel/gated_delta_triton.py](../kernel/gated_delta_triton.py)) — one state read+write per
   step through the slot indirection; the pure-torch paths remain as CPU fallback. Verified on
-  L4: `verify.py --cuda` 30/30 and `verify_fla.py`'s inference-bridge checks (layout, chunk
+  L4: `python -m tests.verify --cuda` 30/30 and `verify_fla.py`'s inference-bridge checks (layout, chunk
   carry, decode continuity, step kernel) all ≤ 0.005. The state is the dominant decode cost
-  at large batch (~512 KB/seq/layer fp32) — see [docs/inference.md](docs/inference.md).
+  at large batch (~512 KB/seq/layer fp32) — see [docs/inference.md](inference.md).
 - **Momentum / deep memory.** Titans' momentum term (`η_t`) and the deep-MLP memory are deferred
   — revisit only if the linear gated-delta version caps out.

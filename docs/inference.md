@@ -28,7 +28,7 @@ print(outputs[0]["text"])
 ## Decoding performance — Polar Attention + Titans memory (current architecture)
 
 Model size: 378.22M params (16 num_layers + 1024 hidden_dim, `mem_enabled=True`,
-`attn_window=1024`). Measured 2026-06-10 on NVIDIA L4 via `python bench_inference.py`
+`attn_window=1024`). Measured 2026-06-10 on NVIDIA L4 via `python -m scripts.bench_inference`
 (prompt ~128 words, 256 generated tokens per sequence, kvcache_block_size=256,
 CUDA graphs on):
 

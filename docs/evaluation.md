@@ -1,6 +1,6 @@
 # Length Extrapolation & Long-Range Retrieval
 
-Polar Attention is designed to **train short, infer long**. All evidence below is produced by [eval.py](../eval.py) and runs on a single 24 GB L4. See [POLAR_ATTENTION.md](../POLAR_ATTENTION.md) for the mechanism.
+Polar Attention is designed to **train short, infer long**. All evidence below is produced by [eval.py](../eval.py) and runs on a single 24 GB L4. See [POLAR_ATTENTION.md](POLAR_ATTENTION.md) for the mechanism.
 
 ## 1. Polar bounds extrapolation; softmax does not
 
@@ -34,7 +34,7 @@ Without the distractor, retrieval falls off a cliff just past the training lengt
 
 ## 3. The Titans memory (MAG) closes the perplexity-vs-retrieval gap
 
-Adding the [Titans compression memory](../TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`) gives a model that holds **both** properties at once. Trained at `seq_len=2048` with the window, evaluated on coherent long documents (finepdfs):
+Adding the [Titans compression memory](TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`) gives a model that holds **both** properties at once. Trained at `seq_len=2048` with the window, evaluated on coherent long documents (finepdfs):
 
 - **Perplexity extrapolation reverses.** Full attention becomes *best and monotonic* — `1.93 @ 64×` — where polar-only had full attention as the **worst** option (`~3.21 @ 64×`). The ~1.3-nat gain is attributable to the memory, not the window: the polar core trains at the same `N ≤ 1024` operating point either way, so the memory is the only new variable.
 - **Retrieval flattens at distance.** The memory is a *lossy gist* (it cannot exact-recall a random needle — that stays the job of full polar + the distractor), but the combined run trades a little short-range accuracy for a much flatter long tail:
@@ -46,7 +46,7 @@ Adding the [Titans compression memory](../TITANS_MEMORY.md) (`mem_enabled=True`,
 
 The short-range dip is the **window** excluding distance-2048 keys from attention training, not memory harm. Without the distractor the MAG run retrieves at chance levels (27 % → 12 %): the memory supplies perplexity, the distractor supplies pinpoint recall.
 
-**Ablation — `--no_mem` confirms the memory is load-bearing.** Stripping the memory from a trained MAG checkpoint breaks it globally (loss `2.8 → 5.7` at 1×, needle `0 %` everywhere): the model uses the memory at *all* lengths, not just long context. See [TITANS_MEMORY.md §7](../TITANS_MEMORY.md#7-empirical-results) for the full numbers and the ~6–9% MFU overhead.
+**Ablation — `--no_mem` confirms the memory is load-bearing.** Stripping the memory from a trained MAG checkpoint breaks it globally (loss `2.8 → 5.7` at 1×, needle `0 %` everywhere): the model uses the memory at *all* lengths, not just long context. See [TITANS_MEMORY.md §7](TITANS_MEMORY.md#7-empirical-results) for the full numbers and the ~6–9% MFU overhead.
 
 ## Choosing an attention mode (workload-dependent)
 
@@ -54,7 +54,7 @@ A sliding window is **retrieval-blind** past its width, while full Polar attenti
 
 - **Plain language modeling / locally-coherent generation** → sliding window ≈ training length (near-optimal perplexity, clean extrapolation, no extra cost).
 - **Tasks needing recall of specific distant content** → full Polar attention with `num_random_keys > 0` (the only setting that retrieves far).
-- **Both at once** → enable the [Titans memory](../TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`). The bounded-pool recurrent memory trained in-loop is what delivers in-distribution perplexity *and* distant recall together (§3) — at ~6–9% MFU overhead.
+- **Both at once** → enable the [Titans memory](TITANS_MEMORY.md) (`mem_enabled=True`, `attn_window=1024`). The bounded-pool recurrent memory trained in-loop is what delivers in-distribution perplexity *and* distant recall together (§3) — at ~6–9% MFU overhead.
 
 ## `eval.py` reference
 

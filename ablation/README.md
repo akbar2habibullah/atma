@@ -1,8 +1,8 @@
 # Atma full-grid ablation
 
 A complete **120-cell factorial** over the architecture recipe space, plus a multi-GPU
-runner and an interactive static-HTML dashboard. See [TITANS_MEMORY.md](../TITANS_MEMORY.md)
-/ [POLAR_ATTENTION.md](../POLAR_ATTENTION.md) for the architecture being ablated.
+runner and an interactive static-HTML dashboard. See [TITANS_MEMORY.md](../docs/TITANS_MEMORY.md)
+/ [POLAR_ATTENTION.md](../docs/POLAR_ATTENTION.md) for the architecture being ablated.
 
 ## The grid (5 × 2 × 2 × 2 × 3 = 120)
 
@@ -58,7 +58,7 @@ eval the core automatically uses Tilde's Triton kernel **if `wall_attn` is impor
 device** (falling back safely otherwise). **Faithful long-context eval (>~4k) needs that kernel**
 — `pip install` the `wall_attn` package on the host and validate it (à la `verify_fla.py`) before
 trusting wall's 65k needle/perplexity numbers; without it the fallback recenters+clamps the gate
-prefix-sum and only approximates past train length. See [FUTURE.md §4](../FUTURE.md).
+prefix-sum and only approximates past train length. See [FUTURE.md §4](../docs/FUTURE.md).
 
 > The full flat set is also available (`python -m ablation.generate_configs --out ablation/configs`
 > → 120 `*.json`). On a single host with multiple GPUs that *do* share a filesystem, point one

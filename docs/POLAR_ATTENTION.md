@@ -4,10 +4,10 @@ A length-invariant replacement for softmax scaled-dot-product attention (SDPA), 
 in place of `CausalSelfAttention` in the atma model. The goal: **train at short
 sequence length, infer at any length.**
 
-> Status: integrated and parity-verified in **training** ([train/model.py](train/model.py)),
-> the **reference** ([model/reference.py](model/reference.py)), and the **paged inference
-> engine** ([inference/models/atma.py](inference/models/atma.py); prefill kernel + GQA-grouped
-> paged decode kernel, verified on GPU via `verify.py --cuda`, 30/30). See
+> Status: integrated and parity-verified in **training** ([train/model.py](../train/model.py)),
+> the **reference** ([model/reference.py](../model/reference.py)), and the **paged inference
+> engine** ([inference/models/atma.py](../inference/models/atma.py); prefill kernel + GQA-grouped
+> paged decode kernel, verified on GPU via `python -m tests.verify --cuda`, 30/30). See
 > [Limitations](#limitations--deferred-work).
 
 ---
@@ -150,14 +150,14 @@ prevents collapse). Disabled when `num_random_keys = 0` (the default).
 
 > The polar-Zipf orthogonality regularizer from the original proposal was **deferred** —
 > it was not load-bearing in validation. The existing residual-stream `sigreg`
-> ([train/reg.py](train/reg.py)) still runs.
+> ([train/reg.py](../train/reg.py)) still runs.
 
 ---
 
 ## 5. Memory: online (FlashAttention-style) softmax
 
 The materialized path builds the full `(B, H, T, T)` score matrix — `O(T²)` memory. The
-**online** path ([`polar_attention_online`](model/blocks.py)) streams keys in blocks of
+**online** path ([`polar_attention_online`](../model/blocks.py)) streams keys in blocks of
 `k_block`, maintaining running accumulators, for **`O(B·H·T·k_block)` memory in both the
 forward and backward passes**.
 
@@ -193,13 +193,13 @@ oracle in forward and backward to ~1e-15 (see [§9 Verification](#9-verification
 > query-blocking would make it fully `O(k_block)`; deferred until query-dim memory is the
 > bottleneck.
 
-### FlashAttention-style Triton kernel ([kernel/polar_triton.py](kernel/polar_triton.py))
+### FlashAttention-style Triton kernel ([kernel/polar_triton.py](../kernel/polar_triton.py))
 
 A fused Triton kernel implements the same streaming reduction with **query-blocking too**
 (fully `O(block)` memory) and runs on tensor cores. It reproduces the online path to
 floating-point tolerance (~3e-7 fp32; gradchecked-oracle parity on all inputs and params)
 and is **7–27× faster** with **~5× less memory** than the PyTorch online/materialized
-paths on an L4 (see [kernel/README.md](kernel/README.md)). The backward keeps the cheap
+paths on an L4 (see [kernel/README.md](../kernel/README.md)). The backward keeps the cheap
 per-query preamble in PyTorch and runs only the two `O(T²)` matmul loops (`dq`, `dk/dv`)
 as Triton kernels. Opt in with `AtmaConfig(attn_kernel="triton")`; forward-only
 `polar_attention_fwd` serves inference (causal prefill, or `is_causal=False` + explicit
@@ -209,7 +209,7 @@ as Triton kernels. Opt in with `AtmaConfig(attn_kernel="triton")`; forward-only
 
 ## 6. Architecture & integration
 
-`PolarAttention` subclasses `AtmaAttnBase` ([model/blocks.py](model/blocks.py)) and keeps
+`PolarAttention` subclasses `AtmaAttnBase` ([model/blocks.py](../model/blocks.py)) and keeps
 the surrounding architecture identical to `CausalSelfAttention`:
 
 - **Projections.** `q` (outputs `2·hdim`: query + sigmoid gate), `k`, `v`
@@ -229,7 +229,7 @@ the surrounding architecture identical to `CausalSelfAttention`:
   | `len_gain_raw` | `(H,)` | `-1.0` | `softplus ≈ 0.31` (temperature gain) |
   | `mag_beta_raw` | `(H,)` | `-1.5` | `softplus ≈ 0.20` (magnitude slope) |
 
-The shared reduction lives in [model/blocks.py](model/blocks.py) (`polar_temp_null`,
+The shared reduction lives in [model/blocks.py](../model/blocks.py) (`polar_temp_null`,
 `polar_reduce`, `polar_attention_online`) so the **training and reference forward passes
 call identical math** — train == reference is **bit-exact** in the default (materialized)
 configuration.
@@ -238,7 +238,7 @@ configuration.
 
 ## 7. Configuration
 
-In [model/config.py](model/config.py):
+In [model/config.py](../model/config.py):
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -273,22 +273,22 @@ In [model/config.py](model/config.py):
 
 | Script | Checks |
 |---|---|
-| [verify.py](verify.py) | per-layer train == reference == inference (prefill + decode) parity for RMSNorm, MLP, LFM2 conv, **Polar attention** (incl. window + Titans mem + chunked prefill), full blocks, and the full model logits. 30/30. |
-| [kernel/test_polar_kernel.py](kernel/test_polar_kernel.py) | Triton kernel vs the gradchecked oracle: forward + all gradients (fp32/bf16/fp16), edge shapes (T=1, T<block, odd T), non-contiguous inputs, `n_keys=0` padding. 104/104. |
-| [kernel/test_integration.py](kernel/test_integration.py) | `train.model` PolarAttention + full Model with `attn_kernel="triton"` vs the torch path. 21/21. |
+| [verify.py](../tests/verify.py) | per-layer train == reference == inference (prefill + decode) parity for RMSNorm, MLP, LFM2 conv, **Polar attention** (incl. window + Titans mem + chunked prefill), full blocks, and the full model logits. 30/30. |
+| [kernel/test_polar_kernel.py](../kernel/test_polar_kernel.py) | Triton kernel vs the gradchecked oracle: forward + all gradients (fp32/bf16/fp16), edge shapes (T=1, T<block, odd T), non-contiguous inputs, `n_keys=0` padding. 104/104. |
+| [kernel/test_integration.py](../kernel/test_integration.py) | `train.model` PolarAttention + full Model with `attn_kernel="triton"` vs the torch path. 21/21. |
 
-Run: `python verify.py`, `python -m kernel.test_polar_kernel`, `python -m kernel.test_integration`.
+Run: `python -m tests.verify`, `python -m kernel.test_polar_kernel`, `python -m kernel.test_integration`.
 
 ---
 
 ## 10. Limitations & deferred work
 
-- **Inference ported & GPU-verified** (2026-06-10). [inference/models/atma.py](inference/models/atma.py)
+- **Inference ported & GPU-verified** (2026-06-10). [inference/models/atma.py](../inference/models/atma.py)
   runs polar in the paged engine: `polar_attention_fwd` per sequence in prefill (with prefix
   K/V gather for chunked prefill), the GQA-grouped paged `polar_attention_decode` kernel in
   decode (reads the paged KV cache via block tables; CUDA-graph capturable), window + Titans
   memory included. `verify.py` passes 30/30 on CPU and 30/30 with `--cuda` (NVIDIA L4).
-  Decode throughput: ~19.3k tok/s @ bs=512 on L4 (see [docs/inference.md](docs/inference.md)).
+  Decode throughput: ~19.3k tok/s @ bs=512 on L4 (see [docs/inference.md](inference.md)).
 - **Query-dim memory.** The online path is `O(T)` in the query dimension (see §5).
 - **Polar-Zipf regularizer** deferred (see §4).
 - **`CausalSelfAttention`** classes remain in the codebase but are unused (the blocks now
@@ -300,10 +300,10 @@ Run: `python verify.py`, `python -m kernel.test_polar_kernel`, `python -m kernel
 
 | File | Role |
 |---|---|
-| [kernel/polar_triton.py](kernel/polar_triton.py) | FlashAttention-style Triton kernel: fused fwd + hand-written bwd (`polar_attention`, `polar_attention_fwd`); 7–27× faster than the PyTorch paths |
-| [model/blocks.py](model/blocks.py) | shared `polar_temp_null`, `polar_reduce` (materialized), `polar_attention_online` (streaming custom autograd); re-exports the Triton kernel |
-| [train/model.py](train/model.py) | training `PolarAttention` (+ distractor → `align_loss`, online flag) |
-| [model/reference.py](model/reference.py) | reference `PolarAttention` (materialized oracle) |
-| [model/config.py](model/config.py) | `num_random_keys`, `attn_online`, `attn_k_block`, `attn_kernel` |
-| [inference/generate.py](inference/generate.py) | standalone polar inference (checkpoint-seek + random fallback, Triton kernel) |
-| [verify.py](verify.py), [kernel/test_polar_kernel.py](kernel/test_polar_kernel.py), [kernel/test_integration.py](kernel/test_integration.py) | parity, gradcheck-oracle, integration tests |
+| [kernel/polar_triton.py](../kernel/polar_triton.py) | FlashAttention-style Triton kernel: fused fwd + hand-written bwd (`polar_attention`, `polar_attention_fwd`); 7–27× faster than the PyTorch paths |
+| [model/blocks.py](../model/blocks.py) | shared `polar_temp_null`, `polar_reduce` (materialized), `polar_attention_online` (streaming custom autograd); re-exports the Triton kernel |
+| [train/model.py](../train/model.py) | training `PolarAttention` (+ distractor → `align_loss`, online flag) |
+| [model/reference.py](../model/reference.py) | reference `PolarAttention` (materialized oracle) |
+| [model/config.py](../model/config.py) | `num_random_keys`, `attn_online`, `attn_k_block`, `attn_kernel` |
+| [inference/generate.py](../inference/generate.py) | standalone polar inference (checkpoint-seek + random fallback, Triton kernel) |
+| [verify.py](../tests/verify.py), [kernel/test_polar_kernel.py](../kernel/test_polar_kernel.py), [kernel/test_integration.py](../kernel/test_integration.py) | parity, gradcheck-oracle, integration tests |

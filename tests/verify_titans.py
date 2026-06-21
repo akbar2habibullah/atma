@@ -11,7 +11,7 @@ forward AND backward parity. Exits non-zero on any failure.
 import sys
 import torch
 
-from titans_proto import gated_delta_sequential, gated_delta_chunked, make_inputs
+from scripts.titans_proto import gated_delta_sequential, gated_delta_chunked, make_inputs
 
 FAILS = []
 
