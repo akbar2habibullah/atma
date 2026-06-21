@@ -196,6 +196,27 @@
   footer{border-top:1px solid var(--panel-brd); margin-top:48px; padding:40px 0 60px; color:var(--dim)}
   footer .wrap{display:flex; flex-wrap:wrap; gap:18px; justify-content:space-between; align-items:center}
   .hr{height:1px; background:var(--panel-brd); border:0; margin:8px 0}
+
+  /* ---- responsive: results pair + small-screen spacing ---- */
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:760px){
+    .grid2{grid-template-columns:1fr}
+    header.hero{padding:56px 0 28px}
+    section{padding:24px 0}
+    .megacta{padding:28px 20px}
+    .tldr{padding:18px 18px; font-size:15.5px}
+    .eq{padding:12px 12px}
+    .stats{gap:22px}
+    .stat .n{font-size:26px}
+  }
+  @media(max-width:440px){
+    .wrap{padding:0 16px}
+    header.hero h1{font-size:clamp(30px,11vw,40px)}
+    .btn{padding:10px 15px; font-size:13.5px}
+    .navlinks{gap:14px} .navlinks .cta{padding:7px 11px}
+    footer .wrap{justify-content:flex-start; text-align:left}
+    footer .wrap div[style*="text-align:right"]{text-align:left !important}
+  }
 </style>
 </head>
 <body>
@@ -587,7 +608,7 @@
     <h2>Train at 2K, evaluate to 64K</h2>
     <p class="lead" style="margin-bottom:22px">370M parameters (16 layers, 12 gated-conv + 4 attention), ~1B tokens of FineWeb-Edu, sequence length 2K. Every cell evaluates at full context. The winning recipe is <span class="mono">polar + memory</span> (no window, no distractor, baseline regularizer).</p>
 
-    <div class="grid3" style="grid-template-columns:1fr 1fr; gap:18px">
+    <div class="grid2">
       <div>
         <h3 style="font-size:17px; color:var(--mut); font-weight:600; margin:0 0 10px">Needle retrieval accuracy</h3>
         <div class="tblwrap">
