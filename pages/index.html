@@ -177,6 +177,17 @@
      background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.008))}
   .pipe svg{width:100%; height:auto; display:block}
 
+  /* viz / animation */
+  .vizgrid{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:860px){.vizgrid{grid-template-columns:1fr}}
+  .viz{margin:0; border:1px solid var(--panel-brd); border-radius:16px; padding:18px 18px 14px;
+     background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.008))}
+  .viz figcaption{font-family:'Space Grotesk'; font-size:15.5px; color:var(--ink); margin-bottom:12px}
+  .viz figcaption b{font-weight:600}
+  .viz svg{width:100%; height:auto; display:block; border-radius:10px; background:rgba(0,0,0,.18)}
+  .vcap{color:var(--mut); font-size:13px; margin:13px 2px 0; line-height:1.55}
+  .vcap b.good{color:var(--mint)} .vcap b.bad{color:#ff7a7a}
+
   /* bibtex */
   pre.bib{background:rgba(0,0,0,.35); border:1px solid var(--panel-brd); border-radius:12px;
      padding:18px 20px; overflow-x:auto; font-size:13px; color:var(--mut); line-height:1.6}
@@ -198,6 +209,7 @@
     <div class="navlinks">
       <a class="hidem" href="#abstract">Abstract</a>
       <a class="hidem" href="#method">Method</a>
+      <a class="hidem" href="#intuition">Intuition</a>
       <a class="hidem" href="#derivation">Derivation</a>
       <a class="hidem" href="#machinery">Systems</a>
       <a class="hidem" href="#results">Results</a>
@@ -344,6 +356,65 @@
     <p class="lead" style="margin-top:22px">
       The extreme-value-corrected null floor (<span class="mono">+ slope&middot;&radic;log&nbsp;n</span>) tracks the noise maximum so pure noise never reads as a match at long context; a length temperature (<span class="mono">1 + softplus&middot;log&nbsp;n</span>) sharpens the softmax as context grows. A small <b>distractor objective</b> pushes random keys below the floor, widening the signal/noise margin &mdash; this is what buys exact retrieval far beyond the training length. The full derivation follows.
     </p>
+  </div>
+</section>
+
+<!-- INTUITION / ANIMATION -->
+<section id="intuition">
+  <div class="wrap">
+    <p class="eyebrow">Intuition</p>
+    <h2>See it move</h2>
+    <p class="lead" style="margin-bottom:22px">Two animations for the two ideas: why polar stays bounded as context grows, and how the memory writes a token once and recalls it later.</p>
+
+    <div class="vizgrid">
+      <figure class="viz">
+        <figcaption><b>Polar Attention</b> &mdash; direction locks, magnitude saturates</figcaption>
+        <svg id="vizPolar" viewBox="0 0 520 300" role="img" aria-label="Animation: as context length grows, softmax output norm blows up while polar direction stays fixed and magnitude stays bounded">
+          <text x="22" y="26" fill="#9aa3bd" font-size="12" font-family="Inter">context length</text>
+          <text id="pCtx" x="22" y="54" fill="#e8ebf5" font-size="24" font-weight="700" font-family="Space Grotesk">2K</text>
+          <line x1="26" y1="150" x2="288" y2="150" stroke="rgba(255,255,255,.12)"/>
+          <circle cx="26" cy="150" r="5" fill="#6ea8ff"/>
+          <text x="20" y="173" fill="#6b7390" font-size="10" font-family="JetBrains Mono, monospace">q</text>
+          <g id="pKeys"></g>
+          <text x="150" y="118" fill="#6b7390" font-size="10.5" font-family="Inter">keys (signal + noise)</text>
+          <!-- unit circle -->
+          <circle cx="412" cy="116" r="72" fill="none" stroke="rgba(255,255,255,.14)"/>
+          <circle cx="412" cy="116" r="2.5" fill="#9aa3bd"/>
+          <text x="412" y="208" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">direction c (unit)</text>
+          <line id="pGhost" x1="412" y1="116" x2="473" y2="78" stroke="#7d8597" stroke-width="2" stroke-dasharray="4 4"/>
+          <line id="pArrow" x1="412" y1="116" x2="473" y2="78" stroke="#4fe3b0" stroke-width="3"/>
+          <circle id="pTip" cx="473" cy="78" r="4.5" fill="#4fe3b0"/>
+          <!-- meters -->
+          <text x="22" y="244" fill="#9aa3bd" font-size="11" font-family="Inter">softmax &#8214;out&#8214;</text>
+          <rect x="150" y="236" width="320" height="10" rx="5" fill="rgba(255,255,255,.06)"/>
+          <rect id="pSoftBar" x="150" y="236" width="18" height="10" rx="5" fill="#ff7a7a"/>
+          <text id="pSoftVal" x="500" y="245" fill="#ff7a7a" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">1.0</text>
+          <text x="22" y="276" fill="#9aa3bd" font-size="11" font-family="Inter">polar mag</text>
+          <rect x="150" y="268" width="320" height="10" rx="5" fill="rgba(255,255,255,.06)"/>
+          <rect id="pMagBar" x="150" y="268" width="150" height="10" rx="5" fill="#4fe3b0"/>
+          <text id="pMagVal" x="500" y="277" fill="#4fe3b0" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">0.66</text>
+        </svg>
+        <p class="vcap">As context grows toward 64&times;, softmax weight dilutes and its output norm blows up (<b class="bad">red</b>); polar locks the <b>direction</b> to a unit vector and keeps the <b>magnitude</b> bounded in [0,1) (<b class="good">green</b>).</p>
+      </figure>
+
+      <figure class="viz">
+        <figcaption><b>Titans Memory</b> &mdash; gated-delta write &amp; recall</figcaption>
+        <svg id="vizTitans" viewBox="0 0 520 300" role="img" aria-label="Animation: tokens stream into a matrix memory; a needle token is written once and recalled by a later query while the state norm stays bounded">
+          <text x="22" y="26" fill="#9aa3bd" font-size="12" font-family="Inter">token stream</text>
+          <g id="tStream"></g>
+          <text id="tStatus" x="498" y="26" fill="#9aa3bd" font-size="11.5" text-anchor="end" font-family="JetBrains Mono, monospace"></text>
+          <text x="200" y="92" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">memory M (per head)</text>
+          <g id="tGrid"></g>
+          <text x="392" y="92" fill="#9aa3bd" font-size="11" text-anchor="middle" font-family="Inter">readout r = M&middot;q</text>
+          <g id="tRead"></g>
+          <text x="22" y="282" fill="#9aa3bd" font-size="11" font-family="Inter">state norm (bounded)</text>
+          <rect x="170" y="274" width="326" height="9" rx="4.5" fill="rgba(255,255,255,.06)"/>
+          <rect id="tNorm" x="170" y="274" width="150" height="9" rx="4.5" fill="#6ea8ff"/>
+        </svg>
+        <p class="vcap">Each token: the state <span class="mono">M</span> decays, then takes a rank-1 write. A <b style="color:var(--pink)">needle</b> is written once; a later <b style="color:var(--blue)">query</b> reads it back &mdash; while the state norm stays <b class="good">flat in length</b> (self-stabilizing).</p>
+      </figure>
+    </div>
+    <p class="note" style="margin-top:18px">Schematic, built to convey the mechanism &mdash; not a live model. <span style="opacity:.7">Animations pause off-screen and respect <span class="mono">prefers-reduced-motion</span>.</span></p>
   </div>
 </section>
 
@@ -563,7 +634,7 @@
       <p>Five regularizers &times; distractor on/off &times; memory on/off &times; window on/off &times; three attention cores (<span class="mono">polar</span>, <span class="mono">softmax/nope</span>, <span class="mono">rope</span>) &mdash; with a second batch adding <span class="mono">wall</span> attention. Every cell: clean &amp; junk perplexity and needle accuracy at six lengths, plus MFU and wall-clock &mdash; in one interactive dashboard.</p>
       <div class="stats">
         <div class="stat"><div class="n grad">120</div><div class="l">cells in the grid</div></div>
-        <div class="stat"><div class="n grad">91</div><div class="l">completed so far</div></div>
+        <div class="stat"><div class="n grad">92</div><div class="l">completed so far</div></div>
         <div class="stat"><div class="n grad">6</div><div class="l">eval lengths / cell</div></div>
         <div class="stat"><div class="n grad">32&times;</div><div class="l">max extrapolation</div></div>
       </div>
@@ -607,6 +678,151 @@
     </div>
   </div>
 </footer>
+
+<script>
+/* Self-contained explainer animations (no deps). Pause off-screen; honor reduced-motion. */
+(function () {
+  var SVG = "http://www.w3.org/2000/svg";
+  function mk(tag, attrs) {
+    var e = document.createElementNS(SVG, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  var $ = function (id) { return document.getElementById(id); };
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------------- POLAR ---------------- */
+  var pKeys = $("pKeys"), keyDots = [];
+  if (pKeys) {
+    for (var i = 0; i < 36; i++) {
+      var x = 44 + i * 6.7, jy = 150 + (((i * 37) % 23) - 11) * 0.9;
+      var d = mk("circle", { cx: x.toFixed(1), cy: jy.toFixed(1), r: i < 3 ? 4.2 : 2.6,
+        fill: i < 3 ? "#4fe3b0" : "#55607a", opacity: 0 });
+      pKeys.appendChild(d); keyDots.push(d);
+    }
+  }
+  var pCtx = $("pCtx"), pGhost = $("pGhost"), pSoftBar = $("pSoftBar"), pSoftVal = $("pSoftVal"),
+      pMagBar = $("pMagBar"), pMagVal = $("pMagVal");
+  function polar(ms) {
+    if (!pCtx) return;
+    var t = (ms / 6000) % 1;
+    var m = Math.pow(2, t * 5);                 // 1x .. 32x
+    pCtx.textContent = Math.round(2 * m) + "K"; // 2K .. 64K
+    var vis = Math.round(3 + (m - 1) / 31 * 33);
+    for (var i = 0; i < keyDots.length; i++)
+      keyDots[i].setAttribute("opacity", i < vis ? (i < 3 ? 1 : 0.5) : 0.05);
+    // softmax direction wobbles more as context grows; polar arrow stays fixed
+    var base = -32 * Math.PI / 180;
+    var wob = Math.sin(ms / 480) * ((m - 1) / 31) * (30 * Math.PI / 180);
+    var ga = base + wob;
+    pGhost.setAttribute("x2", (412 + 72 * Math.cos(ga)).toFixed(1));
+    pGhost.setAttribute("y2", (116 + 72 * Math.sin(ga)).toFixed(1));
+    // softmax output norm blows up 1 -> 13.55 (the measured 512x figure, here over the visible sweep)
+    var soft = 1 + 12.55 * (Math.log(m) / Math.log(2)) / 5;
+    pSoftBar.setAttribute("width", (18 + (soft - 1) / 12.55 * 302).toFixed(1));
+    pSoftVal.textContent = soft.toFixed(1);
+    // polar magnitude bounded & ~invariant
+    var mag = 0.66 + 0.02 * Math.sin(ms / 850);
+    pMagBar.setAttribute("width", (mag * 320).toFixed(1));
+    pMagVal.textContent = mag.toFixed(2);
+  }
+
+  /* ---------------- TITANS ---------------- */
+  var NT = 14, NEEDLE = 4, QUERY = 11, G = 6;
+  var tStream = $("tStream"), tGrid = $("tGrid"), tRead = $("tRead"),
+      tNorm = $("tNorm"), tStatus = $("tStatus");
+  var toks = [], cells = [], reads = [];
+  var M = [], Mdisp = [], readT = [], readD = [], needle = [];
+  if (tStream) {
+    for (var k = 0; k < NT; k++) {
+      var tx = 22 + k * 19.6;
+      var r = mk("rect", { x: tx.toFixed(1), y: 34, width: 15, height: 15, rx: 3,
+        fill: k === NEEDLE ? "#e85bbf" : (k === QUERY ? "#6ea8ff" : "#39425e"), opacity: 0.28 });
+      tStream.appendChild(r); toks.push(r);
+    }
+  }
+  if (tGrid) {
+    for (var rr = 0; rr < G; rr++) {
+      cells[rr] = []; M[rr] = []; Mdisp[rr] = [];
+      for (var cc = 0; cc < G; cc++) {
+        var gx = 134 + cc * 22, gy = 100 + rr * 22;
+        var rect = mk("rect", { x: gx, y: gy, width: 20, height: 20, rx: 3, fill: "#6ea8ff", opacity: 0.06 });
+        tGrid.appendChild(rect); cells[rr][cc] = rect; M[rr][cc] = 0.05; Mdisp[rr][cc] = 0.05;
+      }
+    }
+  }
+  if (tRead) {
+    for (var s = 0; s < G; s++) {
+      var ry = 100 + s * 22;
+      var seg = mk("rect", { x: 372, y: ry, width: 20, height: 20, rx: 3, fill: "#4fe3b0", opacity: 0.08 });
+      tRead.appendChild(seg); reads.push(seg); readT[s] = 0.08; readD[s] = 0.08; needle[s] = 0.35 + 0.6 * (((s * 53) % 7) / 7);
+    }
+  }
+  var ti = -1;
+  function titansStep() {
+    ti = (ti + 1) % NT;
+    for (var i = 0; i < toks.length; i++) toks[i].setAttribute("opacity", i === ti ? 1 : 0.28);
+    // decay
+    for (var rr = 0; rr < G; rr++) for (var cc = 0; cc < G; cc++) M[rr][cc] *= 0.86;
+    if (ti === NEEDLE) {
+      // write a recognizable bright pattern (anti-diagonal + needle column)
+      for (var r2 = 0; r2 < G; r2++) { M[r2][G - 1 - r2] = 1.0; M[r2][2] = 0.5 + 0.5 * needle[r2]; }
+      for (var s2 = 0; s2 < G; s2++) readT[s2] = 0.1;
+      if (tStatus) { tStatus.textContent = "write needle"; tStatus.setAttribute("fill", "#e85bbf"); }
+    } else if (ti === QUERY) {
+      // recall: readout reflects the needle pattern
+      for (var s3 = 0; s3 < G; s3++) readT[s3] = needle[s3];
+      if (tStatus) { tStatus.textContent = "recall ✓"; tStatus.setAttribute("fill", "#4fe3b0"); }
+    } else {
+      var c = ti % G;
+      for (var r3 = 0; r3 < G; r3++) M[r3][c] = Math.min(1, M[r3][c] + 0.18 + 0.22 * (((r3 * (ti + 1)) % 5) / 4));
+      for (var s4 = 0; s4 < G; s4++) readT[s4] = 0.08 + 0.04 * (((s4 + ti) % 3));
+      if (tStatus) { tStatus.textContent = "write"; tStatus.setAttribute("fill", "#9aa3bd"); }
+    }
+  }
+  function titansRender() {
+    var sum = 0;
+    for (var rr = 0; rr < G; rr++) for (var cc = 0; cc < G; cc++) {
+      Mdisp[rr][cc] += (M[rr][cc] - Mdisp[rr][cc]) * 0.18;
+      var v = Mdisp[rr][cc];
+      cells[rr][cc].setAttribute("opacity", (0.06 + v * 0.92).toFixed(3));
+      cells[rr][cc].setAttribute("fill", v > 0.72 ? "#b57bff" : "#6ea8ff");
+      sum += v;
+    }
+    for (var s = 0; s < G; s++) {
+      readD[s] += (readT[s] - readD[s]) * 0.18;
+      reads[s].setAttribute("opacity", (0.08 + readD[s] * 0.92).toFixed(3));
+    }
+    // Frobenius-ish energy mapped into a deliberately narrow band -> visibly "bounded"
+    var nrm = Math.max(0, Math.min(1, (sum - 8) / 12));
+    tNorm.setAttribute("width", (150 + nrm * 90).toFixed(1));
+  }
+
+  /* ---------------- driver ---------------- */
+  var running = false, raf = 0, last = 0, acc = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    var dt = ts - last; last = ts;
+    polar(ts);
+    acc += dt;
+    if (acc > 620) { acc = 0; titansStep(); }
+    titansRender();
+    if (running) raf = requestAnimationFrame(frame);
+  }
+  function staticFrame() { polar(2600); for (var i = 0; i < 12; i++) titansStep(); for (var j = 0; j < 30; j++) titansRender(); }
+
+  var sec = $("intuition");
+  if (!sec) return;
+  if (reduce) { staticFrame(); return; }
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (entries) {
+      var vis = entries[0].isIntersecting;
+      if (vis && !running) { running = true; last = 0; raf = requestAnimationFrame(frame); }
+      else if (!vis && running) { running = false; cancelAnimationFrame(raf); }
+    }, { threshold: 0.12 }).observe(sec);
+  } else { running = true; raf = requestAnimationFrame(frame); }
+})();
+</script>
 
 </body>
 </html>
