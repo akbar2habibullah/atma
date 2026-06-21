@@ -66,15 +66,13 @@ print(outputs[0]["text"])
 
 ## Highlights — train short, infer long
 
-Polar Attention keeps the attention output bounded at any length, where softmax dilutes and explodes:
+The full **120-cell ablation** (identical 370M models, `seq_len=2048`, ~1B tokens, evaluated out to 64K = 32× train length; browsable in [pages/dashboard.html](pages/dashboard.html)) settles the recipe:
 
-| validation loss @ 512× context | Softmax | **Polar** |
-|---|---|---|
-| (trained at seq_len 4096) | 13.55 | **6.48** |
+- **The Titans memory is the unlock.** The winning recipe — **full polar + memory, no window, no distractor** — holds induction-needle retrieval **flat at 91–98% across the entire 2K→64K sweep** (`94%` length-weighted) while clean-document perplexity *improves monotonically* to **`1.96 @ 64×`**. Convergence and quality rank **Polar+Titans > Softmax+Titans > Polar-only**, at ~6–9% MFU overhead (`FLA_CUSTOM_OP=1`).
+- **Polar earns its keep at extreme length.** Paired with the memory, polar holds `93%` needle / `1.96` ppl at 64×, where softmax + the *same* memory collapses to `16%` / `2.34` (its `n_eff` blows up). Without any memory, neither core extrapolates — both needle-collapse past ~4×.
+- **Simpler is better.** With the memory present, the distractor and sliding window are no longer needed — both *reduce* needle accuracy in the sweep.
 
-And the optional distractor loss (`num_random_keys > 0`) extends long-range **retrieval** dramatically — an induction needle planted **32× beyond** the training length is still recalled (6.3% vs 0% / chance without it). Full evidence, the perplexity-vs-window analysis, and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
-
-Adding the **Titans memory** (MAG) closes the rest of the gap: full-attention perplexity becomes *best and monotonic* (`1.93 @ 64×`, a reversal of polar-only where full was worst), the needle is recalled at `42%` out to `65536` tokens (64×), and convergence/perplexity now ranks **Polar+Titans > Causal > Polar-only** — at ~6–9% MFU overhead with the FLA fused kernel (`FLA_CUSTOM_OP=1`). Details: **[TITANS_MEMORY.md](docs/TITANS_MEMORY.md)**.
+Full per-length tables and the `eval.py` guide: **[docs/evaluation.md](docs/evaluation.md)**.
 
 ## Documentation
 
