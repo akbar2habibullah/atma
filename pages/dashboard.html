@@ -32,6 +32,18 @@
  details.info p{margin:6px 0;color:#9aa3b2;font-size:12px}
  details.info code{background:#1b212c;border-radius:4px;padding:1px 4px;color:#9af0c6;font-size:11px}
  details.info b.m{color:#d7dae0}
+ canvas{max-width:100%}
+ @media(max-width:760px){
+   main{grid-template-columns:1fr}
+   aside{border-right:none;border-bottom:1px solid #262b36;min-height:0}
+   section{overflow-x:auto;padding:12px}
+   table{font-size:11px}
+   th{position:static}            /* header wraps taller on mobile; sticky offset would misalign */
+   th,td{padding:4px 6px}
+   header{padding:8px 12px;gap:8px 12px}
+   header h1{font-size:15px}
+   header span[style]{margin-left:0 !important}
+ }
 </style></head><body>
 <header>
  <h1>Atma ablation</h1>
