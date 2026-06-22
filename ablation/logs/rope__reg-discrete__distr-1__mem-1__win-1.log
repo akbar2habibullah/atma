@@ -1,0 +1,42 @@
+====================================================================================================
+[ablation] run_id=rope__reg-discrete__distr-1__mem-1__win-1 host=instance-20260518-012709 device=cuda torch=2.12.0+cu130 fla_custom_op=1
+====================================================================================================
+[ablation] train_steps=1900 (num_chunks=10, batch_size=524288, seq_len=2048)
+[ablation] params=378.16M
+
+===ABLATION_CONFIG_JSON===
+{"attn_type": "rope", "reg_mode": "discrete", "distractor": true, "memory": true, "window": true, "vocab_size": 50304, "num_hidden_layers": 16, "hidden_size": 1024, "head_dim": 128, "window_size": 1024, "seq_len": 2048, "num_chunks": 10, "batch_size": 524288, "val_tokens": 2097152, "mbs": 4, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha_on": 0.01, "dist_align_weight_on": 0.01, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "fla_custom_op": true, "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536], "clean_dataset": "codelion/finepdfs-100M", "val_data": "finewebedu10B/finewebedu_val_*.bin", "num_eval_docs": 16, "num_needle_trials": 16, "needle_val_len": 5, "run_id": "rope__reg-discrete__distr-1__mem-1__win-1", "num_random_keys": 2048, "dist_align_loss_weight": 0.01, "sigr_alpha": 0.01, "attn_window": 1024, "mem_enabled": true, "num_params": 378155200, "host": "instance-20260518-012709", "device": "cuda"}
+===END===
+step:0/1900 val_loss:10.82584 wall:0.0s step_avg:0.0ms MFU:0.0%
+step:125/1900 val_loss:4.47880 wall:4989.8s step_avg:39918.0ms MFU:29.0%
+step:250/1900 val_loss:3.90912 wall:9963.9s step_avg:39793.1ms MFU:29.1%
+step:375/1900 val_loss:3.70956 wall:14955.6s step_avg:39933.7ms MFU:29.0%
+step:500/1900 val_loss:3.59510 wall:19957.0s step_avg:40011.2ms MFU:28.9%
+step:625/1900 val_loss:3.50909 wall:24963.2s step_avg:40050.0ms MFU:28.9%
+step:750/1900 val_loss:3.44192 wall:29972.6s step_avg:40074.6ms MFU:28.9%
+step:875/1900 val_loss:3.39729 wall:34983.0s step_avg:40083.2ms MFU:28.9%
+step:1000/1900 val_loss:3.34717 wall:39993.8s step_avg:40087.0ms MFU:28.9%
+step:1125/1900 val_loss:3.30481 wall:45004.8s step_avg:40087.9ms MFU:28.9%
+step:1250/1900 val_loss:3.27547 wall:50017.1s step_avg:40097.9ms MFU:28.9%
+step:1375/1900 val_loss:3.24097 wall:55029.3s step_avg:40097.8ms MFU:28.9%
+step:1500/1900 val_loss:3.21161 wall:60042.1s step_avg:40102.7ms MFU:28.9%
+step:1625/1900 val_loss:3.19049 wall:65055.2s step_avg:40104.5ms MFU:28.9%
+step:1750/1900 val_loss:3.16839 wall:70068.7s step_avg:40108.0ms MFU:28.9%
+step:1875/1900 val_loss:3.15408 wall:75081.2s step_avg:40100.5ms MFU:28.9%
+step:1900/1900 val_loss:3.15372 wall:76083.9s step_avg:40106.1ms MFU:28.9%
+
+===ABLATION_CURVE_JSON===
+[{"step": 0, "wall_s": 0.0, "val_loss": 10.82583999633789, "mfu": 0.0, "step_ms": 0.0, "tok_s": 0.0}, {"step": 125, "wall_s": 4989.751, "val_loss": 4.478798198513687, "mfu": 29.0, "step_ms": 39918.01, "tok_s": 13134.1}, {"step": 250, "wall_s": 9963.891, "val_loss": 3.909117054194212, "mfu": 29.09, "step_ms": 39793.12, "tok_s": 13175.3}, {"step": 375, "wall_s": 14955.598, "val_loss": 3.7095605926588178, "mfu": 28.99, "step_ms": 39933.65, "tok_s": 13129.0}, {"step": 500, "wall_s": 19956.993, "val_loss": 3.5951000098139048, "mfu": 28.93, "step_ms": 40011.16, "tok_s": 13103.5}, {"step": 625, "wall_s": 24963.246, "val_loss": 3.5090927267447114, "mfu": 28.9, "step_ms": 40050.02, "tok_s": 13090.8}, {"step": 750, "wall_s": 29972.567, "val_loss": 3.441915027797222, "mfu": 28.89, "step_ms": 40074.57, "tok_s": 13082.8}, {"step": 875, "wall_s": 34982.972, "val_loss": 3.397289632819593, "mfu": 28.88, "step_ms": 40083.24, "tok_s": 13080.0}, {"step": 1000, "wall_s": 39993.841, "val_loss": 3.347171206958592, "mfu": 28.88, "step_ms": 40086.96, "tok_s": 13078.8}, {"step": 1125, "wall_s": 45004.827, "val_loss": 3.304813601076603, "mfu": 28.88, "step_ms": 40087.89, "tok_s": 13078.5}, {"step": 1250, "wall_s": 50017.065, "val_loss": 3.27546956948936, "mfu": 28.87, "step_ms": 40097.9, "tok_s": 13075.2}, {"step": 1375, "wall_s": 55029.288, "val_loss": 3.240970362909138, "mfu": 28.87, "step_ms": 40097.78, "tok_s": 13075.2}, {"step": 1500, "wall_s": 60042.12, "val_loss": 3.2116148034110665, "mfu": 28.87, "step_ms": 40102.66, "tok_s": 13073.6}, {"step": 1625, "wall_s": 65055.187, "val_loss": 3.1904939329251647, "mfu": 28.86, "step_ms": 40104.54, "tok_s": 13073.0}, {"step": 1750, "wall_s": 70068.683, "val_loss": 3.1683928230777383, "mfu": 28.86, "step_ms": 40107.97, "tok_s": 13071.9}, {"step": 1875, "wall_s": 75081.25, "val_loss": 3.1540777552872896, "mfu": 28.87, "step_ms": 40100.53, "tok_s": 13074.3}, {"step": 1900, "wall_s": 76083.903, "val_loss": 3.1537225507199764, "mfu": 28.86, "step_ms": 40106.13, "tok_s": 13072.5}]
+===END===
+[ablation] training done: 76083.9s, final MFU 28.9%
+[ablation] evaluating (clean_ppl / junk_ppl / needle at full context)...
+
+===ABLATION_EVAL_JSON===
+{"clean_ppl": {"2048": 2.7851938977837563, "4096": 2.780676454305649, "8192": 2.793405197560787, "16384": 2.7622592635452747, "32768": 2.702038360759616, "65536": 2.6803951542824507}, "junk_ppl": {"2048": 3.1119324862957, "4096": 3.157431647181511, "8192": 3.249632954597473, "16384": 3.385655641555786, "32768": 3.5183302275836468, "65536": 3.668323766440153}, "needle": {"2048": {"ce": 3.21346428245306, "acc": 18.75000037252903}, "4096": {"ce": 4.962763711810112, "acc": 0.0}, "8192": {"ce": 4.339641124010086, "acc": 5.000000074505806}, "16384": {"ce": 6.421144723892212, "acc": 0.0}, "32768": {"ce": 7.146539390087128, "acc": 0.0}, "65536": {"ce": 7.052463620901108, "acc": 0.0}}, "needle_baseline": 6.855763733386993, "num_clean_docs": 16, "mfu_final": 28.86, "train_elapsed_s": 76083.903, "num_params": 378155200, "train_steps": 1900}
+===END===
+[ablation] eval:
+  clean_ppl(nats): {2048: 2.7851938977837563, 4096: 2.780676454305649, 8192: 2.793405197560787, 16384: 2.7622592635452747, 32768: 2.702038360759616, 65536: 2.6803951542824507}
+  junk_ppl(nats):  {2048: 3.1119324862957, 4096: 3.157431647181511, 8192: 3.249632954597473, 16384: 3.385655641555786, 32768: 3.5183302275836468, 65536: 3.668323766440153}
+  needle:          {2048: 18.8, 4096: 0.0, 8192: 5.0, 16384: 0.0, 32768: 0.0, 65536: 0.0}
+  needle_baseline CE: 6.855763733386993
+[ablation] DONE
