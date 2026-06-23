@@ -14,6 +14,7 @@
 \usepackage{array}
 \usepackage{pdflscape}
 \usepackage{listings}
+\usepackage{placeins}
 
 \input{math_commands.tex}
 
@@ -53,7 +54,7 @@ Paper Under Review for COLM Workshop
 \maketitle
 
 \begin{abstract}
-Modern large language models based on softmax scaled-dot-product attention are fundamentally constrained by their training sequence length. As the key-value sequence grows, the softmax probability mass dilutes across a wider distribution, causing a breakdown of in-distribution activations and severe performance collapse under sequence length extrapolation. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. This multi-channel decomposition enables ATMA to achieve monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 100-run factorial ablation sweep, demonstrating that it maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, significantly outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
+Modern large language models based on softmax scaled-dot-product attention are constrained by their training sequence length: as the key-value sequence grows, softmax probability mass can dilute across a wider distribution, inducing activation shift and long-context performance collapse. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. Neither the Polar Attention core nor the recurrent memory is sufficient alone; their combination enables monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 100-run factorial ablation sweep, demonstrating that the combined Polar + memory model maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
 \end{abstract}
 
 \section{Introduction}
@@ -82,9 +83,9 @@ We resolve this tension by introducing \textbf{ATMA}, a hybrid sequence-modeling
 \end{equation}
 The first two streams (\textbf{content} and \textbf{count}) form our proposed \textbf{Polar Attention} core. By projecting the matched value-sum onto the unit sphere, the \textbf{content} channel isolates \textit{what} matched, resulting in a count-blind, size-invariant direction vector. Concurrently, the \textbf{count} channel isolates \textit{how much} matched by calculating the participation ratio (inverse Simpson index) of the attention distribution, bounded via a saturating monotonic map. To prevent background noise from overwhelming the signal at extreme sequence lengths, Polar Attention calibrates its logits against a learned, extreme-value-corrected null floor that tracks the expected maximum of random scores.
 
-The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, allowing the Polar Attention core to be paired with a sliding window for local modeling while the memory maintains global context. When exact global recall is required, full Polar Attention can be enabled; since its representations are length-invariant, it generalizes to extreme lengths without activation drift.
+The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, while Polar Attention supplies the bounded full-context readout needed for exact recall. The ablations show that neither ingredient is enough in isolation: memoryless Polar Attention still loses retrieval at long range, and softmax paired with the same memory collapses at extreme lengths.
 
-To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory completely eliminates the window-vs-retrieval trade-off. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
+To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory resolves the window-vs-retrieval trade-off in our setting. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
 
 Our implementation is optimized and numerically cross-verified across three parallel pipelines: a pure-PyTorch reference, an FP16/FP8 training harness, and a paged inference engine. We introduce a FlashAttention-style Triton kernel that handles the streaming participation-ratio calculations in $O(\text{block})$ memory, and we wrap the fast gated-delta training recurrence as opaque custom ops to avoid dynamo compiler graph breaks. This codesign keeps the recurrent memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs.
 
@@ -171,7 +172,7 @@ To calibrate the null floor during training, we introduce an auxiliary \textbf{d
 \begin{equation}
     \mathcal{L}_{\text{align}} = \operatorname{mean}\ \operatorname{softmax}\left( [ \mathrm{temp} \cdot \sigma_{\text{rand}}, \ \mathrm{temp} \cdot \mathrm{null} ] \right)\Big|_{\text{rand}}
 \end{equation}
-This loss (weighted by 0.01) pushes random distractors below the null floor, widening the signal-to-noise margin $\Delta$, which is essential for length-extrapolation retrieval.
+This loss (weighted by 0.01 when enabled) pushes random distractors below the null floor, widening the signal-to-noise margin $\Delta$. In the final ablation, however, the best Polar + memory configuration leaves this auxiliary objective disabled: once the recurrent memory branch is active, the distractor objective over-sharpens the null floor and hurts retrieval (Section~\ref{sec:window_distractor_ablation}).
 
 \subsection{Titans Memory-as-Gate Integration}
 While Polar Attention preserves length-invariant activations, a single attention core cannot solve the window-vs-retrieval trade-off alone. We incorporate a long-term recurrent memory as an additive third channel in the residual block:
@@ -217,6 +218,7 @@ We initialize $W_{\text{mem\_proj}}$ to zero so that the memory branch acts as a
 \label{fig:machinery}
 \end{figure}
 
+\FloatBarrier
 \section{Experimental Setup}
 To evaluate the length-extrapolation and retrieval capabilities of ATMA, we perform a factorial sweep across 100 completed configurations.
 
@@ -303,6 +305,7 @@ The combination of Polar Attention and Titans memory achieves the best of both w
 \end{enumerate}
 
 \subsection{Ablation of Windowing and Distractors}
+\label{sec:window_distractor_ablation}
 Surprisingly, when the memory branch is active, adding sliding windowing or distractor losses actually \textit{hurts} retrieval, as shown in Table~\ref{table:window_ablation}.
 
 \begin{table}[h]
@@ -545,7 +548,7 @@ def _polar_fwd_kernel_core(q, K, V, VNULL, SPG, NULLBASE, SPS, BETA,
 \end{lstlisting}
 \begin{landscape}
 \section{Complete Ablation Sweep Results}
-We present the full numerical results of our 100-run factorial ablation sweep. The table lists the attention type, signature-stream regularization mode, distractor status, memory branch status, sliding-window status, training validation loss, document perplexity at multipliers 1$\times$ and 32$\times$ (2K and 64K tokens), needle-in-a-haystack retrieval accuracy at 2K and 64K tokens, and training Model Flops Utilization (MFU).
+We present the full numerical results of our 100-run factorial ablation sweep. The table lists the attention type, signature-stream regularization mode, distractor status, memory branch status, sliding-window status, training validation loss, clean-document perplexity and junk-stream perplexity at multipliers 1$\times$ and 32$\times$ (2K and 64K tokens), needle-in-a-haystack retrieval accuracy at 2K and 64K tokens, and training Model Flops Utilization (MFU).
 
 \input{appendix_table.tex}
 \end{landscape}
