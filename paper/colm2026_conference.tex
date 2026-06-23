@@ -86,7 +86,7 @@ The third stream (\textbf{memory}) is a recurrent, per-head associative memory b
 
 To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory completely eliminates the window-vs-retrieval trade-off. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
 
-Our implementation is optimized and numerically cross-verified across three parallel pipelines: a pure-PyTorch reference, an FP16/FP8 training harness, and a paged inference engine. We introduce a FlashAttention-style Triton kernel that handles the streaming participation-ratio calculations in $O(\text{block})$ memory, and we wrap the fast gated-delta training recurrence as opaque custom ops to avoid dynamo compiler graph breaks. This codesign reduces the computational overhead of the memory branch to a mere 6--9\% relative MFU.
+Our implementation is optimized and numerically cross-verified across three parallel pipelines: a pure-PyTorch reference, an FP16/FP8 training harness, and a paged inference engine. We introduce a FlashAttention-style Triton kernel that handles the streaming participation-ratio calculations in $O(\text{block})$ memory, and we wrap the fast gated-delta training recurrence as opaque custom ops to avoid dynamo compiler graph breaks. This codesign keeps the recurrent memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs.
 
 \section{Related Work}
 
@@ -246,7 +246,7 @@ Our 100-run factorial sweep evaluates combinations across five categorical axes:
 Each trained model is evaluated across sequence multipliers from 1$\times$ to 32$\times$ the training length (2,048 to 65,536 tokens) using two critical probes:
 \begin{enumerate}
     \item \textbf{Document Perplexity:} Measured on single, coherent long documents from the FinePDFs corpus. 
-    \item \textbf{Induction Needle-in-a-Haystack:} We plant an induction needle (e.g., a specific key-value pattern like ``when the wolf sings, the sky turns [COLOR]'') early in a long text haystack, and query the model for the target color at varying context distances up to 64K tokens.
+    \item \textbf{Induction Needle-in-a-Haystack:} We plant an induction needle of the form ``The access code for record [KEY] is [D1] [D2] [D3] [D4] [D5]'' near the start of a long text haystack, then repeat the record-specific cue after a controlled gap and score greedy per-digit accuracy on the five-digit value at distances up to 64K tokens.
 \end{enumerate}
 
 \section{Experimental Results and Analysis}
@@ -349,7 +349,7 @@ To address this, we implement a fused, in-place gated-delta step kernel (\texttt
 \subsubsection{Empirical Systems Performance and Overhead}
 We evaluate our systems optimizations on an NVIDIA L4 GPU (24GB).
 \begin{itemize}
-    \item \textbf{Training Efficiency (MFU):} The gated-delta recurrence contains sequential cross-step dependencies that force PyTorch Dynamo compiler graph breaks. We wrap the Flash Linear Attention forward and backward passes as opaque custom ops (\texttt{FLA\_CUSTOM\_OP=1}) with fake shape registrations. This allows Dynamo to compile the surrounding layers cleanly and enables backward activation recomputation. As shown in Table~\ref{table:mfu_overhead}, the entire recurrent memory branch adds only \textbf{6--9\% relative MFU overhead} to training.
+    \item \textbf{Training Efficiency (MFU):} The gated-delta recurrence contains sequential cross-step dependencies that force PyTorch Dynamo compiler graph breaks. We wrap the Flash Linear Attention forward and backward passes as opaque custom ops (\texttt{FLA\_CUSTOM\_OP=1}) with fake shape registrations. This allows Dynamo to compile the surrounding layers cleanly and enables backward activation recomputation. As shown in Table~\ref{table:mfu_overhead}, the recurrent memory branch reduces MFU by \textbf{4.5 percentage points} relative to the Polar-only training run.
     \item \textbf{Inference Throughput:} Our GQA-grouped paged decode kernel and in-place gated-delta step kernel achieve a decode throughput of \textbf{19,270 tokens/second} at a batch size of 512.
 \end{itemize}
 
@@ -359,18 +359,19 @@ We evaluate our systems optimizations on an NVIDIA L4 GPU (24GB).
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccc}
 \toprule
-\textbf{Configuration} & \textbf{MFU w/o Mem} & \textbf{MFU w/ Mem} & \textbf{Relative Cost} \\
+\textbf{Configuration} & \textbf{Avg Step Time} & \textbf{MFU} & \textbf{Relative MFU Drop} \\
 \midrule
-+ Distractor ($R=2048$) & 30.1\% & 28.4\% & $\approx$ 6.0\% \\
-No Distractor           & 36.1\% & 32.9\% & $\approx$ 8.9\% \\
+Polar & 28.33 s & 40.1\% & -- \\
+Polar + Memory & 32.49 s & 35.6\% & 11.2\% \\
+Polar + Memory + Distractor ($R=2048$) & 36.39 s & 31.8\% & 20.7\% \\
 \bottomrule
 \end{tabular}
-\caption{Model Flops Utilization (MFU) of ATMA training with and without the memory branch on NVIDIA L4 GPUs. Our systems optimizations keep the training overhead minimal.}
+\caption{Training throughput of the Polar ATMA configurations on NVIDIA L4 GPUs at sequence length 2048. The memory branch reduces MFU by 4.5 percentage points relative to the Polar-only run; adding the optional distractor loss incurs additional overhead and is not used in the winning configuration.}
 \label{table:mfu_overhead}
 \end{table}
 
 \section{Conclusion}
-We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off. By pairing a length-invariant Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We rigorously verified our design through a 100-run sweep, and demonstrated that hardware-level software codesign restricts the memory's computational cost to under 9\% of the training budget. Future work will investigate extending write-path distractors to further enhance memory capacity.
+We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off. By pairing a length-invariant Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We rigorously verified our design through a 100-run sweep, and demonstrated that hardware-level software codesign keeps the memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs. Future work will investigate extending write-path distractors to further enhance memory capacity.
 
 \bibliography{colm2026_conference}
 \bibliographystyle{colm2026_conference}
