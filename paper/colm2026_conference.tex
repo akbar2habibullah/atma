@@ -13,11 +13,26 @@
 \usepackage{longtable}
 \usepackage{array}
 \usepackage{pdflscape}
+\usepackage{listings}
 
 \input{math_commands.tex}
 
 \definecolor{darkblue}{rgb}{0, 0, 0.5}
 \hypersetup{colorlinks=true, citecolor=darkblue, linkcolor=darkblue, urlcolor=darkblue}
+\lstset{
+    basicstyle=\tiny\ttfamily,
+    columns=fullflexible,
+    keepspaces=true,
+    breaklines=true,
+    breakatwhitespace=false,
+    frame=single,
+    framerule=0.3pt,
+    xleftmargin=0.5em,
+    xrightmargin=0.5em,
+    aboveskip=0.75em,
+    belowskip=0.75em,
+    showstringspaces=false
+}
 
 \title{ATMA: Length-Invariant Language Modeling via Polar Attention and Gated-Delta Compression Memory}
 
@@ -38,7 +53,7 @@ Paper Under Review for COLM Workshop
 \maketitle
 
 \begin{abstract}
-Modern large language models based on softmax scaled-dot-product attention are fundamentally constrained by their training sequence length. As the key-value sequence grows, the softmax probability mass dilutes across a wider distribution, causing a breakdown of in-distribution activations and severe performance collapse under sequence length extrapolation. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. This multi-channel decomposition enables ATMA to achieve monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a massive 100-run factorial ablation sweep, demonstrating that it maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, significantly outperforming softmax-based memory baselines which collapse at extreme context lengths.
+Modern large language models based on softmax scaled-dot-product attention are fundamentally constrained by their training sequence length. As the key-value sequence grows, the softmax probability mass dilutes across a wider distribution, causing a breakdown of in-distribution activations and severe performance collapse under sequence length extrapolation. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. This multi-channel decomposition enables ATMA to achieve monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 100-run factorial ablation sweep, demonstrating that it maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, significantly outperforming softmax-based memory baselines which collapse at extreme context lengths.
 \end{abstract}
 
 \section{Introduction}
@@ -46,13 +61,13 @@ Modern large language models based on softmax scaled-dot-product attention are f
 \begin{figure}[t!]
 \centering
 \includegraphics[width=0.88\linewidth]{fig_niah.pdf}
-\caption{Induction Needle-in-a-Haystack (NIAH) retrieval accuracy comparison under context length extrapolation (up to 32$\times$ the training sequence length of 2,048 tokens). Only ATMA (Polar + Titans Memory) holds flat accuracy above 90\% out to 64K, whereas all other configurations collapse.}
+\caption{Induction Needle-in-a-Haystack (NIAH) retrieval accuracy comparison under context length extrapolation (up to 32$\times$ the training sequence length of 2,048 tokens). Only ATMA (Polar + Titans Memory) holds flat accuracy above 90\% out to 64K, whereas the strongest softmax-memory baseline collapses at extreme context lengths.}
 \label{fig:niah}
 \end{figure}
 
-The capacity of Large Language Models (LLMs) to ingest, process, and reason over massive context windows is a cornerstone of modern artificial intelligence capabilities. Applications ranging from repository-level code synthesis to complex academic document analysis depend on the model's ability to maintain coherent representations across tens of thousands of tokens. However, the standard sequence mixer, Softmax Scalable-Dot-Product Attention (SDPA)~\citep{Vaswani+2017}, exhibits severe limitations when generalizing to sequence lengths beyond those encountered during training.
+The capacity of Large Language Models (LLMs) to ingest, process, and reason over massive context windows is a cornerstone of modern artificial intelligence capabilities. Applications ranging from repository-level code synthesis to complex academic document analysis depend on the model's ability to maintain coherent representations across tens of thousands of tokens. However, the standard sequence mixer, softmax scaled-dot-product attention (SDPA)~\citep{Vaswani+2017}, exhibits severe limitations when generalizing to sequence lengths beyond those encountered during training.
 
-This failure of length extrapolation stems from two distinct mathematical properties of softmax attention. First, softmax attention is \textbf{not length-invariant}. As the number of keys $N$ grows, the probability mass is distributed across a larger population, causing the individual attention weights to dilute toward zero (the "dilution" problem). Consequently, a model trained at length $T$ experiences a dramatic shift in its activation distribution when evaluated at $32\cdot T$. Second, softmax attention entangles magnitude information (``how many items matched the query'') with direction information (``what features were matched'') into a single normalized output. When evaluated at longer contexts, the accumulated representations shift the residual stream's DC level, pushing downstream feed-forward networks out-of-distribution.
+This failure of length extrapolation is consistent with a growing body of evidence on softmax dispersion in long contexts. Nakanishi~\citep{nakanishi2025scalable} observes that the maximum coordinate of a softmax vector approaches zero as the vector size increases, flattening attention as the context grows. Veli{\v{c}}kovi{\'c} et al.~\citep{velickovic2025softmax} prove that softmax-based lookup circuits for sharp decisions disperse as problem size increases, while Barbero et al.~\citep{barbero2024glasses} relate long-sequence failures to representational collapse and over-squashing in decoder-only Transformers. We use \textit{dilution} to refer to this dense-normalization effect: as the number of keys $N$ grows, probability mass is spread across a larger population, reducing the weight assigned to any fixed set of relevant keys unless logits sharpen with length. Second, softmax attention entangles magnitude information (``how many items matched the query'') with direction information (``what features were matched'') into a single normalized output. When evaluated at longer contexts, this joint distribution can shift the residual stream away from the regime seen during training.
 
 Faced with this challenge, practitioners often employ Sliding Window Attention (SWA)~\citep{beltagy2020longformer} or Recurrent/Linear Attention alternatives~\citep{deltanet2024, mamba2023}. However, this introduces a severe trade-off:
 \begin{itemize}
@@ -67,16 +82,16 @@ We resolve this tension by introducing \textbf{ATMA}, a hybrid sequence-modeling
 \end{equation}
 The first two streams (\textbf{content} and \textbf{count}) form our proposed \textbf{Polar Attention} core. By projecting the matched value-sum onto the unit sphere, the \textbf{content} channel isolates \textit{what} matched, resulting in a count-blind, size-invariant direction vector. Concurrently, the \textbf{count} channel isolates \textit{how much} matched by calculating the participation ratio (inverse Simpson index) of the attention distribution, bounded via a saturating monotonic map. To prevent background noise from overwhelming the signal at extreme sequence lengths, Polar Attention calibrates its logits against a learned, extreme-value-corrected null floor that tracks the expected maximum of random scores.
 
-The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, allowing the Polar Attention core to be paired with a sliding window for local modeling while the memory maintains global context. When exact global recall is required, full Polar Attention can be enabled; since its representations are length-invariant, it Generalizes to extreme lengths without activation drift.
+The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, allowing the Polar Attention core to be paired with a sliding window for local modeling while the memory maintains global context. When exact global recall is required, full Polar Attention can be enabled; since its representations are length-invariant, it generalizes to extreme lengths without activation drift.
 
-To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token Fineweb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory completely eliminates the window-vs-retrieval trade-off. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
+To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory completely eliminates the window-vs-retrieval trade-off. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
 
 Our implementation is optimized and numerically cross-verified across three parallel pipelines: a pure-PyTorch reference, an FP16/FP8 training harness, and a paged inference engine. We introduce a FlashAttention-style Triton kernel that handles the streaming participation-ratio calculations in $O(\text{block})$ memory, and we wrap the fast gated-delta training recurrence as opaque custom ops to avoid dynamo compiler graph breaks. This codesign reduces the computational overhead of the memory branch to a mere 6--9\% relative MFU.
 
 \section{Related Work}
 
 \subsection{Softmax Attention and Scaling Limits}
-Traditional Transformer architectures rely on softmax scaled-dot-product self-attention~\citep{Vaswani+2017}. While highly expressive, the $O(T^2)$ computational complexity has inspired numerous long-context extensions. Positional representations like Rotary Position Embeddings (RoPE)~\citep{rope2021} and Attention with Linear Biases (ALiBi)~\citep{alibi2021} allow models to extrapolate position indicators to longer sequences. However, they do not resolve the fundamental issue of softmax dilution: as sequence length increases, the attention probability assigned to relevant keys is systematically diluted by the growing number of irrelevant distractors. This leads to severe retrieval degradation at long distances. Sliding Window Attention (SWA)~\citep{beltagy2020longformer} avoids this dilution by truncating the attention context, but permanently sacrifices long-range recall.
+Traditional Transformer architectures rely on softmax scaled-dot-product self-attention~\citep{Vaswani+2017}. While highly expressive, the $O(T^2)$ computational complexity has inspired numerous long-context extensions. Positional representations like Rotary Position Embeddings (RoPE)~\citep{rope2021} and Attention with Linear Biases (ALiBi)~\citep{alibi2021} allow models to extrapolate position indicators to longer sequences. However, they do not directly alter the dense simplex normalization of softmax. Prior work has framed this as flattening, dispersion, or loss of sharpness: Scalable-Softmax rescales logits to counter the vanishing maximum softmax probability~\citep{nakanishi2025scalable}; adaptive-temperature analyses show that softmax lookup circuits lose sharpness out-of-distribution as size grows~\citep{velickovic2025softmax}; and sparse-attention work proves that softmax distributions become increasingly dispersed whereas entmax can retain nonzero probability on a fixed relevant set~\citep{vasylenko2026sparse}. Sliding Window Attention (SWA)~\citep{beltagy2020longformer} avoids this dilution by truncating the attention context, but permanently sacrifices long-range recall.
 
 \subsection{Linear Attention and Recurrent Fast Weights}
 To achieve linear-time complexity, linear attention reformulates attention by shifting the computation order of the key, query, and value matrices~\citep{deltanet2024}. This reparametrization effectively treats the sequence mixer as a recurrent neural network with a matrix-valued state. Recent models like Gated DeltaNet~\citep{deltanet2024} and Titans~\citep{titans2025} incorporate data-dependent gating and delta-rule updates to actively overwrite and retrieve memories. Titans, in particular, proposes a ``Memory-as-Gate'' (MAG) or ``Memory-as-Layer'' approach to store historical context. However, purely linear recurrent states are fundamentally limited by their storage capacity ($O(d_k \cdot d_v)$ parameters); they act as lossy compression systems that struggle to exact-recall rare pinpoint facts (needles) out of massive text haystacks.
@@ -114,7 +129,7 @@ To prevent softmax dilution and resist extreme-value noise, we introduce per-hea
         \mathrm{temp}_i = 1 + \operatorname{softplus}(\alpha) \cdot \log(n_i)
     \end{equation}
     where $\alpha$ is a learned head-specific scalar parameter (initialized raw to $-1.0$).
-    \item \textbf{Extreme-Value-Corrected Null Floor} $\mathrm{null}_i$: Acts as the logit of an virtual ``null sink'' key. Because the maximum of $n$ random noise scores grows asymptotically like $\sqrt{2 \ln n}$, any fixed threshold is eventually overtaken by noise. We correct this by defining a growing floor:
+    \item \textbf{Extreme-Value-Corrected Null Floor} $\mathrm{null}_i$: Acts as the logit of a virtual ``null sink'' key. Because the maximum of $n$ random noise scores grows asymptotically like $\sqrt{2 \ln n}$, any fixed threshold is eventually overtaken by noise. We correct this by defining a growing floor:
     \begin{equation}
         \mathrm{null}_i = \text{null\_base} + \operatorname{softplus}(\gamma) \cdot \sqrt{\log(n_i + 1)}
     \end{equation}
@@ -186,7 +201,7 @@ This can be computed in an equivalent per-step online manner:
 
 \textbf{Finding 1: Key Normalization.} The eigenvalue of the delta rule update along $k$ is $\gamma (1 - \beta \|k\|^2)$. Standard RMS-normalization yields $\|k\|^2 = d_k$, pushing the eigenvalue to $\approx -7$, which causes immediate exponential divergence (the state norm explodes to $\approx 10^{57}$). \textbf{We resolve this by applying $L_2$-normalization to the keys and queries} ($\|k\|_2 = 1$). This bounds the eigenvalue in $(0, 1)$, ensuring absolute stability.
 
-\textbf{Finding 2: Self-Stabilization.} Analysis of the recurrent scan reveals that the delta memory is self-stabilizing. Because the $(I - \beta k k^{\top})$ term continuously projects out old matched dimensions, the state norm remains completely flat across length sweeps even at $\gamma=1$. Gamma $\gamma$ behaves purely as a temporal temporal-horizon dial (governing recency vs global memory), not a stability requirement.
+\textbf{Finding 2: Self-Stabilization.} Analysis of the recurrent scan reveals that the delta memory is self-stabilizing. Because the $(I - \beta k k^{\top})$ term continuously projects out old matched dimensions, the state norm remains completely flat across length sweeps even at $\gamma=1$. Gamma $\gamma$ behaves purely as a temporal-horizon dial (governing recency vs global memory), not a stability requirement.
 
 \subsubsection{Readout Assembly}
 The readout vector $r_t$ is normalized and gated before adding it to the residual stream:
@@ -203,7 +218,7 @@ We initialize $W_{\text{mem\_proj}}$ to zero so that the memory branch acts as a
 \end{figure}
 
 \section{Experimental Setup}
-To evaluate the length-extrapolation and retrieval capabilities of ATMA, we perform a massive factorial sweep across 100 distinct configurations.
+To evaluate the length-extrapolation and retrieval capabilities of ATMA, we perform a factorial sweep across 100 completed configurations.
 
 \subsection{Model Configuration and Training}
 All ablation candidates share a fixed model architecture to isolate the impact of the sequence mixer:
@@ -215,13 +230,13 @@ All ablation candidates share a fixed model architecture to isolate the impact o
     \item \textbf{Vocabulary:} 50,304 (GPT-2 tokenizer).
 \end{itemize}
 
-We train each candidate for exactly 1B tokens (1 epoch) on the Fineweb-Edu corpus, using a sequence length of 2048. We utilize the advanced Muon optimizer for coordinate-descent weight updates on the sequence-mixer and MLP blocks, combined with AdamW on embedding and normalization layers. The learning rate uses a cosine schedule with a 70\% cooldown fraction.
+We train each candidate for exactly 1B tokens (1 epoch) on the FineWeb-Edu corpus, using a sequence length of 2048. We use the Muon optimizer for coordinate-descent weight updates on the sequence-mixer and MLP blocks, combined with AdamW on embedding and normalization layers. The learning rate uses a cosine schedule with a 70\% cooldown fraction.
 
 \subsection{Ablation Grid Axes}
 Our 100-run factorial sweep evaluates combinations across five categorical axes:
 \begin{enumerate}
     \item \textbf{Attention Type} (\texttt{attn\_type}): \texttt{polar} (our proposed Polar Attention), \texttt{rope} (standard softmax attention with Rotary Position Embeddings \citep{rope2021}), and \texttt{nope} (softmax attention without positional encodings, which organically develop positional representations in causal transformers \citep{haviv2022transformer, wang2024length, zuo-etal-2025-position}, relying on LFM2 convolutions for spatial awareness).
-    \item \textbf{Regularizer Mode} (\texttt{reg\_mode}): \texttt{baseline}, \texttt{weak}, \texttt{strong}, \texttt{discrete}, and \texttt{zipfian} (varying the strength and layout of signature-stream regularization).
+    \item \textbf{Regularizer Mode} (\texttt{reg\_mode}): \texttt{baseline}, \texttt{weak}, \texttt{strong}, \texttt{discrete}, and \texttt{zipfian} (varying the strength and layout of signature-stream regularization; see Appendix~\ref{appendix:reg_modes}).
     \item \textbf{Distractor Loss} (\texttt{distractor}): \texttt{off} vs \texttt{on} (calibrating the null floor with $R = 2048$ random keys).
     \item \textbf{Memory Branch} (\texttt{memory}): \texttt{off} vs \texttt{on} (enabling the Gated-Delta Titans memory branch).
     \item \textbf{Sliding Window} (\texttt{window}): \texttt{off} (full global attention) vs \texttt{on} (sliding window of width 1024 on the attention core).
@@ -262,25 +277,27 @@ Enabling the recurrent Titans gated-delta memory branch on top of the global Pol
 
 \begin{table}[h]
 \centering
-\begin{tabular}{lcccc}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Needle Distance} & \textbf{Polar (No Mem)} & \textbf{Softmax + Mem} & \textbf{Polar + Mem (Ours)} & \textbf{Polar + Mem PPL} \\
+\textbf{Distance} & \textbf{Polar-only Acc} & \textbf{Softmax+Mem Acc} & \textbf{Ours Acc} & \textbf{Softmax+Mem PPL} & \textbf{Ours PPL} \\
 \midrule
-2,048 (1$\times$)  & 96\% & 98\% & 91\% & 2.70 \\
-4,096 (2$\times$)  & 40\% & 98\% & 95\% & 2.45 \\
-8,192 (4$\times$)  & 15\% & 94\% & 93\% & 2.22 \\
-16,384 (8$\times$) & 8\%  & 85\% & \textbf{98\%} & 2.09 \\
-32,768 (16$\times$)& 3\%  & 48\% & \textbf{96\%} & 2.01 \\
-65,536 (32$\times$)& 0\%  & 16\% & \textbf{93\%} & \textbf{1.96} \\
+2,048 (1$\times$)  & 96\% & 98\% & 91\% & 2.66 & 2.70 \\
+4,096 (2$\times$)  & 40\% & 98\% & 95\% & 2.52 & \textbf{2.45} \\
+8,192 (4$\times$)  & 15\% & 94\% & 93\% & 2.39 & \textbf{2.22} \\
+16,384 (8$\times$) & 8\%  & 85\% & \textbf{98\%} & 2.29 & \textbf{2.09} \\
+32,768 (16$\times$)& 3\%  & 48\% & \textbf{96\%} & 2.29 & \textbf{2.01} \\
+65,536 (32$\times$)& 0\%  & 16\% & \textbf{93\%} & 2.34 & \textbf{1.96} \\
 \bottomrule
 \end{tabular}
-\caption{Retrieval accuracy and perplexity comparison under long-context extrapolation. The Polar + Titans memory hybrid holds retrieval accuracy above 90\% out to 64K, while document perplexity improves monotonically.}
+\caption{Retrieval accuracy and document perplexity comparison under long-context extrapolation. Softmax + Titans memory improves perplexity but collapses in retrieval at extreme length, while Polar + Titans memory holds retrieval above 90\% out to 64K and achieves the best 64K perplexity.}
 \label{table:memory_unlock}
 \end{table}
 
 The combination of Polar Attention and Titans memory achieves the best of both worlds:
 \begin{enumerate}
-    \item \textbf{Monotonic Perplexity Reduction:} Document perplexity falls consistently from 2.70 nats down to 1.96 nats at 64K tokens, demonstrating that the model actively uses the longer context to improve predictions.
+    \item \textbf{Monotonic Perplexity Reduction:} Document perplexity falls consistently from 2.70 nats down to 1.96 nats at 64K tokens, improving over the softmax-memory baseline's 2.34 nats at 64K and demonstrating that the model actively uses the longer context to improve predictions.
     \item \textbf{Flat Retrieval Generalization:} Retrieval accuracy remains flat at 91--98\% (length-weighted average of 94\%) out to 32$\times$ training length.
     \item \textbf{Polar vs. Softmax Contrast:} While Softmax + Titans memory performs well at shorter context lengths, it collapses to 16\% retrieval at 64K. This collapse occurs because the softmax representation is not length-invariant, leading to activation drift that corrupts the memory readout.
 \end{enumerate}
@@ -338,9 +355,11 @@ We evaluate our systems optimizations on an NVIDIA L4 GPU (24GB).
 
 \begin{table}[h]
 \centering
+\small
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccc}
 \toprule
-\textbf{Configuration} & \textbf{MFU without Memory} & \textbf{MFU with Memory} & \textbf{Relative Cost} \\
+\textbf{Configuration} & \textbf{MFU w/o Mem} & \textbf{MFU w/ Mem} & \textbf{Relative Cost} \\
 \midrule
 + Distractor ($R=2048$) & 30.1\% & 28.4\% & $\approx$ 6.0\% \\
 No Distractor           & 36.1\% & 32.9\% & $\approx$ 8.9\% \\
@@ -357,10 +376,176 @@ We presented ATMA, a hybrid sequence mixer that resolves the long-context perple
 \bibliographystyle{colm2026_conference}
 
 \appendix
+
+\clearpage
+\section{Regularization Modes}
+\label{appendix:reg_modes}
+
+The ablation grid varies a representation regularizer applied to the model's signature stream.
+For all non-baseline settings we use the same sweep weight, $\alpha_{\mathrm{sig}} = 0.01$,
+and train with
+\begin{equation}
+    \mathcal{L} = (1-\alpha_{\mathrm{sig}})\mathcal{L}_{\mathrm{LM}}
+    + \alpha_{\mathrm{sig}}\mathcal{L}_{\mathrm{reg}}
+    + \lambda_{\mathrm{dist}}\mathcal{L}_{\mathrm{dist}} .
+\end{equation}
+The weak and strong modes follow the two SIGReg families introduced by Weak-SIGReg
+\citep{weak_sigreg2026} and LeJEPA's strong SIGReg objective \citep{lejepa2025}; the
+discrete and zipfian modes are local variants that interpolate those ideas with stronger
+geometric priors.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{p{0.17\linewidth}p{0.76\linewidth}}
+\toprule
+\textbf{Mode} & \textbf{Meaning in the sweep} \\
+\midrule
+\texttt{baseline} & No signature-stream regularization is used; equivalently, $\alpha_{\mathrm{sig}}=0$. \\
+\texttt{weak} & Weak SIGReg: center a random sketch of the token representations and match its covariance to the identity, $\lVert \operatorname{Cov}(Sx)-I\rVert_F$. This encourages decorrelated, unit-variance features at low cost. \\
+\texttt{strong} & Strong SIGReg: project representations onto random one-dimensional directions and match their empirical characteristic functions to the standard Gaussian characteristic function over a fixed grid of frequencies. \\
+\texttt{discrete} & Local variant: first normalize each representation to the sphere of radius $\sqrt{d}$, then apply the weak covariance-matching objective. This preserves the whitening pressure while encouraging fixed-norm, discrete-code-like directions. \\
+\texttt{zipfian} & Local variant: normalize directions for an orthogonality penalty, then match the sorted representation magnitudes to a Zipf profile $r^{-1}$. This biases the signature stream toward heavy-tailed feature usage rather than uniform energy allocation. \\
+\bottomrule
+\end{tabular}
+\caption{Regularization modes used in the ablation grid. The weak and strong modes are taken from SIGReg-style covariance and distribution matching; the discrete and zipfian modes are improvised variants used to probe stronger geometric structure.}
+\label{table:reg_modes}
+\end{table}
+
+\section{Polar Attention Algorithms}
+\label{appendix:polar_algorithms}
+
+This appendix gives code-level implementations for Polar Attention. Code~\ref{lst:polar_pytorch}
+shows the materialized PyTorch oracle (\texttt{polar\_reduce} in \texttt{model/blocks.py}),
+which is used for numerical verification. Code~\ref{lst:polar_triton} shows the core of the
+FlashAttention-style Triton forward kernel (\texttt{kernel/polar\_triton.py}), which streams
+keys in blocks and maintains the same sufficient statistics without materializing the
+$T \times T$ score matrix.
+
+\clearpage
+\subsection{Naive Materialized PyTorch Reference}
+
+\begin{lstlisting}[language=Python, caption={Materialized PyTorch reference for Polar Attention.}, label={lst:polar_pytorch}]
+def polar_reduce(sigma, v, n_keys, *, v_null, null_base,
+                 null_slope_raw, len_gain_raw, mag_beta_raw,
+                 eps=1e-6):
+    """Reference oracle. sigma: (B,H,Tq,Tk), v: (B,H,Tk,dk)."""
+    out_dtype = v.dtype
+    cd = torch.float32 if v.dtype in (torch.float16, torch.bfloat16) else v.dtype
+    B, H, Tq, Tk = sigma.shape
+    dk = v.shape[-1]
+    sigma, v = sigma.to(cd), v.to(cd)
+
+    n = n_keys.to(cd).clamp(min=1.0)
+    temp = 1.0 + F.softplus(len_gain_raw.to(cd)).view(1, H, 1, 1) \
+        * torch.log(n).view(1, 1, Tq, 1)
+    null = null_base.to(cd).view(1, H, 1, 1) \
+        + F.softplus(null_slope_raw.to(cd)).view(1, H, 1, 1) \
+        * torch.sqrt(torch.log(n + 1.0)).view(1, 1, Tq, 1)
+
+    # Scale finite entries, then re-apply the mask. This avoids NaNs from
+    # differentiating through temp * (-inf).
+    masked = torch.isneginf(sigma)
+    sigma_safe = torch.where(masked, torch.zeros_like(sigma), sigma)
+    real = (sigma_safe * temp).masked_fill(masked, float("-inf"))
+
+    logits = torch.cat([real, null.expand(B, H, Tq, 1) * temp], dim=-1)
+    w = torch.softmax(logits, dim=-1)
+    w_r = w[..., :-1]
+    w_null = w[..., -1:]
+
+    # Direction channel: convex value mix plus learned null vector, projected
+    # to the unit sphere so the channel is count-blind.
+    s = torch.matmul(w_r, v) + w_null * v_null.to(cd).view(1, H, 1, dk)
+    c = F.normalize(s, p=2, dim=-1, eps=eps)
+
+    # Magnitude channel: inverse Simpson participation ratio over real keys,
+    # gated by non-null confidence and squashed to [0, 1).
+    denom = w_r.sum(-1, keepdim=True).clamp_min(eps)
+    w_hat = w_r / denom
+    n_eff = 1.0 / w_hat.square().sum(-1).clamp_min(eps)
+    m_eff = n_eff * (1.0 - w_null.squeeze(-1))
+    beta = F.softplus(mag_beta_raw.to(cd)).view(1, H, 1)
+    mag = torch.tanh(beta * torch.log1p(m_eff))
+
+    return c.to(out_dtype), mag.to(out_dtype)
+\end{lstlisting}
+
+\clearpage
+\subsection{Flash-Style Triton Forward Kernel}
+
+\begin{lstlisting}[language=Python, caption={Core Triton streaming forward pass. The full kernel includes pointer arithmetic, launch metadata, and backward kernels.}, label={lst:polar_triton}]
+@triton.jit
+def _polar_fwd_kernel_core(q, K, V, VNULL, SPG, NULLBASE, SPS, BETA,
+                           n_i, h, Tk, scale, eps,
+                           BLOCK_N: tl.constexpr, DK: tl.constexpr,
+                           WINDOW: tl.constexpr):
+    # Per-query length temperature and extreme-value-corrected null floor.
+    if WINDOW > 0:
+        n_count = tl.maximum(tl.minimum(n_i, float(WINDOW)), 1.0)
+    else:
+        n_count = tl.maximum(n_i, 1.0)
+    temp = 1.0 + tl.load(SPG + h).to(tl.float32) * tl.log(n_count)
+    nullv = tl.load(NULLBASE + h).to(tl.float32) \
+        + tl.load(SPS + h).to(tl.float32) * tl.sqrt(tl.log(n_count + 1.0))
+    beta = tl.load(BETA + h).to(tl.float32)
+
+    # Online softmax state. Q2 is the extra accumulator needed for the
+    # participation ratio; it rescales by alpha**2 under max-shift updates.
+    m_i = tl.full([BLOCK_M], -1e38, tl.float32)
+    l_i = tl.zeros([BLOCK_M], tl.float32)
+    q2_i = tl.zeros([BLOCK_M], tl.float32)
+    acc = tl.zeros([BLOCK_M, DK], tl.float32)
+
+    for start_n in range(0, Tk, BLOCK_N):
+        offs_n = start_n + tl.arange(0, BLOCK_N)
+        k = load_key_block(K, offs_n)      # (BLOCK_N, DK), native dtype
+        v = load_value_block(V, offs_n)    # (BLOCK_N, DK), native dtype
+
+        sig = tl.dot(q, tl.trans(k)) * scale
+        a = sig * temp[:, None]
+        valid = offs_n[None, :] < n_i[:, None]
+        if WINDOW > 0:
+            valid = valid & (offs_n[None, :] >= (n_i[:, None] - WINDOW))
+        a = tl.where(valid, a, -1e38).to(tl.float32)
+
+        m_new = tl.maximum(m_i, tl.max(a, 1))
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(a - m_new[:, None])
+        p = tl.where(valid, p, 0.0)
+
+        l_i = l_i * alpha + tl.sum(p, 1)
+        q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+        acc = acc * alpha[:, None] + tl.dot(p, v)
+        m_i = m_new
+
+    # Fold the virtual null sink as one additional softmax entry.
+    a_null = temp * nullv
+    m_new = tl.maximum(m_i, a_null)
+    alpha = tl.exp(m_i - m_new)
+    l_i = l_i * alpha
+    q2_i = q2_i * alpha * alpha
+    acc = acc * alpha[:, None]
+    m_i = m_new
+    p_null = tl.exp(a_null - m_i)
+    Z = l_i + p_null
+
+    v_null = tl.load(VNULL + h * DK + tl.arange(0, DK)).to(tl.float32)
+    s = acc + p_null[:, None] * v_null[None, :]
+    c = s / tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)[:, None]
+
+    n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+    m_eff = n_eff * (l_i / tl.maximum(Z, eps))
+    mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
+
+    store_direction(c)
+    store_magnitude(mag)
+    save_for_backward(m_i, l_i, q2_i, s)
+\end{lstlisting}
+\begin{landscape}
 \section{Complete Ablation Sweep Results}
 We present the full numerical results of our 100-run factorial ablation sweep. The table lists the attention type, signature-stream regularization mode, distractor status, memory branch status, sliding-window status, training validation loss, document perplexity at multipliers 1$\times$ and 32$\times$ (2K and 64K tokens), needle-in-a-haystack retrieval accuracy at 2K and 64K tokens, and training Model Flops Utilization (MFU).
 
-\begin{landscape}
 \input{appendix_table.tex}
 \end{landscape}
 

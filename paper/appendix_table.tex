@@ -1,5 +1,10 @@
 \begin{longtable}{llcccrccccc}
-\caption{Complete Results of the 100-Run Ablation Sweep. All models are 370M parameters, trained on Fineweb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. PPL is in nats (lower is better), Needle is accuracy in \% (higher is better), MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
+\caption{Complete Results of the 100-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. PPL is in nats (lower is better), Needle is accuracy in \% (higher is better), MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
+\toprule
+Type & Reg & Dist & Mem & Win & Val Loss & PPL@2K & PPL@64K & Needle@2K & Needle@64K & MFU \\
+\midrule
+\endfirsthead
+\caption[]{Complete Results of the 100-Run Ablation Sweep (continued).}\\
 \toprule
 Type & Reg & Dist & Mem & Win & Val Loss & PPL@2K & PPL@64K & Needle@2K & Needle@64K & MFU \\
 \midrule
