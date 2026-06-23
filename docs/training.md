@@ -5,7 +5,7 @@ Training pipeline (based on [NanoGPT speedrun](https://github.com/KellerJordan/m
 - **Muon** for 2D+ weight matrices (`lr=0.02`, `weight_decay=0.01`).
 - **AdamW** for the rest, in three groups: embeddings (`lr=0.3`), the LM-head projection (`lr=1/320`), and all 1D params (`lr=0.01`); `betas=(0.8, 0.95)`, `weight_decay=0`.
 - A linear-cooldown LR schedule (`cooldown_frac=0.7` — constant for the first 30% of steps, then decayed to 0).
-- Optional **SigReg** regularization (covariance whitening, kernel matching, discrete, or Zipfian modes; `train.py` defaults to `zipfian`, `SIGR_ALPHA=0.01`).
+- Optional **SigReg** regularization (covariance whitening, kernel matching, discrete, or Zipfian modes; `train.py` defaults to `baseline, `SIGR_ALPHA=0.0`).
 
 Supports FP16 (safe scaled matmul) and FP8 (E4M3/E5M2) custom ops.
 
@@ -17,14 +17,18 @@ Downloads FineWebEdu-10B (GPT-2 tokenized), memory-maps the shards, and trains w
 
 ## Training performance
 
-Measured on **NVIDIA L4** for the current architecture — Polar attention + Titans memory (`378.22M` params with the memory branch; `369.72M` without), `seq_len=2048`, `attn_window=1024`, `mem_enabled=True`, 1B tokens → **1900 steps**:
+Measured on **NVIDIA L4** for the current architecture — Polar attention + Titans memory (`378.22M` params with the memory branch; `369.72M` without), `seq_len=2048`, 1B tokens → **1900 steps**:
 
 | Run | Avg step time | MFU | Wall-clock | Final val loss |
 |---|---|---|---|---|
-| Polar + memory | 32.6 s | **32.9%** | ~17.2 h | 3.19 |
-| Polar + memory + distractor (`num_random_keys=2048`) | 37.7 s | 28.4% | ~19.9 h | 3.18 |
+| NoPE | 27.33 s | 41.6% | ~14.42 h | 3.224 |
+| NoPE + memory | 31.48 s | 36.8% | ~16.60 h | 3.140 |
+| NoPE + memory + distractor (`num_random_keys=2048`) | 38.53 s | 30.0% | ~20.31 h | 3.148 |
+| Polar | 28.33 s | 40.1% | ~14.93 h | 3.323 |
+| Polar + memory | 32.49 s | 35.6% | ~17.14 h | 3.169 |
+| Polar + memory + distractor (`num_random_keys=2048`) | 36.39 s | 31.8% | ~19.18 h | 3.178 |
 
-> The distractor calibration loss (`num_random_keys > 0`) costs **~14% MFU** per step (`32.9% → 28.4%`). Per the [120-cell ablation](evaluation.md), it is **no longer recommended**: once the Titans memory is present, the distractor (and the sliding window) *hurt* long-range retrieval. The winning recipe is full polar + memory with neither — see [evaluation.md](evaluation.md).
+> Per the [120-cell ablation](evaluation.md), it is **no longer recommended**: once the Titans memory is present, the distractor (and the sliding window) *hurt* long-range retrieval. The winning recipe is full polar + memory with neither — see [evaluation.md](evaluation.md).
 
 ## Loading a checkpoint for inference
 
