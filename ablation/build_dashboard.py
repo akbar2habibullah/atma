@@ -319,13 +319,30 @@ def main():
     else:
         records = [parse_log(p) for p in sorted(glob.glob(os.path.join(args.log_dir, "*.log")))]
 
-    expected = [c.run_id for c in expand_grid()]
+    grid_expected = [c.run_id for c in expand_grid()]
+    expected = sorted(set(grid_expected) | {r["run_id"] for r in records})
+
+    def _axis_values(axis, defaults):
+        vals = list(defaults)
+        seen = set(vals)
+        for r in records:
+            v = r.get(axis)
+            if isinstance(v, bool):
+                v = 1 if v else 0
+            if v is not None and v not in seen:
+                vals.append(v)
+                seen.add(v)
+        return vals
+
     data = {
         "records": records,
         "catalog": metric_catalog(),
         "axes": ["attn_type", "reg_mode", "distractor", "memory", "window"],
-        "axis_values": {"attn_type": ATTN_TYPES, "reg_mode": REG_MODES,
-                        "distractor": [0, 1], "memory": [0, 1], "window": [0, 1]},
+        "axis_values": {"attn_type": _axis_values("attn_type", ATTN_TYPES),
+                        "reg_mode": _axis_values("reg_mode", REG_MODES),
+                        "distractor": _axis_values("distractor", [0, 1]),
+                        "memory": _axis_values("memory", [0, 1]),
+                        "window": _axis_values("window", [0, 1])},
         "expected": expected,
         "maxlen": max(EVAL_LENGTHS),
         "eval_lengths": list(EVAL_LENGTHS),

@@ -80,6 +80,62 @@ python -m ablation.generate_configs --out ablation/smoke --num_chunks 1 --val_to
 FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/smoke --log_dir ablation/smoke_logs --gpu 0
 ```
 
+## Open-weight pretrained baselines
+
+Run the same post-training metrics against small Hugging Face causal LMs without training:
+
+```bash
+python -m ablation.open_baselines --log_dir ablation/open_logs
+```
+
+Default model list:
+
+- `google/gemma-3-270m`
+- `LiquidAI/LFM2.5-230M-Base`
+- `LiquidAI/LFM2.5-350M-Base`
+- `Qwen/Qwen3-0.6B-Base`
+- `HuggingFaceTB/SmolLM2-360M`
+- `ibm-granite/granite-4.0-350m-base`
+- `tiiuae/Falcon-H1-0.5B-Base`
+- `Qwen/Qwen3.5-0.8B-Base`
+
+The runner writes one `<run_id>.log` per model using the same `ABLATION_*_JSON`
+blocks as trained cells. `clean_ppl` and `needle` use each model's native tokenizer
+on coherent `codelion/finepdfs-100M` documents. `junk_ppl` decodes the GPT-2
+FineWeb-Edu validation `.bin` stream and retokenizes it for the target model, so
+the baseline keeps the original junk-stream content while respecting each tokenizer.
+
+Colab T4-friendly knobs:
+
+```bash
+# quick smoke: one model, 2 docs/trials, short lengths
+python -m ablation.open_baselines \
+  --models HuggingFaceTB/SmolLM2-360M \
+  --lengths 2048 4096 \
+  --needle_distances 2048 4096 \
+  --num_eval_docs 2 \
+  --num_needle_trials 2 \
+  --chunk_size 256 \
+  --log_dir ablation/open_smoke_logs
+
+# full default set, but reduce chunk size if a model OOMs at 64K
+python -m ablation.open_baselines --chunk_size 256 --log_dir ablation/open_logs
+```
+
+If a repo needs custom Transformers code, add `--trust_remote_code`. If you want
+strict advertised-context evaluation instead of extrapolating to 64K, add
+`--respect_model_max`.
+
+Merge pretrained baselines into the normal dashboard:
+
+```bash
+python -m ablation.parse_logs --log_dir ablation/open_logs --out ablation/open_results.json
+python -m ablation.build_dashboard --log_dir ablation/open_logs --out pages/open_baselines.html
+
+# or copy/open logs into ablation/logs, then rebuild the combined dashboard
+python -m ablation.build_dashboard --log_dir ablation/logs --out pages/dashboard.html
+```
+
 ## Evaluation (each run, at full context)
 
 - **clean_ppl[L]** — nats/token on coherent docs (`codelion/finepdfs-100M`), nested prefixes.
@@ -108,6 +164,7 @@ plot for selected runs. It also shows done / running / error / missing counts ag
 | `generate_configs.py` | writes `configs/<run_id>.json` ×120 |
 | `train.py` | config-driven training (mirrors [train.py](../train.py)) + in-process eval + structured log |
 | `evaluate.py` | structured clean/junk perplexity + needle (reuses [eval.py](../eval.py) helpers) |
+| `open_baselines.py` | pretrained Hugging Face baseline runner with the same structured eval log format |
 | `run_worker.py` | multi-GPU atomic file-claim runner (resumable; `--reset`) |
 | `parse_logs.py` | logs → `results.json` |
 | `build_dashboard.py` | `results.json` → self-contained `dashboard.html` |
