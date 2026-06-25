@@ -104,6 +104,12 @@ blocks as trained cells. `clean_ppl` and `needle` use each model's native tokeni
 on coherent `codelion/finepdfs-100M` documents. `junk_ppl` decodes the GPT-2
 FineWeb-Edu validation `.bin` stream and retokenizes it for the target model, so
 the baseline keeps the original junk-stream content while respecting each tokenizer.
+`clean_ppl`/`junk_ppl` remain nats per native model token for backwards compatibility;
+use `clean_bits_per_gpt2_token` / `junk_bits_per_gpt2_token` for comparison to Atma's
+GPT-2-token eval, or `clean_bpb` / `junk_bpb` for tokenizer-independent bits per byte.
+Gemma-family checkpoints default to fp32 in this runner because fp16 forwards on
+T4/SDPA can emit non-finite logits; the other models keep the CUDA fp16 default
+when `--dtype auto` is used.
 
 Colab T4-friendly knobs:
 

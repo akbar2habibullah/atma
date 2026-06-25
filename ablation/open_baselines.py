@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import random
 import re
@@ -46,6 +47,10 @@ OPEN_BASELINE_MODELS = [
     "tiiuae/Falcon-H1-0.5B-Base",
     "Qwen/Qwen3.5-0.8B-Base",
 ]
+
+
+class NonFiniteLogitsError(RuntimeError):
+    """Raised when a model forward produces non-finite logits/loss."""
 
 
 def _slug(model_id: str) -> str:
@@ -95,6 +100,42 @@ def _model_context_limit(model, tokenizer) -> int | None:
 
 def _encode(tokenizer, text: str) -> list[int]:
     return tokenizer.encode(text, add_special_tokens=False)
+
+
+def _normalization_counts(tokenizer, normalizer_tokenizer, ids: torch.Tensor) -> tuple[int, int]:
+    """Return (utf8_bytes, gpt2_tokens) for the scored target span.
+
+    Loss is computed over ids[1:], because ids[:-1] are the conditioning tokens.
+    Decoding the target span gives us tokenizer-independent byte counts plus an
+    approximate GPT-2-token denominator for comparison with the Atma eval.
+    """
+    target_ids = ids[1:].tolist()
+    text = tokenizer.decode(target_ids, skip_special_tokens=True)
+    nbytes = len(text.encode("utf-8"))
+    ngpt2 = len(normalizer_tokenizer.encode(text, add_special_tokens=False))
+    return max(nbytes, 1), max(ngpt2, 1)
+
+
+def _prefers_fp32(model_id: str) -> bool:
+    # Gemma-family fp16 forwards can produce non-finite logits on T4/SDPA.
+    # The 270M checkpoint is small enough that fp32 is the safer default.
+    return "gemma" in model_id.lower()
+
+
+def _resolve_dtype_name(model_id: str, dtype_arg: str, device) -> str:
+    if dtype_arg != "auto":
+        return dtype_arg
+    if device.type != "cuda":
+        return "float32"
+    return "float32" if _prefers_fp32(model_id) else "float16"
+
+
+def _dtype_from_name(dtype_name: str):
+    return {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }[dtype_name]
 
 
 def select_long_docs(
@@ -188,7 +229,7 @@ class RetokenizedGpt2Stream:
 
 
 @torch.inference_mode()
-def sequence_loss(model, ids: torch.Tensor, device, chunk_size: int) -> float:
+def sequence_loss(model, ids: torch.Tensor, device, chunk_size: int) -> tuple[float, int]:
     """Full-context CE by streaming input chunks through the KV cache."""
     input_ids = ids[:-1].to(device=device, dtype=torch.long).view(1, -1)
     targets = ids[1:].to(device=device, dtype=torch.long).view(-1)
@@ -199,12 +240,20 @@ def sequence_loss(model, ids: torch.Tensor, device, chunk_size: int) -> float:
         out = model(input_ids=input_ids[:, start:end], past_key_values=past, use_cache=True)
         past = out.past_key_values
         logits = out.logits.float().view(-1, out.logits.shape[-1])
+        if not torch.isfinite(logits).all():
+            raise NonFiniteLogitsError(
+                f"non-finite logits at token chunk [{start}, {end})"
+            )
         tgt = targets[start:end]
         loss = F.cross_entropy(logits, tgt, reduction="sum")
+        if not torch.isfinite(loss):
+            raise NonFiniteLogitsError(
+                f"non-finite cross entropy at token chunk [{start}, {end})"
+            )
         total += loss.item()
         count += int(tgt.numel())
         del out, logits, tgt, loss
-    return total / max(count, 1)
+    return total, max(count, 1)
 
 
 @torch.inference_mode()
@@ -223,6 +272,8 @@ def tail_value_logits(model, ids: torch.Tensor, n_last: int, device, chunk_size:
             kept.append(out.logits[:, offset:].float().cpu())
         del out
     logits = torch.cat(kept, dim=1)[0]
+    if not torch.isfinite(logits).all():
+        raise NonFiniteLogitsError("non-finite logits while scoring needle value")
     return logits[-n_last:]
 
 
@@ -233,40 +284,55 @@ def _safe_eval_lengths(lengths, context_limit: int | None, respect_model_max: bo
 
 
 @torch.inference_mode()
-def clean_perplexity(model, docs, lengths, device, chunk_size: int):
-    out = {}
+def clean_perplexity(model, tokenizer, normalizer_tokenizer, docs, lengths, device, chunk_size: int):
+    out, bpb, bgpt2 = {}, {}, {}
     for L in lengths:
-        total, n = 0.0, 0
+        total_nats, native_tokens, total_bytes, total_gpt2 = 0.0, 0, 0, 0
         try:
             for doc in docs:
                 if doc.numel() < L + 1:
                     continue
-                total += sequence_loss(model, doc[:L + 1], device, chunk_size) * L
-                n += L
+                ids = doc[:L + 1]
+                loss_sum, ntok = sequence_loss(model, ids, device, chunk_size)
+                nbytes, ngpt2 = _normalization_counts(tokenizer, normalizer_tokenizer, ids)
+                total_nats += loss_sum
+                native_tokens += ntok
+                total_bytes += nbytes
+                total_gpt2 += ngpt2
                 _empty_cuda_cache()
-            out[L] = total / n if n else None
+            out[L] = total_nats / native_tokens if native_tokens else None
+            total_bits = total_nats / math.log(2)
+            bpb[L] = total_bits / total_bytes if total_bytes else None
+            bgpt2[L] = total_bits / total_gpt2 if total_gpt2 else None
         except torch.cuda.OutOfMemoryError:
             _empty_cuda_cache()
-            out[L] = None
-    return out
+            out[L] = bpb[L] = bgpt2[L] = None
+    return out, bpb, bgpt2
 
 
 @torch.inference_mode()
-def junk_perplexity(model, junk_stream, lengths, num_seqs: int, device, chunk_size: int):
-    out = {}
+def junk_perplexity(model, tokenizer, normalizer_tokenizer, junk_stream, lengths, num_seqs: int, device, chunk_size: int):
+    out, bpb, bgpt2 = {}, {}, {}
     for L in lengths:
-        total, n = 0.0, 0
+        total_nats, native_tokens, total_bytes, total_gpt2 = 0.0, 0, 0, 0
         try:
             for _ in range(num_seqs):
                 ids = junk_stream.next_ids(L)
-                total += sequence_loss(model, ids, device, chunk_size) * L
-                n += L
+                loss_sum, ntok = sequence_loss(model, ids, device, chunk_size)
+                nbytes, ngpt2 = _normalization_counts(tokenizer, normalizer_tokenizer, ids)
+                total_nats += loss_sum
+                native_tokens += ntok
+                total_bytes += nbytes
+                total_gpt2 += ngpt2
                 _empty_cuda_cache()
-            out[L] = total / n if n else None
+            out[L] = total_nats / native_tokens if native_tokens else None
+            total_bits = total_nats / math.log(2)
+            bpb[L] = total_bits / total_bytes if total_bytes else None
+            bgpt2[L] = total_bits / total_gpt2 if total_gpt2 else None
         except torch.cuda.OutOfMemoryError:
             _empty_cuda_cache()
-            out[L] = None
-    return out
+            out[L] = bpb[L] = bgpt2[L] = None
+    return out, bpb, bgpt2
 
 
 @torch.inference_mode()
@@ -330,16 +396,11 @@ def _load_model(model_id: str, args, device):
         trust_remote_code=args.trust_remote_code,
         use_fast=True,
     )
-    dtype = {
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "float32": torch.float32,
-    }.get(args.dtype)
-    if dtype is None:
-        dtype = torch.float16 if device.type == "cuda" else torch.float32
+    dtype_name = _resolve_dtype_name(model_id, args.dtype, device)
+    dtype = _dtype_from_name(dtype_name)
 
     kwargs = {
-        "torch_dtype": dtype,
+        "dtype": dtype,
         "trust_remote_code": args.trust_remote_code,
         "low_cpu_mem_usage": True,
     }
@@ -353,12 +414,15 @@ def _load_model(model_id: str, args, device):
         model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
     model.to(device)
     model.eval()
-    return model, tokenizer
+    return model, tokenizer, dtype_name, kwargs.get("attn_implementation")
 
 
 def run_one(model_id: str, args, device):
+    from transformers import AutoTokenizer
+
     started = time.perf_counter()
-    model, tokenizer = _load_model(model_id, args, device)
+    model, tokenizer, dtype_name, attn_impl = _load_model(model_id, args, device)
+    normalizer_tokenizer = AutoTokenizer.from_pretrained(args.normalizer_tokenizer)
     num_params = sum(p.numel() for p in model.parameters())
     context_limit = _model_context_limit(model, tokenizer)
     lengths = _safe_eval_lengths(args.lengths, context_limit, args.respect_model_max)
@@ -379,14 +443,29 @@ def run_one(model_id: str, args, device):
     )
     result = {
         "clean_ppl": {},
+        "clean_bpb": {},
+        "clean_bits_per_gpt2_token": {},
         "junk_ppl": {},
+        "junk_bpb": {},
+        "junk_bits_per_gpt2_token": {},
         "needle": {},
         "needle_baseline": None,
         "num_clean_docs": len(docs),
     }
 
     if docs:
-        result["clean_ppl"] = clean_perplexity(model, docs, lengths, device, args.chunk_size)
+        clean_nats, clean_bpb, clean_bgpt2 = clean_perplexity(
+            model,
+            tokenizer,
+            normalizer_tokenizer,
+            docs,
+            lengths,
+            device,
+            args.chunk_size,
+        )
+        result["clean_ppl"] = clean_nats
+        result["clean_bpb"] = clean_bpb
+        result["clean_bits_per_gpt2_token"] = clean_bgpt2
         needle, base = needle_retrieval(
             model,
             tokenizer,
@@ -403,14 +482,19 @@ def run_one(model_id: str, args, device):
         print("[open-baseline] WARNING: no clean docs found; clean_ppl/needle skipped")
 
     junk_stream = RetokenizedGpt2Stream(args.junk_bin, tokenizer, args.junk_source_tokenizer)
-    result["junk_ppl"] = junk_perplexity(
+    junk_nats, junk_bpb, junk_bgpt2 = junk_perplexity(
         model,
+        tokenizer,
+        normalizer_tokenizer,
         junk_stream,
         lengths,
         args.num_eval_docs,
         device,
         args.chunk_size,
     )
+    result["junk_ppl"] = junk_nats
+    result["junk_bpb"] = junk_bpb
+    result["junk_bits_per_gpt2_token"] = junk_bgpt2
     elapsed = time.perf_counter() - started
     result.update(
         {
@@ -420,6 +504,9 @@ def run_one(model_id: str, args, device):
             "mfu_final": None,
             "model_context_limit": context_limit,
             "chunk_size": args.chunk_size,
+            "effective_dtype": dtype_name,
+            "effective_attn_implementation": attn_impl,
+            "normalizer_tokenizer": args.normalizer_tokenizer,
         }
     )
     del model
@@ -444,6 +531,7 @@ def make_config(model_id: str, args, num_params=None, context_limit=None):
         "clean_dataset_config": args.clean_dataset_config,
         "clean_split": args.clean_split,
         "junk_bin": args.junk_bin,
+        "normalizer_tokenizer": args.normalizer_tokenizer,
         "num_eval_docs": args.num_eval_docs,
         "num_needle_trials": args.num_needle_trials,
         "needle_val_len": args.needle_val_len,
@@ -486,6 +574,8 @@ def parse_args():
     ap.add_argument("--junk_bin", default="finewebedu10B/finewebedu_val_*.bin",
                     help="GPT-2-tokenized FineWeb-Edu .bin stream to decode and retokenize")
     ap.add_argument("--junk_source_tokenizer", default="gpt2")
+    ap.add_argument("--normalizer_tokenizer", default="gpt2",
+                    help="tokenizer used for bits-per-token normalization (default: gpt2)")
     ap.add_argument("--num_eval_docs", type=int, default=16)
     ap.add_argument("--num_needle_trials", type=int, default=16)
     ap.add_argument("--needle_val_len", type=int, default=5)
@@ -521,7 +611,11 @@ def main():
             _emit_block(fh, "ABLATION_EVAL_JSON", eval_res)
             p0("[open-baseline] eval:")
             p0(f"  clean_ppl(nats): {eval_res.get('clean_ppl')}")
+            p0(f"  clean_bits/GPT2tok: {eval_res.get('clean_bits_per_gpt2_token')}")
+            p0(f"  clean_bits/byte: {eval_res.get('clean_bpb')}")
             p0(f"  junk_ppl(nats):  {eval_res.get('junk_ppl')}")
+            p0(f"  junk_bits/GPT2tok:  {eval_res.get('junk_bits_per_gpt2_token')}")
+            p0(f"  junk_bits/byte:  {eval_res.get('junk_bpb')}")
             p0(f"  needle:          "
                f"{ {d: round(v['acc'], 1) for d, v in (eval_res.get('needle') or {}).items()} }")
             p0(f"  needle_baseline CE: {eval_res.get('needle_baseline')}")
