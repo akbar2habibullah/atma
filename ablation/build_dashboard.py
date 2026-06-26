@@ -26,6 +26,10 @@ def metric_catalog():
         {"name": "perf_index",      "label": "perf index (z-score, higher)",   "dir": "higher"},
         {"name": "clean_ppl_wavg",  "label": "clean ppl - len-wtd (nats)",     "dir": "lower"},
         {"name": "junk_ppl_wavg",   "label": "junk ppl - len-wtd (nats)",      "dir": "lower"},
+        {"name": "clean_bpb_wavg",  "label": "clean bits/byte - len-wtd",      "dir": "lower"},
+        {"name": "junk_bpb_wavg",   "label": "junk bits/byte - len-wtd",       "dir": "lower"},
+        {"name": "clean_bits_gpt2tok_wavg", "label": "clean bits/GPT2tok - len-wtd", "dir": "lower"},
+        {"name": "junk_bits_gpt2tok_wavg",  "label": "junk bits/GPT2tok - len-wtd",  "dir": "lower"},
         {"name": "needle_acc_wavg", "label": "needle acc - len-wtd (%)",       "dir": "higher"},
         {"name": "final_val_loss",  "label": "final val loss",                 "dir": "lower"},
     ]
@@ -33,6 +37,14 @@ def metric_catalog():
         cat.append({"name": f"clean_ppl_{L}", "label": f"clean ppl @{L} (nats)", "dir": "lower"})
     for L in EVAL_LENGTHS:
         cat.append({"name": f"junk_ppl_{L}", "label": f"junk ppl @{L} (nats)", "dir": "lower"})
+    for L in EVAL_LENGTHS:
+        cat.append({"name": f"clean_bpb_{L}", "label": f"clean bits/byte @{L}", "dir": "lower"})
+    for L in EVAL_LENGTHS:
+        cat.append({"name": f"junk_bpb_{L}", "label": f"junk bits/byte @{L}", "dir": "lower"})
+    for L in EVAL_LENGTHS:
+        cat.append({"name": f"clean_bits_gpt2tok_{L}", "label": f"clean bits/GPT2tok @{L}", "dir": "lower"})
+    for L in EVAL_LENGTHS:
+        cat.append({"name": f"junk_bits_gpt2tok_{L}", "label": f"junk bits/GPT2tok @{L}", "dir": "lower"})
     for d in EVAL_LENGTHS:
         cat.append({"name": f"needle_acc_{d}", "label": f"needle acc @{d} (%)", "dir": "higher"})
     cat.append({"name": "mfu_final", "label": "MFU (%)", "dir": "higher"})
@@ -103,7 +115,9 @@ HTML = r"""<!doctype html><html><head><meta charset="utf-8">
      <p><b class="m">Length-weighted families.</b> Each eval family (clean ppl, junk ppl, needle acc) is
         collapsed across the 6 eval lengths with a <i>weighted</i> average, weight&nbsp;=&nbsp;<code>L / 2048</code>
         (so 2048→1×, 4096→2× … 65536→32×). Longer-context behaviour dominates. → columns
-        <code>clean_ppl_wavg</code>, <code>junk_ppl_wavg</code>, <code>needle_acc_wavg</code>.</p>
+        <code>clean_ppl_wavg</code>, <code>junk_ppl_wavg</code>, <code>clean_bpb_wavg</code>,
+        <code>junk_bpb_wavg</code>, <code>clean_bits_gpt2tok_wavg</code>,
+        <code>junk_bits_gpt2tok_wavg</code>, <code>needle_acc_wavg</code>.</p>
      <p><b class="m">perf_index.</b> Each family's length-weighted value is standardized (z-scored:
         <code>(x − mean) / std</code>) across all <i>done</i> runs; the two perplexity z-scores are sign-flipped
         so higher is always better. <code>perf_index</code> is the mean of the three z-scores — a field-relative
@@ -134,7 +148,7 @@ const state = {filters:{}, metric:CATALOG[0].name, topn:'all', group:'', cmp:new
 AXES.forEach(a=> state.filters[a]=new Set(D.axis_values[a]));
 const PAL = ['#7fb3ff','#9af0c6','#cdb6ff','#e0c08a','#e0736b','#6fd6d0','#f0a0d0','#b6e07f'];
 // headline columns shown alongside the selected metric (per-run and grouped views)
-const COLS = ['perf_index','eff_index','clean_ppl_wavg','junk_ppl_wavg','needle_acc_wavg','mfu_final'];
+const COLS = ['perf_index','eff_index','clean_bits_gpt2tok_wavg','junk_bits_gpt2tok_wavg','clean_ppl_wavg','junk_ppl_wavg','needle_acc_wavg','mfu_final'];
 
 // Length-weighted average of metrics[prefix+L] over EVAL_LENGTHS, weight = L/BASE_LEN
 // (2048 -> 1x ... 65536 -> 32x). Missing lengths are skipped. null if none present.
@@ -148,16 +162,22 @@ function wavg(metrics, prefix){
   return den ? num/den : null;
 }
 // Composite scores, folded into each record's `metrics`:
-//  * per-family length-weighted value (clean_ppl_wavg, junk_ppl_wavg, needle_acc_wavg)
+//  * per-family length-weighted value (native-token nats, normalized bits, needle acc)
 //  * perf_index = mean of per-family z-scores (ppl flipped so higher=better), across done runs
 //  * eff_index  = perf_index * MFU/100  (score per overhead, overhead ~ 1/MFU)
 function computeComposites(){
   RECORDS.forEach(r=>{
     if(!r.metrics) r.metrics={};
     const cw=wavg(r.metrics,'clean_ppl_'), jw=wavg(r.metrics,'junk_ppl_'), nw=wavg(r.metrics,'needle_acc_');
+    const cb=wavg(r.metrics,'clean_bpb_'), jb=wavg(r.metrics,'junk_bpb_');
+    const cg=wavg(r.metrics,'clean_bits_gpt2tok_'), jg=wavg(r.metrics,'junk_bits_gpt2tok_');
     r._cw=cw; r._jw=jw; r._nw=nw;
     if(cw!=null) r.metrics.clean_ppl_wavg=cw;
     if(jw!=null) r.metrics.junk_ppl_wavg=jw;
+    if(cb!=null) r.metrics.clean_bpb_wavg=cb;
+    if(jb!=null) r.metrics.junk_bpb_wavg=jb;
+    if(cg!=null) r.metrics.clean_bits_gpt2tok_wavg=cg;
+    if(jg!=null) r.metrics.junk_bits_gpt2tok_wavg=jg;
     if(nw!=null) r.metrics.needle_acc_wavg=nw;
   });
   const stat=arr=>{ const a=arr.filter(v=>v!=null&&!isNaN(v)); if(!a.length) return null;
@@ -319,13 +339,30 @@ def main():
     else:
         records = [parse_log(p) for p in sorted(glob.glob(os.path.join(args.log_dir, "*.log")))]
 
-    expected = [c.run_id for c in expand_grid()]
+    grid_expected = [c.run_id for c in expand_grid()]
+    expected = sorted(set(grid_expected) | {r["run_id"] for r in records})
+
+    def _axis_values(axis, defaults):
+        vals = list(defaults)
+        seen = set(vals)
+        for r in records:
+            v = r.get(axis)
+            if isinstance(v, bool):
+                v = 1 if v else 0
+            if v is not None and v not in seen:
+                vals.append(v)
+                seen.add(v)
+        return vals
+
     data = {
         "records": records,
         "catalog": metric_catalog(),
         "axes": ["attn_type", "reg_mode", "distractor", "memory", "window"],
-        "axis_values": {"attn_type": ATTN_TYPES, "reg_mode": REG_MODES,
-                        "distractor": [0, 1], "memory": [0, 1], "window": [0, 1]},
+        "axis_values": {"attn_type": _axis_values("attn_type", ATTN_TYPES),
+                        "reg_mode": _axis_values("reg_mode", REG_MODES),
+                        "distractor": _axis_values("distractor", [0, 1]),
+                        "memory": _axis_values("memory", [0, 1]),
+                        "window": _axis_values("window", [0, 1])},
         "expected": expected,
         "maxlen": max(EVAL_LENGTHS),
         "eval_lengths": list(EVAL_LENGTHS),

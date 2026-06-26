@@ -41,6 +41,18 @@ def _flatten_metrics(curve, ev):
         for L, v in (ev.get("junk_ppl") or {}).items():
             if v is not None:
                 m[f"junk_ppl_{L}"] = v
+        for L, v in (ev.get("clean_bpb") or {}).items():
+            if v is not None:
+                m[f"clean_bpb_{L}"] = v
+        for L, v in (ev.get("junk_bpb") or {}).items():
+            if v is not None:
+                m[f"junk_bpb_{L}"] = v
+        for L, v in (ev.get("clean_bits_per_gpt2_token") or {}).items():
+            if v is not None:
+                m[f"clean_bits_gpt2tok_{L}"] = v
+        for L, v in (ev.get("junk_bits_per_gpt2_token") or {}).items():
+            if v is not None:
+                m[f"junk_bits_gpt2tok_{L}"] = v
         for d, v in (ev.get("needle") or {}).items():
             if v is not None:
                 m[f"needle_acc_{d}"] = v.get("acc")

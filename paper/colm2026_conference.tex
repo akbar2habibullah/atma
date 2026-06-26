@@ -325,6 +325,49 @@ Surprisingly, when the memory branch is active, adding sliding windowing or dist
 
 A sliding window restricts the attention layer from training on long-context patterns, making it unable to align its projections for distant keys. The distractor loss over-sharpens the null floor, which suppresses the weak but necessary signals retrieved from the long-term memory. Thus, the simplest configuration (full polar + memory) is strictly superior.
 
+\subsection{Open-Weight Pretrained Baselines}
+The controlled ablation above isolates architecture under a fixed 370M-scale training budget, but it is also useful to anchor the numbers against publicly available pretrained models. We therefore run the same clean-document, junk-stream, and induction-NIAH probes on open-weight baselines ranging from 230M to 752M parameters. Since each pretrained model uses its own tokenizer, language-modeling scores are reported as \textbf{bits per GPT-2 token}; lower is better. For $\mathcal{L}=\{2048,4096,8192,16384,32768,65536\}$ and each length-indexed metric $x_L$, the weighted average is
+\begin{equation}
+    \operatorname{WAvg}(x) = \frac{\sum_{L \in \mathcal{L}} (L / 2048) x_L}{\sum_{L \in \mathcal{L}} (L / 2048)},
+\end{equation}
+so the 64K endpoint dominates the summary.
+
+\begin{table}[t]
+\centering
+\tiny
+\setlength{\tabcolsep}{2pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrrrrrrr}
+\toprule
+\textbf{Model / Recipe} & \textbf{Params} & \multicolumn{3}{c}{\textbf{Clean}} & \multicolumn{3}{c}{\textbf{Junk}} & \multicolumn{3}{c}{\textbf{Needle}} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-11}
+ & & \textbf{WAvg} & \textbf{2K} & \textbf{64K} & \textbf{WAvg} & \textbf{2K} & \textbf{64K} & \textbf{WAvg} & \textbf{2K} & \textbf{64K} \\
+\midrule
+Qwen3.5-0.8B-Base & 752M & \textbf{1.70} & \textbf{2.23} & \textbf{1.54} & \textbf{3.80} & 3.75 & \textbf{3.80} & \textbf{100.0} & \textbf{100.0} & \textbf{100.0} \\
+Qwen3-0.6B-Base & 596M & 1.72 & 2.21 & 1.60 & 3.80 & 3.70 & 3.84 & 97.5 & 100.0 & 95.0 \\
+Qwen2.5-0.5B & 494M & 1.84 & 2.30 & 1.74 & 3.83 & 3.75 & 3.87 & 68.4 & 100.0 & 38.1 \\
+Granite-4.0-H-350M & 340M & 2.20 & 2.25 & 2.11 & 3.95 & 3.74 & 3.98 & 56.9 & 75.0 & 54.4 \\
+Gemma-3-270M & 268M & 2.22 & 2.89 & 2.18 & 4.41 & 4.59 & 4.54 & 53.2 & 96.2 & 24.4 \\
+Granite-4.0-350M & 352M & 2.69 & 2.56 & 3.10 & 4.75 & 3.76 & 5.65 & 25.6 & 40.6 & 8.8 \\
+Falcon-H1-0.5B & 521M & 3.03 & 2.57 & 3.05 & 5.31 & 3.67 & 5.65 & 28.6 & 92.5 & 19.4 \\
+SmolLM2-360M & 362M & 5.57 & 2.43 & 6.72 & 8.60 & \textbf{3.58} & 10.37 & 16.9 & 100.0 & 8.1 \\
+LFM2.5-230M & 230M & 6.93 & 3.59 & 6.96 & 10.55 & 5.37 & 11.01 & 29.0 & 38.1 & 19.4 \\
+LFM2.5-350M & 354M & 6.96 & 3.79 & 6.90 & 10.78 & 5.82 & 11.11 & 44.6 & 45.6 & 46.3 \\
+\midrule
+\textbf{ATMA Polar + Titans Memory} & 378M & 3.04 & 3.90 & 2.83 & 4.49 & 4.49 & 4.51 & 94.1 & 91.3 & 92.5 \\
+ATMA Softmax + Titans Memory & 378M & 3.37 & 3.84 & 3.38 & 4.58 & 4.46 & 4.66 & 41.7 & 97.5 & 16.3 \\
+ATMA Polar, no Memory & 370M & 5.11 & 4.08 & 5.20 & 7.69 & 4.71 & 8.19 & 5.3 & 96.3 & 0.0 \\
+ATMA Softmax, no Memory & 370M & 4.93 & 3.99 & 5.35 & 8.57 & 4.57 & 9.63 & 7.9 & 97.5 & 1.3 \\
+\bottomrule
+\end{tabular}
+}
+\caption{Open-weight pretrained baselines evaluated with the same probes as ATMA. Clean and junk metrics are bits per GPT-2 token; Needle is greedy per-digit accuracy in percent. The open Qwen baselines are much stronger pretrained language models and solve the synthetic probe, while the controlled ATMA comparison shows that Polar + Titans memory is the only ATMA recipe that keeps retrieval high at 64K.}
+\label{table:open_weight_baselines}
+\end{table}
+\FloatBarrier
+
+These results narrow, rather than weaken, the claim. ATMA is not yet competitive with the strongest open pretrained models in absolute language-modeling quality; Qwen3.5-0.8B, in particular, has both lower bits-per-token and perfect 64K induction accuracy in this probe. The architectural result is instead that, under the matched ATMA training recipe and roughly 1B-token budget, Polar + Titans memory is the component combination that preserves long-range retrieval, whereas ATMA softmax-memory and memoryless variants collapse at the same 64K endpoint.
+
 \subsection{Hardware-Software Codesign and Kernel Machinery}
 To ensure that ATMA's mathematical properties translate into real-world efficiency, we perform a hardware-software codesign. We optimize the sequence mixers by implementing custom GPU kernels using the Triton programming language, integrating them across our training, reference, and paged inference pipelines.
 
