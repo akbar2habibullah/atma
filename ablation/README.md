@@ -82,7 +82,7 @@ FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/smoke --log_
 
 ## Open-weight pretrained baselines
 
-Run the same post-training metrics against small Hugging Face causal LMs without training:
+Run the same metrics against small Hugging Face causal LMs without training:
 
 ```bash
 python -m ablation.open_baselines --log_dir ablation/open_logs
@@ -93,11 +93,13 @@ Default model list:
 - `google/gemma-3-270m`
 - `LiquidAI/LFM2.5-230M-Base`
 - `LiquidAI/LFM2.5-350M-Base`
+- `Qwen/Qwen2.5-0.5B`
 - `Qwen/Qwen3-0.6B-Base`
+- `Qwen/Qwen3.5-0.8B-Base`
 - `HuggingFaceTB/SmolLM2-360M`
 - `ibm-granite/granite-4.0-350m-base`
+- `ibm-granite/granite-4.0-h-350m-base`
 - `tiiuae/Falcon-H1-0.5B-Base`
-- `Qwen/Qwen3.5-0.8B-Base`
 
 The runner writes one `<run_id>.log` per model using the same `ABLATION_*_JSON`
 blocks as trained cells. `clean_ppl` and `needle` use each model's native tokenizer

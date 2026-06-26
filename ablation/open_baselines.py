@@ -41,11 +41,13 @@ OPEN_BASELINE_MODELS = [
     "google/gemma-3-270m",
     "LiquidAI/LFM2.5-230M-Base",
     "LiquidAI/LFM2.5-350M-Base",
+    "Qwen/Qwen2.5-0.5B",
     "Qwen/Qwen3-0.6B-Base",
+    "Qwen/Qwen3.5-0.8B-Base",
     "HuggingFaceTB/SmolLM2-360M",
     "ibm-granite/granite-4.0-350m-base",
+    "ibm-granite/granite-4.0-h-350m-base",
     "tiiuae/Falcon-H1-0.5B-Base",
-    "Qwen/Qwen3.5-0.8B-Base",
 ]
 
 
@@ -119,7 +121,7 @@ def _normalization_counts(tokenizer, normalizer_tokenizer, ids: torch.Tensor) ->
 def _prefers_fp32(model_id: str) -> bool:
     # Gemma-family fp16 forwards can produce non-finite logits on T4/SDPA.
     # The 270M checkpoint is small enough that fp32 is the safer default.
-    return "gemma" in model_id.lower()
+    return "gemma" in model_id.lower() or "granite" in model_id.lower()
 
 
 def _resolve_dtype_name(model_id: str, dtype_arg: str, device) -> str:

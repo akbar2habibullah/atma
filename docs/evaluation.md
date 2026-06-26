@@ -49,6 +49,43 @@ The window is retrieval-blind past its width (it never trains attention on dista
 
 **Ablation — `--no_mem` confirms the memory is load-bearing.** Stripping the memory from a trained checkpoint breaks it globally (loss `2.8 → 5.7` at 1×, needle `0 %` everywhere): the model uses the memory at *all* lengths, not just long context. See [TITANS_MEMORY.md §7](TITANS_MEMORY.md#7-empirical-results) for the gated-delta math and the ~6–9 % MFU overhead.
 
+## 4. Open-weight pretrained baselines
+
+The open-model runs in [ablation/open_logs](../ablation/open_logs) use the same clean-doc,
+junk-stream, and induction-needle probes. Because every pretrained model uses its own
+tokenizer, the table reports **bits per GPT-2 token** (`bits/GPT2tok`) instead of native-token
+nats; lower is better. The weighted averages use the same length weights as the dashboard
+(`L / 2048`), so 64K dominates the summary. Needle values are greedy per-value-token accuracy.
+
+For orientation, the main Atma rows converted from nats/token to bits/GPT2tok:
+
+| Model / recipe | Params | Clean bits/GPT2tok wavg | Clean @64K | Junk @64K | Needle wavg | Needle @64K |
+|---|---:|---:|---:|---:|---:|---:|
+| Atma polar + Titans memory | 378M | 3.04 | 2.83 | 4.51 | 94.1% | 92.5% |
+| Atma softmax + Titans memory | 378M | 3.37 | 3.38 | 4.66 | 41.7% | 16.3% |
+| Atma polar, no memory | 370M | 5.11 | 5.20 | 8.19 | 5.3% | 0.0% |
+| Atma softmax, no memory | 370M | 4.93 | 5.35 | 9.63 | 7.9% | 1.3% |
+
+Open-weight pretrained baselines:
+
+| Model | Params | Clean bits/GPT2tok wavg | Clean @2K | Clean @64K | Junk @64K | Needle wavg | Needle @2K | Needle @64K |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `Qwen/Qwen3.5-0.8B-Base` | 752M | 1.70 | 2.23 | 1.54 | 3.80 | 100.0% | 100.0% | 100.0% |
+| `Qwen/Qwen3-0.6B-Base` | 596M | 1.72 | 2.21 | 1.60 | 3.84 | 97.5% | 100.0% | 95.0% |
+| `Qwen/Qwen2.5-0.5B` | 494M | 1.84 | 2.30 | 1.74 | 3.87 | 68.4% | 100.0% | 38.1% |
+| `ibm-granite/granite-4.0-h-350m-base` | 340M | 2.20 | 2.25 | 2.11 | 3.98 | 56.9% | 75.0% | 54.4% |
+| `google/gemma-3-270m` | 268M | 2.22 | 2.89 | 2.18 | 4.54 | 53.2% | 96.2% | 24.4% |
+| `ibm-granite/granite-4.0-350m-base` | 352M | 2.69 | 2.56 | 3.10 | 5.65 | 25.6% | 40.6% | 8.8% |
+| `tiiuae/Falcon-H1-0.5B-Base` | 521M | 3.03 | 2.57 | 3.05 | 5.65 | 28.6% | 92.5% | 19.4% |
+| `HuggingFaceTB/SmolLM2-360M` | 362M | 5.57 | 2.43 | 6.72 | 10.37 | 16.9% | 100.0% | 8.1% |
+| `LiquidAI/LFM2.5-230M-Base` | 230M | 6.93 | 3.59 | 6.96 | 11.01 | 29.0% | 38.1% | 19.4% |
+| `LiquidAI/LFM2.5-350M-Base` | 354M | 6.96 | 3.79 | 6.90 | 11.11 | 44.6% | 45.6% | 46.3% |
+
+The pretrained Qwen baselines are much stronger language models at this scale and also solve
+the synthetic induction probe out to 64K. Atma's claim is narrower: with only ~1B training
+tokens, the polar+memory recipe keeps retrieval flat where matched Atma softmax/memory and
+memoryless variants collapse.
+
 ## Choosing an attention mode
 
 The ablation collapses the earlier per-workload guidance into one default:
