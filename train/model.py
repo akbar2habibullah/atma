@@ -473,6 +473,10 @@ class CausalSelfAttention(AtmaAttnBase):
                     align_loss = F.mse_loss(y_dist, y)
                 return y, align_loss
             except Exception as e:
+                # Non-reentrant checkpoint uses this private exception for control flow during
+                # recomputation. Do not wrap it as a Wall kernel failure.
+                if e.__class__.__name__ == "_StopRecomputationError":
+                    raise
                 if self.training:
                     raise RuntimeError("wall_attn Triton kernel failed during training") from e
                 pass                                                # eval can still fall through to the torch path

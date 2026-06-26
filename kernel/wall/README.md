@@ -317,6 +317,52 @@ A direct fresh-process upstream-vs-local run was not recorded in this report bec
 environment is missing `cuda.h`, and Triton fails when rebuilding its CUDA helper module from an
 empty cache. Earlier CUDA validation was run before that cache miss.
 
+### Ablation survival sanity
+
+These checks use the heavy Wall ablation settings from
+`wall__reg-strong__distr-1__mem-1__win-1`: 16 layers, hidden size 1024, head dim 128,
+`seq_len=2048`, `num_random_keys=2048`, strong regularization, distractor alignment, training
+window 1024, and memory enabled. The sanity script used synthetic token batches to avoid data
+downloads while exercising the same model path. In this environment the optional `kernels` package
+was absent, so causal conv used the repository's PyTorch fallback.
+
+Training survival on NVIDIA L4:
+
+| mbs | status | peak allocated | peak reserved | notes |
+| ---: | --- | ---: | ---: | --- |
+| 4 | OOM | 20.913 GB | 21.064 GB | failed on a 1.54 GiB allocation request |
+| 2 | OK | 13.726 GB | 14.193 GB | matches the Wall ablation JSON setting |
+
+The `mbs=2` run completed one full forward/backward optimizer-step equivalent over the heavy loss
+composition:
+
+```text
+loss = (1 - 0.01) * lm_loss + 0.01 * strong_reg_loss + 0.01 * distractor_align_loss
+```
+
+The first attempt exposed a checkpointing integration bug: PyTorch's non-reentrant checkpoint path
+raises a private `_StopRecomputationError` as internal control flow, and the Wall wrapper's broad
+exception handler was converting it into `RuntimeError("wall_attn Triton kernel failed during
+training")`. `train/model.py` now re-raises that control-flow exception unchanged.
+
+Full-context 64K Wall forward sanity compared the explicit upstream package and local fork sources:
+
+```text
+local:    /home/sagemaker-user/atma/kernel/wall/training.py
+upstream: /home/sagemaker-user/wall-attention-release/wall_attn/training.py
+```
+
+Shape: `B=1, T=65536, HQ=8, H=2, K=V=128, dtype=bf16, window=None`.
+
+| impl | status | peak allocated | peak reserved | elapsed |
+| --- | --- | ---: | ---: | ---: |
+| local low-memory | OK | 1.062 GB | 1.191 GB | 91.880 s |
+| upstream `wall_attn` | OK | 1.062 GB | 1.191 GB | 167.802 s |
+
+Forward memory is identical because the local fork intentionally leaves the upstream forward kernel
+unchanged; the low-memory changes are in backward. Fresh-process elapsed times include compile and
+autotune effects and should not be read as a stable throughput comparison.
+
 ### Current implementation notes
 
 - `dk` and `dv` are allocated as KV-head-shaped tensors, `(B,T,H,K)` and `(B,T,H,V)`, for GQA.
