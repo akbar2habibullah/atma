@@ -263,17 +263,23 @@ Shape:
 B=2, T=2048, HQ=8, H=2, G=4, K=128, V=128, dtype=bf16, R=0
 ```
 
-| impl | window | peak allocated | peak reserved | elapsed |
+| impl | window | peak allocated | peak reserved | elapsed / status |
 | --- | ---: | ---: | ---: | ---: |
+| naive PyTorch reference | `None` | OOM | OOM | requested 32.00 GiB allocation |
 | upstream `wall_attn` | `None` | 0.305 GB | 0.307 GB | 7.04 ms |
 | local low-memory | `None` | 0.121 GB | 0.135 GB | 16.55 ms |
+| naive PyTorch reference | 1024 | OOM | OOM | requested 32.00 GiB allocation |
 | upstream `wall_attn` | 1024 | 0.305 GB | 0.307 GB | 6.16 ms |
 | local low-memory | 1024 | 0.121 GB | 0.135 GB | 14.44 ms |
 
 Result:
 
-- Peak allocated memory drops from 0.305 GB to 0.121 GB, about a 60% reduction.
-- Peak reserved memory drops from 0.307 GB to 0.135 GB, about a 56% reduction.
+- The naive PyTorch reference cannot run this target shape on L4. It materializes pairwise
+  `T x T` objects and failed before backward with `CUDA out of memory. Tried to allocate 32.00 GiB`.
+- Against upstream `wall_attn`, peak allocated memory drops from 0.305 GB to 0.121 GB, about a 60%
+  reduction.
+- Against upstream `wall_attn`, peak reserved memory drops from 0.307 GB to 0.135 GB, about a 56%
+  reduction.
 - Runtime is slower in this isolated benchmark because the local DKV backward uses a fixed launch
   and atomic GQA accumulation to avoid full-HQ temporaries. This is an intentional memory-over-MFU
   tradeoff for the L4 ablation sweep.

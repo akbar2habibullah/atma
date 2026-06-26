@@ -16,7 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--impl", choices=("local", "upstream"), default="local")
+    p.add_argument("--impl", choices=("local", "upstream", "naive"), default="local")
     p.add_argument("--B", type=int, default=2)
     p.add_argument("--T", type=int, default=2048)
     p.add_argument("--HQ", type=int, default=8)
@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
 def load_kernel(impl: str):
     if impl == "local":
         from kernel.wall import wall_attn
+    elif impl == "naive":
+        from kernel.wall.reference import wall_attn_reference as wall_attn
     else:
         from wall_attn import wall_attn
     return wall_attn
@@ -74,27 +76,52 @@ def main() -> None:
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
     wall_attn = load_kernel(args.impl)
 
-    for _ in range(args.warmup):
-        run_once(wall_attn, args, dtype)
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
+    try:
+        for _ in range(args.warmup):
+            run_once(wall_attn, args, dtype)
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
-    times = []
-    peak_alloc = 0
-    peak_reserved = 0
-    for _ in range(args.iters):
-        torch.cuda.reset_peak_memory_stats()
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        run_once(wall_attn, args, dtype)
-        torch.cuda.synchronize()
-        times.append((time.perf_counter() - t0) * 1000.0)
-        peak_alloc = max(peak_alloc, torch.cuda.max_memory_allocated())
-        peak_reserved = max(peak_reserved, torch.cuda.max_memory_reserved())
+        times = []
+        peak_alloc = 0
+        peak_reserved = 0
+        for _ in range(args.iters):
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            run_once(wall_attn, args, dtype)
+            torch.cuda.synchronize()
+            times.append((time.perf_counter() - t0) * 1000.0)
+            peak_alloc = max(peak_alloc, torch.cuda.max_memory_allocated())
+            peak_reserved = max(peak_reserved, torch.cuda.max_memory_reserved())
+    except RuntimeError as e:
+        if "out of memory" not in str(e).lower():
+            raise
+        torch.cuda.empty_cache()
+        print(
+            "impl={impl},B={B},T={T},R={R},HQ={HQ},H={H},K={K},V={V},dtype={dtype},"
+            "window={window},status=oom,peak_alloc_gb={alloc:.3f},peak_reserved_gb={reserved:.3f},"
+            "error={error}".format(
+                impl=args.impl,
+                B=args.B,
+                T=args.T,
+                R=args.R,
+                HQ=args.HQ,
+                H=args.H,
+                K=args.K,
+                V=args.V,
+                dtype=args.dtype,
+                window=None if args.window == 0 else args.window,
+                alloc=torch.cuda.max_memory_allocated() / 1024**3,
+                reserved=torch.cuda.max_memory_reserved() / 1024**3,
+                error=str(e).split("\n")[0],
+            )
+        )
+        return
 
     print(
         "impl={impl},B={B},T={T},R={R},HQ={HQ},H={H},K={K},V={V},dtype={dtype},"
-        "window={window},peak_alloc_gb={alloc:.3f},peak_reserved_gb={reserved:.3f},"
+        "window={window},status=ok,peak_alloc_gb={alloc:.3f},peak_reserved_gb={reserved:.3f},"
         "elapsed_ms={elapsed:.2f}".format(
             impl=args.impl,
             B=args.B,
