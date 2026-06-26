@@ -2,6 +2,11 @@ import os
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except Exception:
+    SDPBackend = None
+    sdpa_kernel = None
 from types import SimpleNamespace
 
 from train.reg import sigreg
@@ -409,6 +414,14 @@ class CausalSelfAttention(AtmaAttnBase):
     def _sdpa(self, qh, kh, vh, W, scale):
         """Causal SDPA with an optional sliding-window band. q/k/v: (B, T, H, dk)."""
         T = qh.shape[1]
+        q_t = qh.transpose(1, 2).contiguous()
+        k_t = kh.transpose(1, 2).contiguous()
+        v_t = vh.transpose(1, 2).contiguous()
+        if W is None and q_t.is_cuda and sdpa_kernel is not None:
+            with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION]):
+                return F.scaled_dot_product_attention(
+                    q_t, k_t, v_t, is_causal=True, scale=scale).transpose(1, 2)
+
         attn_mask, is_causal = None, True
         if W is not None:
             qi = torch.arange(T, device=qh.device).view(T, 1)
@@ -417,7 +430,7 @@ class CausalSelfAttention(AtmaAttnBase):
             attn_mask = torch.zeros(T, T, device=qh.device, dtype=qh.dtype).masked_fill(~band, float("-inf"))
             is_causal = False
         return F.scaled_dot_product_attention(
-            qh.transpose(1, 2), kh.transpose(1, 2), vh.transpose(1, 2),
+            q_t, k_t, v_t,
             attn_mask=attn_mask, is_causal=is_causal, scale=scale).transpose(1, 2)
 
     def _wall_attention(self, x, q_attn, k_attn, v_attn, groups, W):
@@ -443,8 +456,10 @@ class CausalSelfAttention(AtmaAttnBase):
         P = torch.cumsum(g, dim=1)                                  # (B,T,H,dk), monotone decreasing
         P = P - 0.5 * (P.amax(1, keepdim=True) + P.amin(1, keepdim=True))   # recenter per (B,H,dk)
         P = P.clamp(-30.0, 30.0)                                    # NaN guard (only bites at long-ctx eval)
-        qt = (q_attn.float() * torch.exp(P)).to(q_attn.dtype)
-        kt = (k_exp.float() * torch.exp(-P)).to(q_attn.dtype)
+        q_scale = torch.exp(P).to(q_attn.dtype)
+        k_scale = torch.exp(-P).to(k_exp.dtype)
+        qt = q_attn * q_scale
+        kt = k_exp * k_scale
         y = self._sdpa(qt, kt, v_exp, W, scale)
 
         align_loss = torch.tensor(0.0, device=x.device)

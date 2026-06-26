@@ -332,6 +332,34 @@ The controlled ablation above isolates architecture under a fixed 370M-scale tra
 \end{equation}
 so the 64K endpoint dominates the summary.
 
+To contextualize the comparison, Table~\ref{table:open_weight_budgets} reports the public training-token budgets and native/pretraining context windows for these baselines. We estimate training compute using the standard dense language-model approximation $F \approx 6ND$, where $N$ is parameter count and $D$ is training tokens; these FLOP estimates are order-of-magnitude context rather than exact vendor accounting.
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Model / Recipe} & \textbf{Params} & \textbf{Train Tokens} & \textbf{Native Ctx} & \textbf{Train FLOPs} \\
+\midrule
+Qwen3.5-0.8B-Base & 752M & N/A & 262K & N/A \\
+Qwen3-0.6B-Base & 596M & 36T & 32K & 128.7 ZF \\
+Qwen2.5-0.5B & 494M & 18T & 32K & 53.4 ZF \\
+Granite-4.0-H-350M & 340M & 15T & 32K & 30.6 ZF \\
+Gemma-3-270M & 268M & 6T & 32K & 9.6 ZF \\
+Granite-4.0-350M & 352M & 15T & 32K & 31.7 ZF \\
+Falcon-H1-0.5B & 521M & 2.5T & 16K & 7.8 ZF \\
+SmolLM2-360M & 362M & 4T & 8K & 8.7 ZF \\
+LFM2.5-230M & 230M & 19T & 32K & 26.2 ZF \\
+LFM2.5-350M & 354M & 28T & 32K & 59.5 ZF \\
+\midrule
+ATMA ablation models & 370--378M & 1B & 2K & 0.0022--0.0023 ZF \\
+\bottomrule
+\end{tabular}
+\caption{Training-budget context for the open-weight baselines and ATMA ablations. FLOPs are approximate dense LM training FLOPs computed as $6 \times$ parameters $\times$ training tokens. ZF denotes $10^{21}$ floating-point operations.}
+\label{table:open_weight_budgets}
+\end{table}
+
 \begin{table}[t]
 \centering
 \tiny
