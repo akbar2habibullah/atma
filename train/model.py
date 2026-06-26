@@ -32,11 +32,15 @@ except Exception:
 # the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
 # missing-kernel development runs.
 try:
-    from wall_attn import wall_attn as _wall_attn_kernel
+    from kernel.wall import wall_attn as _wall_attn_kernel
     _HAS_WALL = True
 except Exception:
-    _wall_attn_kernel = None
-    _HAS_WALL = False
+    try:
+        from wall_attn import wall_attn as _wall_attn_kernel
+        _HAS_WALL = True
+    except Exception:
+        _wall_attn_kernel = None
+        _HAS_WALL = False
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
