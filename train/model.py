@@ -27,9 +27,9 @@ except Exception:
     HAS_TRITON = False
 
 # Tilde Research Wall Attention (data-dependent per-channel forget gates lifted into softmax;
-# https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used as
-# the faithful long-context path for attn_type="wall"; a pure-PyTorch fallback covers training
-# (exact at train length) and CPU. See WallAttention below.
+# https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used for
+# the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
+# missing-kernel development runs.
 try:
     from wall_attn import wall_attn as _wall_attn_kernel
     _HAS_WALL = True
@@ -435,24 +435,46 @@ class CausalSelfAttention(AtmaAttnBase):
 
     def _wall_attention(self, x, q_attn, k_attn, v_attn, groups, W):
         """Wall attention on canon'd q/k/v. q_attn:(B,T,H,dk); k/v_attn:(B,T,kvH,dk). Returns
-        (y (B,T,H,dk), align_loss). Faithful long-context path = Tilde's chunked Triton kernel
-        (per-chunk anchors, used at eval on CUDA); the torch fallback recenters the prefix sum so
-        exp() stays finite and is exact at the training length (where the centred range is small)."""
+        (y (B,T,H,dk), align_loss). Faithful path = Tilde's fused Triton kernel, including
+        backward. The torch fallback is only for CPU / missing-kernel development runs."""
         B, T = x.shape[0], x.shape[1]
         H, dk = self.num_heads, self.head_dim
+        g = -F.softplus(self.w_wall(x).view(B, T, H, dk) + self.wall_gate_bias)  # (B,T,H,dk) <= 0, nats
+        scale = dk ** -0.5
+        align_loss = torch.tensor(0.0, device=x.device)
+
+        if self.training and q_attn.is_cuda and not _HAS_WALL:
+            raise RuntimeError("attn_type='wall' training on CUDA requires the wall_attn Triton package")
+
+        if _HAS_WALL and q_attn.is_cuda:
+            try:                                                    # fused fwd+bwd kernel; supports GQA
+                y = _wall_attn_kernel(q_attn.contiguous(), k_attn.contiguous(), v_attn.contiguous(),
+                                      g.to(q_attn.dtype).contiguous(), scale=scale, window_size=W)
+                if self.num_random_keys > 0 and self.training:
+                    R = self.num_random_keys
+                    rand_input = torch.randn(B, R, x.shape[2], device=x.device, dtype=x.dtype)
+                    k_rand = F.rms_norm(self.k(rand_input).view(B, R, self.num_kv_heads, dk), (dk,)).detach()
+                    v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
+                    q_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=q_attn.dtype)
+                    g_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=g.dtype)
+                    y_dist = _wall_attn_kernel(
+                        torch.cat([q_pad, q_attn], dim=1).contiguous(),
+                        torch.cat([k_rand, k_attn], dim=1).contiguous(),
+                        torch.cat([v_rand, v_attn], dim=1).contiguous(),
+                        torch.cat([g_pad, g], dim=1).to(q_attn.dtype).contiguous(),
+                        scale=scale,
+                        window_size=None,
+                    )[:, R:]
+                    align_loss = F.mse_loss(y_dist, y)
+                return y, align_loss
+            except Exception as e:
+                if self.training:
+                    raise RuntimeError("wall_attn Triton kernel failed during training") from e
+                pass                                                # eval can still fall through to the torch path
+
         k_exp = k_attn.repeat_interleave(groups, dim=2)             # (B,T,H,dk)
         v_exp = v_attn.repeat_interleave(groups, dim=2)
-        g = -F.softplus(self.w_wall(x).view(B, T, H, dk).float() + self.wall_gate_bias)  # (B,T,H,dk) <= 0, nats
-        scale = dk ** -0.5
-
-        if (not self.training) and _HAS_WALL and q_attn.is_cuda:
-            try:                                                    # faithful long-context kernel (eager/eval)
-                y = _wall_attn_kernel(q_attn.contiguous(), k_exp.contiguous(), v_exp.contiguous(),
-                                      g.to(q_attn.dtype).contiguous(), scale=scale, window_size=W)
-                return y, torch.tensor(0.0, device=x.device)
-            except Exception:
-                pass                                                # fall through to the torch path
-
+        g = g.float()
         P = torch.cumsum(g, dim=1)                                  # (B,T,H,dk), monotone decreasing
         P = P - 0.5 * (P.amax(1, keepdim=True) + P.amin(1, keepdim=True))   # recenter per (B,H,dk)
         P = P.clamp(-30.0, 30.0)                                    # NaN guard (only bites at long-ctx eval)
@@ -461,24 +483,6 @@ class CausalSelfAttention(AtmaAttnBase):
         qt = q_attn * q_scale
         kt = k_exp * k_scale
         y = self._sdpa(qt, kt, v_exp, W, scale)
-
-        align_loss = torch.tensor(0.0, device=x.device)
-        if self.num_random_keys > 0 and self.training:
-            R = self.num_random_keys
-            rand_input = torch.randn(B, R, x.shape[2], device=x.device, dtype=x.dtype)
-            k_rand = F.rms_norm(self.k(rand_input).view(B, R, self.num_kv_heads, dk), (dk,)).detach()
-            v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
-            k_rand = k_rand.repeat_interleave(groups, dim=2)        # random noise carries no forgetting (P=0)
-            v_rand = v_rand.repeat_interleave(groups, dim=2)
-            k_dist = torch.cat([k_rand, kt], dim=1)
-            v_dist = torch.cat([v_rand, v_exp], dim=1)
-            dist_mask = torch.zeros(T, R + T, device=x.device, dtype=qt.dtype)
-            dist_mask[:, R:] = torch.triu(
-                torch.full((T, T), float("-inf"), device=x.device, dtype=qt.dtype), diagonal=1)
-            y_dist = F.scaled_dot_product_attention(
-                qt.transpose(1, 2), k_dist.transpose(1, 2), v_dist.transpose(1, 2),
-                attn_mask=dist_mask, scale=scale).transpose(1, 2)
-            align_loss = F.mse_loss(y_dist, y)
         return y, align_loss
 
     def forward(self, x: torch.Tensor):
