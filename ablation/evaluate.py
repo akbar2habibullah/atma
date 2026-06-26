@@ -96,7 +96,9 @@ def needle_retrieval(model, haystack, distances, num_trials, vlen, device):
 
     ce = {d: 0.0 for d in distances}
     acc = {d: 0.0 for d in distances}
+    cnt = {d: 0 for d in distances}
     base_ce = 0.0
+    base_cnt = 0
     d0 = min(distances)
 
     for t in range(num_trials):
@@ -108,28 +110,33 @@ def needle_retrieval(model, haystack, distances, num_trials, vlen, device):
         needle = cue + val
         val_t = torch.tensor(val, device=device)
 
+        # needle-absent baseline: cue appears only at the query (the model's prior on the value)
         try:
-            # needle-absent baseline: cue appears only at the query (the model's prior on the value)
             g = hay[:d0 + len(needle)].tolist()
             seq = [eot] + g + cue + val
             inp = torch.tensor(seq[:-1], dtype=torch.int32, device=device).view(1, -1)
             base_ce += F.cross_entropy(_value_logits(model, inp, len(val)), val_t, reduction="mean").item()
+            base_cnt += 1
+            torch.cuda.empty_cache()
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
 
-            for d in distances:
+        for d in distances:
+            try:
                 gap = hay[:d].tolist()
                 seq = [eot] + needle + gap + cue + val          # needle at start, query at end, gap = d
                 inp = torch.tensor(seq[:-1], dtype=torch.int32, device=device).view(1, -1)
                 lg = _value_logits(model, inp, len(val))
                 ce[d] += F.cross_entropy(lg, val_t, reduction="mean").item()
                 acc[d] += (lg.argmax(-1) == val_t).float().mean().item()
+                cnt[d] += 1
                 torch.cuda.empty_cache()
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            continue
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
 
-    nt = max(num_trials, 1)
-    return ({d: {"ce": ce[d] / nt, "acc": 100.0 * acc[d] / nt} for d in distances},
-            base_ce / nt)
+    return ({d: ({"ce": ce[d] / cnt[d], "acc": 100.0 * acc[d] / cnt[d]} if cnt[d] else None)
+             for d in distances},
+            (base_ce / base_cnt) if base_cnt else None)
 
 
 @torch.no_grad()
