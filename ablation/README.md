@@ -47,7 +47,7 @@ is a 4th core, added after the first 120-cell batch — making the full grid **1
 (5×2×2×2) are generated separately into `ablation/shards/shard5`:
 
 ```bash
-python -m ablation.generate_configs --attn_types wall --out ablation/shards/shard5   # 40 *.json
+python -m ablation.generate_configs --attn_types wall --mbs 2 --out ablation/shards/shard5   # 40 *.json
 # run like any other shard (one or more GPUs):
 FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/shards/shard5 --log_dir ablation/logs --gpu 0
 ```
