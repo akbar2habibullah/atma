@@ -284,6 +284,39 @@ Result:
   and atomic GQA accumulation to avoid full-HQ temporaries. This is an intentional memory-over-MFU
   tradeoff for the L4 ablation sweep.
 
+### Numerical parity
+
+The local low-memory fork keeps the upstream forward kernel and query-gradient kernel unchanged. The
+only math-path changes are in DKV backward storage/reduction:
+
+- upstream writes per-query-head `dk/dv` as `(B,T,HQ,K/V)` and reduces with `einops.reduce`;
+- local writes directly into KV-head-shaped `(B,T,H,K/V)` outputs with atomic accumulation;
+- upstream writes key-side `dP` to `dg_cumsum_k` then adds it to `dg_cumsum`;
+- local accumulates key-side `dP` into `dg_cumsum` in place.
+
+This is intended to be numerically equivalent to upstream within normal floating-point tolerance,
+but not bitwise identical: GQA `dk/dv` use atomics, so accumulation order can differ from upstream's
+post-kernel reduction. The validation suite checks the local fork against the eager Wall oracle on
+small shapes and passed on the L4 before this report was written:
+
+```text
+pytest -q kernel/wall/test_wall_kernel.py
+14 passed
+```
+
+Important tolerances in that suite:
+
+| check | tolerance | notes |
+| --- | ---: | --- |
+| forward vs eager reference | `rtol=2e-2, atol=2e-2` | covers MHA, GQA, varlen, sink bias, scalar gate, sliding window |
+| `q/k/v` gradients vs eager reference | `rtol=8e-2, atol=8e-2` | covers GQA reduction for `k.grad` and `v.grad` |
+| `g` gradient finite differences | `rtol=0.22, atol=0.13` | central finite differences on a tiny fp32 problem |
+| `g_scalar` gradient finite differences | `rtol=0.22, atol=0.13` | central finite differences on a tiny fp32 problem |
+
+A direct fresh-process upstream-vs-local run was not recorded in this report because the current
+environment is missing `cuda.h`, and Triton fails when rebuilding its CUDA helper module from an
+empty cache. Earlier CUDA validation was run before that cache miss.
+
 ### Current implementation notes
 
 - `dk` and `dv` are allocated as KV-head-shaped tensors, `(B,T,H,K)` and `(B,T,H,V)`, for GQA.
