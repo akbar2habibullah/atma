@@ -2,6 +2,7 @@ import os
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
 except Exception:
@@ -30,12 +31,24 @@ except Exception:
 # https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used for
 # the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
 # missing-kernel development runs.
+_WALL_IMPL = os.environ.get("ATMA_WALL_IMPL", "auto").strip().lower()
+if _WALL_IMPL not in {"auto", "local", "upstream"}:
+    raise ValueError("ATMA_WALL_IMPL must be one of: auto, local, upstream")
+
 try:
-    from wall_attn import wall_attn as _wall_attn_kernel
+    if _WALL_IMPL == "upstream":
+        raise ImportError("ATMA_WALL_IMPL=upstream")
+    from kernel.wall import wall_attn as _wall_attn_kernel
     _HAS_WALL = True
 except Exception:
-    _wall_attn_kernel = None
-    _HAS_WALL = False
+    try:
+        if _WALL_IMPL == "local":
+            raise ImportError("ATMA_WALL_IMPL=local")
+        from wall_attn import wall_attn as _wall_attn_kernel
+        _HAS_WALL = True
+    except Exception:
+        _wall_attn_kernel = None
+        _HAS_WALL = False
 
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
@@ -468,6 +481,10 @@ class CausalSelfAttention(AtmaAttnBase):
                     align_loss = F.mse_loss(y_dist, y)
                 return y, align_loss
             except Exception as e:
+                # Non-reentrant checkpoint uses this private exception for control flow during
+                # recomputation. Do not wrap it as a Wall kernel failure.
+                if e.__class__.__name__ == "_StopRecomputationError":
+                    raise
                 if self.training:
                     raise RuntimeError("wall_attn Triton kernel failed during training") from e
                 pass                                                # eval can still fall through to the torch path
@@ -519,7 +536,12 @@ class CausalSelfAttention(AtmaAttnBase):
 
         W = self.window
         if self.pos == "wall":
-            y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
+            if self.training:
+                def wall_fn(x_, q_, k_, v_):
+                    return self._wall_attention(x_, q_, k_, v_, groups, W)
+                y, align_loss = checkpoint(wall_fn, x, q_attn, k_attn, v_attn, use_reentrant=False)
+            else:
+                y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
         else:
             align_loss = torch.tensor(0.0, device=x.device)
             if W is None and self.pos == "nope" and _fa3 is not None:

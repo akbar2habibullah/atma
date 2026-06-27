@@ -46,8 +46,8 @@ def clean_perplexity(model, docs, lengths, device, loss_chunk=8192):
     out = {}
     for L in lengths:
         tot, n = 0.0, 0
-        try:
-            for d in docs:
+        for d in docs:
+            try:
                 if d.numel() < L + 1:
                     continue
                 buf = d[:L + 1]
@@ -57,9 +57,9 @@ def clean_perplexity(model, docs, lengths, device, loss_chunk=8192):
                 ls, c = _chunked_loss(model, xb, tgt, chunk=loss_chunk)
                 tot += ls; n += c
                 torch.cuda.empty_cache()
-            out[L] = (tot / n) if n else None
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache(); out[L] = None
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+        out[L] = (tot / n) if n else None
     return out
 
 
@@ -72,14 +72,17 @@ def junk_perplexity(model, val_data, lengths, num_seqs, device, loss_chunk=8192)
         try:
             gen = data_generator(val_data, L, seq_len=L)
             for _ in range(num_seqs):
-                x, tgt = next(gen)
-                xb = _blocks_forward(model, x)
-                ls, c = _chunked_loss(model, xb, tgt, chunk=loss_chunk)
-                tot += ls; n += c
-                torch.cuda.empty_cache()
-            out[L] = (tot / n) if n else None
-        except (torch.cuda.OutOfMemoryError, StopIteration):
-            torch.cuda.empty_cache(); out[L] = None
+                try:
+                    x, tgt = next(gen)
+                    xb = _blocks_forward(model, x)
+                    ls, c = _chunked_loss(model, xb, tgt, chunk=loss_chunk)
+                    tot += ls; n += c
+                    torch.cuda.empty_cache()
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+        except StopIteration:
+            pass
+        out[L] = (tot / n) if n else None
     return out
 
 

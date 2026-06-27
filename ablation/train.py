@@ -13,6 +13,7 @@ Set FLA_CUSTOM_OP=1 in the environment (the runner does) for the compile-clean F
 import argparse
 import json
 import os
+import pickle
 import socket
 import time
 import traceback
@@ -146,6 +147,32 @@ def main():
         sigr_alpha = cfg["sigr_alpha"]
         dist_w = cfg["dist_align_loss_weight"]
 
+        mem_profile = device.type == "cuda" and os.environ.get("ATMA_MEM_PROFILE", "0") == "1"
+        mem_trace = os.environ.get("ATMA_MEM_TRACE") if device.type == "cuda" else None
+
+        def mem_mark(label):
+            if not mem_profile:
+                return
+            torch.cuda.synchronize()
+            p0(
+                f"[mem] {label} "
+                f"alloc={torch.cuda.memory_allocated() / 1024**2:.1f}MiB "
+                f"reserved={torch.cuda.memory_reserved() / 1024**2:.1f}MiB "
+                f"max_alloc={torch.cuda.max_memory_allocated() / 1024**2:.1f}MiB "
+                f"max_reserved={torch.cuda.max_memory_reserved() / 1024**2:.1f}MiB"
+            )
+
+        if mem_trace:
+            torch.cuda.memory._record_memory_history(
+                enabled="all",
+                context="all",
+                stacks="all",
+                max_entries=int(os.environ.get("ATMA_MEM_TRACE_MAX_ENTRIES", "200000")),
+                clear_history=True,
+                compile_context=True,
+            )
+            p0(f"[mem] trace recording enabled -> {mem_trace}")
+
         # ---------------- train loop ----------------
         curve = []
         val_freq = max(1, min(125, train_steps // 4))
@@ -183,17 +210,40 @@ def main():
 
             inputs, targets = next(train_loader)
             assert len(inputs) % mbs == 0
+            if mem_profile and step == 0:
+                torch.cuda.reset_peak_memory_stats()
+                mem_mark("train_step0_start")
             train_loss = 0.0
             for i in range(len(inputs) // mbs):
+                if mem_profile and step == 0:
+                    mem_mark(f"micro{i}_before_forward")
                 ls, reg_loss, align_loss = model(inputs[i*mbs:(i+1)*mbs], targets[i*mbs:(i+1)*mbs])
+                if mem_profile and step == 0:
+                    mem_mark(f"micro{i}_after_forward")
                 train_loss += ls.item()
                 loss = (1 - sigr_alpha) * ls + sigr_alpha * reg_loss + dist_w * align_loss
                 loss.backward()
+                if mem_profile and step == 0:
+                    mem_mark(f"micro{i}_after_backward")
+            if mem_profile and step == 0:
+                mem_mark("after_all_microbatches")
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if mem_profile and step == 0:
+                mem_mark("after_clip_grad_norm")
             set_hparams(step)
             for opt in optimizers:
                 opt.step()
+            if mem_profile and step == 0:
+                mem_mark("after_optimizer_step")
             model.zero_grad(set_to_none=True)
+            if mem_profile and step == 0:
+                mem_mark("after_zero_grad")
+                if mem_trace:
+                    trace_path = Path(mem_trace)
+                    trace_path.parent.mkdir(parents=True, exist_ok=True)
+                    with trace_path.open("wb") as trace_f:
+                        pickle.dump(torch.cuda.memory._snapshot(), trace_f)
+                    p0(f"[mem] trace snapshot saved -> {trace_path}")
 
         mfu_final = curve[-1]["mfu"] if curve else 0.0
         _emit_block(fh, "ABLATION_CURVE_JSON", curve)
