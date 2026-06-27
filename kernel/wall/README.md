@@ -36,14 +36,17 @@ The corrected interpretation is:
 - The `14-15 GB` Wall result at `mbs=2` was measured in an eager synthetic full-model path. In the
   ablation-like `torch.compile` path, local Wall at the same high-overhead setting measured
   `11.530 GB` peak allocated and `11.953 GB` peak reserved.
-- The `21.064 GB` `mbs=4` OOM row was reproduced for both upstream Wall and the local fork in the
-  eager full-model path. It is not evidence that the profiler accidentally selected upstream only.
-- The isolated local Wall backward intervention does reduce Wall kernel memory, but that saving is
-  hidden by larger full-model allocations at the heavy ablation setting.
-- In synthetic full-model breakdowns, the memory branch is the main source of the Wall peak increase;
-  distractor alignment mainly increases runtime in the tested configuration.
-- Before claiming a Wall algorithm problem, compare the compiled training path, the exact enabled
-  features, and the attention kernel in isolation.
+- The `21.064 GB` `mbs=4` OOM row was reproduced only in the synthetic profiler path. That path
+  does not match the observed ablation memory behavior for nope/rope/polar and must not be used as
+  evidence that those variants require 20+ GB at `mbs=4`.
+- Exact ablation logs for `nope__reg-strong__distr-1__mem-1__win-1`,
+  `rope__reg-strong__distr-1__mem-1__win-1`, and `polar__reg-strong__distr-1__mem-1__win-1`
+  completed with `mbs=4`, `seq_len=2048`, `torch.compile`, distractor, memory, and window enabled.
+- Operator-observed ablation memory for the non-Wall variants is 11-12 GB at `mbs=4`; until a real
+  Wall ablation run is measured the same way, any larger Wall number should be treated first as our
+  pipeline/profiling problem.
+- Before claiming a Wall algorithm problem, compare the exact ablation training path, the exact
+  enabled features, and the attention kernel in isolation.
 
 The likely large allocations in upstream `training.py` are:
 
@@ -443,17 +446,17 @@ Interpretation:
 - In this eager synthetic path, Wall at `mbs=2` is not above nope/rope and is below Polar. This
   contradicts the initial premise that Wall alone explains a `14-15 GB` `mbs=2` footprint.
 
-### Full-model memory: compiled path
+### Full-model memory: compiled profiler caveat
 
-The ablation training script uses `torch.compile`, so the compiled profiler is the closer survival
-test:
+The ablation training script uses `torch.compile`, so the compiled synthetic profiler was intended
+as a closer survival test:
 
 ```text
 python -m kernel.wall.profile_full_model_memory --compile --attn_type <variant> --mbs <N> \
   --seq_len 2048 --layers 16 --reg_mode strong --distractor --memory --window
 ```
 
-Compiled synthetic full-model rows:
+Compiled synthetic full-model rows from `kernel.wall.profile_full_model_memory`:
 
 | attention | mbs | status | peak allocated | peak reserved | notes |
 | --- | ---: | --- | ---: | ---: | --- |
@@ -466,8 +469,12 @@ Compiled synthetic full-model rows:
 | polar | 4 | OOM | 21.439 GB | 21.496 GB | failed on a 1.54 GiB allocation request; compiler emitted Triton warnings |
 | wall local | 4 | OOM | 19.577 GB | 20.398 GB | failed on a 1.54 GiB allocation request |
 
-The `mbs=2` rows above are synthetic profiler measurements, not values copied from the ablation
-logs. The checked ablation logs record configs and curves but do not record CUDA peak memory.
+The rows above are synthetic profiler measurements, not values copied from the ablation logs. The
+checked ablation logs record configs and curves but do not record CUDA peak memory. The `mbs=4`
+synthetic rows contradict the established ablation behavior for nope/rope/polar, which are reported
+from production ablation runs to sit around 11-12 GB at `mbs=4` with compile enabled. Treat those
+synthetic `mbs=4` rows as evidence that this profiler path is mismatched, not as evidence about the
+actual ablation memory requirement.
 
 Attempted compiled upstream Wall at `mbs=2` did not finish after several minutes and was terminated
 to keep later measurements uncontaminated. Do not use the eager upstream row as a substitute for a
@@ -476,12 +483,13 @@ compiled upstream result.
 Interpretation:
 
 - The compiled local Wall `mbs=2` result is in the same 11-12 GB reserved band as nope and rope.
-- Under this synthetic highest-overhead config, `mbs=4` is not an 11-12 GB case: nope and polar OOM
-  near 21 GB, rope completes at 21.709 GB reserved, and local Wall OOMs at a lower recorded peak.
-- The earlier `14-15 GB` `mbs=2` concern is therefore best treated as an eager/profiling-path
-  artifact until a real ablation training run proves otherwise.
-- The compiled local Wall `mbs=4` row still OOMs under the highest-overhead synthetic setting, but
-  it OOMs below the old eager `21.064 GB` reserved number.
+- The synthetic `mbs=4` rows are not credible ablation-memory rows because they disagree with the
+  repeated non-Wall ablation experience. They likely reflect profiler/environment mismatch, such as
+  missing optional kernels or a compile graph that is not the real training loop.
+- The earlier `14-15 GB` `mbs=2` concern is therefore best treated as a profiling-path artifact
+  until a real ablation training run proves otherwise.
+- The compiled local Wall `mbs=4` synthetic OOM should not be used as a Wall conclusion. It only
+  says this profiler cannot reproduce the known non-Wall ablation memory baseline.
 
 ### Full-model Wall feature breakdown
 
@@ -501,7 +509,19 @@ footprint.
 
 ### Ablation survival sanity
 
-Training survival on NVIDIA L4, with the Wall kernel source forced explicitly:
+Real ablation logs confirm the non-Wall highest-overhead configs complete at `mbs=4`:
+
+```text
+ablation/logs/nope__reg-strong__distr-1__mem-1__win-1.log
+ablation/logs/rope__reg-strong__distr-1__mem-1__win-1.log
+ablation/logs/polar__reg-strong__distr-1__mem-1__win-1.log
+```
+
+Each log records `mbs=4`, `seq_len=2048`, `reg_mode=strong`, `distractor=true`, `memory=true`,
+`window=true`, `torch.compile`, and `FLA_CUSTOM_OP=1`. These logs do not contain CUDA peak memory,
+but they are the correct training-path reference for survival.
+
+Synthetic profiler survival on NVIDIA L4, with the Wall kernel source forced explicitly:
 
 ```text
 local:    /home/sagemaker-user/atma/kernel/wall/training.py
@@ -510,15 +530,15 @@ upstream: /home/sagemaker-user/wall-attention-release/wall_attn/training.py
 
 | impl | mbs | status | peak allocated | peak reserved | notes |
 | --- | ---: | --- | ---: | ---: | --- |
-| local low-memory, compiled | 2 | OK | 11.530 GB | 11.953 GB | closest synthetic match to ablation training |
-| local low-memory, compiled | 4 | OOM | 19.577 GB | 20.398 GB | highest-overhead synthetic setting still exceeds L4 |
-| local low-memory, eager | 4 | OOM | 20.913 GB | 21.064 GB | old-style number, not compiled |
-| upstream `wall_attn`, eager | 4 | OOM | 20.913 GB | 21.064 GB | same eager failure profile as local |
+| local low-memory, compiled | 2 | OK | 11.530 GB | 11.953 GB | synthetic profiler only |
+| local low-memory, compiled | 4 | OOM | 19.577 GB | 20.398 GB | synthetic profiler only; not a real ablation result |
+| local low-memory, eager | 4 | OOM | 20.913 GB | 21.064 GB | synthetic profiler only, not compiled |
+| upstream `wall_attn`, eager | 4 | OOM | 20.913 GB | 21.064 GB | synthetic profiler only |
 
-The `mbs=4` eager OOM is therefore not an accidental upstream-kernel measurement. It also is not
-fixed by the local DKV-backward storage change because this full-model peak is dominated by tensors
-outside that isolated allocation. In the local eager `mbs=2` split measurement, peak memory was
-already 12.198 GB after forward and rose to 13.726 GB after backward.
+The `mbs=4` synthetic OOM is not an accidental upstream-kernel measurement, but it is also not a
+valid claim about the ablation path. Because the same profiler reports 20+ GB for non-Wall configs
+that are known to run at much lower memory in the real sweep, it should be used only to debug the
+profiler/environment mismatch.
 
 The `mbs=2` run completed one full forward/backward optimizer-step equivalent over the heavy loss
 composition:
@@ -557,25 +577,26 @@ autotune effects and should not be read as a stable throughput comparison.
 Do not claim yet that Wall Attention's approach inherently more than doubles memory versus the
 other attention variants. The current evidence says:
 
-- local Wall's isolated backward intervention is real and source-confirmed;
-- eager full-model `mbs=4` OOM at `21.064 GB` is shared by upstream and local Wall, and all tested
-  eager high-overhead variants OOM near the L4 limit;
-- compiled local Wall at `mbs=2` survives in the 11-12 GB band;
-- compiled `mbs=4` under the highest-overhead synthetic config is near the L4 limit for the tested
-  variants, not an 11-12 GB case;
-- the full-model Wall peak at `mbs=2` is mostly explained by model/pipeline allocations, especially
-  the memory branch, not by the isolated Wall kernel alone;
+- isolated local Wall backward memory reduction is real and source-confirmed;
+- the synthetic full-model profiler is not reliable for `mbs=4` ablation memory, because it reports
+  20+ GB for non-Wall configs that the real sweep has repeatedly run around 11-12 GB;
+- the real comparison must be an exact ablation-path Wall run measured the same way as the 120
+  completed non-Wall runs;
+- until that exists, a high Wall number is our profiling/pipeline problem first, not a defensible
+  Wall Attention allegation;
 - a compiled upstream Wall full-model row is still missing because that run did not terminate within
   a useful profiling window on this machine.
 
 Evidence still needed before making a stronger statement:
 
-- a real ablation training step with optimizer enabled and the same data path;
+- an exact Wall ablation training run at `mbs=4`, `seq_len=2048`, compile enabled, memory,
+  distractor, window, and strong regularization, with the same memory observation method used for
+  the non-Wall sweep;
 - compiled full-model upstream Wall if it can be made to finish reproducibly;
 - a memory snapshot or allocator trace that assigns live bytes to attention, memory branch,
   vocabulary loss, regularization, and optimizer state;
-- repeated compiled `mbs=4` rows with a real ablation training step if the claim depends on exact
-  survival behavior rather than synthetic one-step profiling.
+- a fixed synthetic profiler only after it reproduces the known nope/rope/polar `mbs=4` memory
+  baseline.
 
 ### Current implementation notes
 
