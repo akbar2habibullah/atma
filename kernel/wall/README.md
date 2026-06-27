@@ -493,7 +493,7 @@ Interpretation:
 - The compiled local Wall `mbs=4` synthetic OOM should not be used as a Wall conclusion. It only
   says this profiler cannot reproduce the known non-Wall ablation memory baseline.
 
-### Worker-based non-Wall smoke checks
+### Worker-based ablation smoke checks
 
 The correct way to check the ablation memory path is through the worker:
 
@@ -520,19 +520,51 @@ run.
 
 Short worker smoke configs were copied from the exact completed strong+distractor+memory+window
 ablation logs, then capped to `max_steps=1`, `num_chunks=1`, and `val_tokens=8192` so the same
-compile/training path could run without a full sweep. Both kept `mbs=4`, `seq_len=2048`,
+compile/training path could run without a full sweep. The controls kept `mbs=4`, `seq_len=2048`,
 `batch_size=524288`, `FLA_CUSTOM_OP=1`, memory, distractor, window, and strong regularization.
-GPU memory was sampled externally with `nvidia-smi` once per second.
+Wall was run with the same settings. GPU memory was sampled externally with `nvidia-smi` once per
+second, so these are process-level device-resident peaks rather than `torch.cuda.max_memory_*`
+allocator counters.
+
+The Wall implementation was selected explicitly for the comparison:
+
+```text
+ATMA_WALL_IMPL=local     # in-tree kernel.wall.training
+ATMA_WALL_IMPL=upstream  # editable /home/sagemaker-user/wall-attention-release package
+```
 
 | attention | worker status | training memory | full smoke peak | notes |
 | --- | --- | ---: | ---: | --- |
 | nope | train step completed; long eval interrupted | 11304 MiB | 12792 MiB | exact strong+distractor+memory+window config family |
+| rope | completed | 11350 MiB | 11350 MiB | eval reduced to 2048 only |
 | polar | completed | 14380 MiB | 15732 MiB | eval reduced to 2048 only |
+| wall local | completed | 21776 MiB | 21776 MiB | `ATMA_WALL_IMPL=local`, step 1 took 557.6 s |
+| wall upstream | completed | 22480 MiB | 22480 MiB | `ATMA_WALL_IMPL=upstream`, step 1 took 956.9 s |
 
-These are process-level `nvidia-smi` samples, not `torch.cuda.max_memory_*` allocator counters.
-They are still the relevant sanity check here because they exercise the same worker infrastructure
-as the ablation sweep. The synthetic profiler is invalid for `mbs=4` conclusions until it reproduces
-these non-Wall worker baselines.
+Worker log evidence for the two decisive Wall rows:
+
+```text
+local:    step:1/1 val_loss:11.38087 wall:557.6s step_avg:557585.6ms MFU:2.1%
+upstream: step:1/1 val_loss:11.38430 wall:956.9s step_avg:956909.3ms MFU:1.2%
+```
+
+Interpretation:
+
+- The non-Wall controls validate the actual worker pipeline: `nope` and `rope` are about 11.3 GiB,
+  and `polar` trains at about 14.4 GiB in this one-step smoke. This matches the expected sub-15 GiB
+  training-memory band and contradicts the earlier synthetic 20+ GiB non-Wall rows.
+- Wall `mbs=4` is possible on the NVIDIA L4 in this smoke setting. It does not OOM.
+- Wall `mbs=4` is not near the expected 15-17 GiB band. It peaks at 21.8 GiB with the local
+  low-memory fork and 22.5 GiB with upstream.
+- The local fork saves about 704 MiB versus upstream in the full worker graph, but the saving is far
+  smaller than the gap between Wall and the non-Wall controls.
+- The high Wall peak is therefore not only a synthetic-profiler artifact and not only an upstream
+  package artifact. It is present in the actual ablation worker path. The remaining question is
+  whether the excess is inherent to Wall's training graph, caused by Atma's Wall integration, or
+  caused by an interaction with compile/checkpoint/loss composition.
+- A full permutation sweep over attention type, memory, window, distractor, regularization, and
+  implementation remains the right next step if we need a defensible attribution table rather than
+  a high-overhead smoke result.
 
 ### Full-model Wall feature breakdown
 
@@ -561,8 +593,20 @@ ablation/logs/polar__reg-strong__distr-1__mem-1__win-1.log
 ```
 
 Each log records `mbs=4`, `seq_len=2048`, `reg_mode=strong`, `distractor=true`, `memory=true`,
-`window=true`, `torch.compile`, and `FLA_CUSTOM_OP=1`. These logs do not contain CUDA peak memory,
-but they are the correct training-path reference for survival.
+`window=true`, `torch.compile`, and `FLA_CUSTOM_OP=1`. Those historical logs do not contain CUDA
+peak memory, but they are the correct training-path reference for survival.
+
+The 2026-06-27 one-step worker checks add peak-memory evidence for the same high-overhead family.
+Wall `mbs=4` survives on the NVIDIA L4 in both local and upstream implementations:
+
+| impl | mbs | status | worker peak | step 1 time | notes |
+| --- | ---: | --- | ---: | ---: | --- |
+| local low-memory | 4 | OK | 21776 MiB | 557.6 s | `ATMA_WALL_IMPL=local` |
+| upstream `wall_attn` | 4 | OK | 22480 MiB | 956.9 s | `ATMA_WALL_IMPL=upstream` |
+
+This answers the immediate survival question: `mbs=4` is possible. It also confirms the memory
+concern: even the local fork stays in the ~21-22 GiB class in the actual worker graph, while the
+non-Wall controls are in the ~11-14.4 GiB training band.
 
 Synthetic profiler survival on NVIDIA L4, with the Wall kernel source forced explicitly:
 
@@ -617,25 +661,26 @@ autotune effects and should not be read as a stable throughput comparison.
 
 ### Current conclusion
 
-Do not claim yet that Wall Attention's approach inherently more than doubles memory versus the
-other attention variants. The current evidence says:
+The current evidence is stronger than the earlier synthetic-profiler-only report, but still should
+be phrased carefully:
 
 - isolated local Wall backward memory reduction is real and source-confirmed;
 - the synthetic full-model profiler is not reliable for `mbs=4` ablation memory, because it reports
   20+ GB for non-Wall configs that the real worker path runs far lower;
-- the real comparison must be an exact ablation-path Wall run measured the same way as the 120
-  completed non-Wall runs;
-- until that exists, a high Wall number is our profiling/pipeline problem first, not a defensible
-  Wall Attention allegation;
-- a compiled upstream Wall full-model row is still missing because that run did not terminate within
-  a useful profiling window on this machine.
+- the real worker path confirms Wall `mbs=4` survives, but peaks at 21776 MiB local and 22480 MiB
+  upstream in the one-step high-overhead smoke;
+- the same worker method keeps non-Wall controls much lower: `rope` 11350 MiB, `nope` about
+  11304 MiB during training, and `polar` about 14380 MiB during training;
+- local Wall saves about 704 MiB and about 399 s of first-step time versus upstream in this smoke,
+  but that does not explain the full gap to the non-Wall controls;
+- the honest statement is therefore: the actual Atma worker path currently shows Wall `mbs=4`
+  training memory in the ~21-22 GiB class under the heaviest config, and the local fork reduces but
+  does not fix that overhead.
 
 Evidence still needed before making a stronger statement:
 
-- an exact Wall ablation training run at `mbs=4`, `seq_len=2048`, compile enabled, memory,
-  distractor, window, and strong regularization, with the same memory observation method used for
-  the non-Wall sweep;
-- compiled full-model upstream Wall if it can be made to finish reproducibly;
+- a full permutation sweep over the actual worker, not the synthetic profiler, across attention
+  type, memory, window, distractor, regularization, and Wall implementation;
 - a memory snapshot or allocator trace that assigns live bytes to attention, memory branch,
   vocabulary loss, regularization, and optimizer state;
 - a fixed synthetic profiler only after it reproduces the known nope/rope/polar `mbs=4` memory
@@ -653,13 +698,13 @@ Evidence still needed before making a stronger statement:
 
 ### Integration
 
-The training model prefers the in-tree kernel and keeps the external package as fallback:
+The training model prefers the in-tree kernel and keeps the external package as fallback. For
+comparative profiling, `ATMA_WALL_IMPL` can force the source:
 
-```python
-try:
-    from kernel.wall import wall_attn as _wall_attn_kernel
-except Exception:
-    from wall_attn import wall_attn as _wall_attn_kernel
+```text
+ATMA_WALL_IMPL=auto      # default: local first, upstream fallback
+ATMA_WALL_IMPL=local     # require in-tree kernel.wall
+ATMA_WALL_IMPL=upstream  # require installed wall_attn package
 ```
 
 ## Open Questions

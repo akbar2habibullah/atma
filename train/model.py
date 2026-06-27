@@ -31,11 +31,19 @@ except Exception:
 # https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used for
 # the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
 # missing-kernel development runs.
+_WALL_IMPL = os.environ.get("ATMA_WALL_IMPL", "auto").strip().lower()
+if _WALL_IMPL not in {"auto", "local", "upstream"}:
+    raise ValueError("ATMA_WALL_IMPL must be one of: auto, local, upstream")
+
 try:
+    if _WALL_IMPL == "upstream":
+        raise ImportError("ATMA_WALL_IMPL=upstream")
     from kernel.wall import wall_attn as _wall_attn_kernel
     _HAS_WALL = True
 except Exception:
     try:
+        if _WALL_IMPL == "local":
+            raise ImportError("ATMA_WALL_IMPL=local")
         from wall_attn import wall_attn as _wall_attn_kernel
         _HAS_WALL = True
     except Exception:
