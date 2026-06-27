@@ -7,7 +7,8 @@ the boundary with the existing Polar kernel.
 ## Context
 
 The training model now prefers the in-tree kernel and keeps Tilde Research's package-level kernel
-as fallback:
+as fallback. Set `ATMA_WALL_IMPL=local` or `ATMA_WALL_IMPL=upstream` to force either source during
+profiling:
 
 ```python
 try:
@@ -28,27 +29,29 @@ objects and should not be used to reason about training memory. The relevant imp
 
 ## Investigation Status
 
-The initial concern was that Wall Attention might be intrinsically exhausting much more memory than
-the other attention variants. The current measurements do not support making that allegation yet.
+The initial concern was that Wall Attention might be exhausting much more memory than the other
+attention variants. The corrected worker evidence shows a real Wall-specific high-memory path, but
+not the original synthetic-profiler story.
 
-The corrected interpretation is:
+The current interpretation is:
 
-- The `14-15 GB` Wall result at `mbs=2` was measured in an eager synthetic full-model path. In the
-  ablation-like `torch.compile` path, local Wall at the same high-overhead setting measured
-  `11.530 GB` peak allocated and `11.953 GB` peak reserved.
-- The `21.064 GB` `mbs=4` OOM row was reproduced only in the synthetic profiler path. That path
-  does not match the observed ablation memory behavior for nope/rope/polar and must not be used as
-  evidence that those variants require 20+ GB at `mbs=4`.
-- Exact ablation logs for `nope__reg-strong__distr-1__mem-1__win-1`,
-  `rope__reg-strong__distr-1__mem-1__win-1`, and `polar__reg-strong__distr-1__mem-1__win-1`
-  completed with `mbs=4`, `seq_len=2048`, `torch.compile`, distractor, memory, and window enabled.
-- Worker-based smoke checks using `ablation.run_worker` reproduced the expected non-Wall memory
-  scale: `nope` trained at about `11304 MiB` GPU process memory and `polar` trained at about
-  `14380 MiB` under the same high-overhead `mbs=4` config family. Until a real Wall ablation run is
-  measured the same way, any larger Wall number should be treated first as our pipeline/profiling
-  problem.
-- Before claiming a Wall algorithm problem, compare the exact ablation training path, the exact
-  enabled features, and the attention kernel in isolation.
+- The old synthetic full-model profiler is not a valid source for `mbs=4` ablation memory. It
+  reported 20+ GB for non-Wall variants that the real worker path runs far lower.
+- Exact ablation-path worker checks for `nope`, `rope`, and `polar` at `mbs=4`, `seq_len=2048`,
+  compile enabled, strong regularization, distractor, memory, and window confirm the expected
+  non-Wall memory band: `nope` about `11304 MiB`, `rope` `11346-11350 MiB`, and `polar` about
+  `14380 MiB` during training.
+- Wall local and upstream both survive `mbs=4` on the L4, but they do not land near the expected
+  15-17 GB range. Warm-cache local Wall peaks at `21770 MiB`; upstream peaks at `22480 MiB`.
+- The local fork helps, but only by about `704-710 MiB` process memory versus upstream in this
+  actual worker path. The remaining Wall gap versus `rope` is about `10424 MiB` process memory.
+- Phase marks show the Wall excess is in the compiled forward/backward graph, not optimizer state
+  or evaluation. Compared to `rope`, Wall adds about `4819 MiB` live memory after forward and about
+  `9519 MiB` at backward peak.
+- The isolated Wall op remains MiB-scale. At `B=4,T=2048,HQ=8,H=2,K=V=128`, one full query-head
+  bf16 tensor is `16 MiB` and one fp32 full query-head tensor is `32 MiB`. The 9-10 GiB model-level
+  jump therefore comes from graph liveness/recomputation around the Wall path, especially the
+  second distractor Wall call and backward, not from a single obvious tensor in the fused kernel.
 
 The likely large allocations in upstream `training.py` are:
 
@@ -536,15 +539,15 @@ ATMA_WALL_IMPL=upstream  # editable /home/sagemaker-user/wall-attention-release 
 | attention | worker status | training memory | full smoke peak | notes |
 | --- | --- | ---: | ---: | --- |
 | nope | train step completed; long eval interrupted | 11304 MiB | 12792 MiB | exact strong+distractor+memory+window config family |
-| rope | completed | 11350 MiB | 11350 MiB | eval reduced to 2048 only |
+| rope | completed | 11346-11350 MiB | 11346-11350 MiB | eval reduced to 2048 only; repeated with memory phase marks |
 | polar | completed | 14380 MiB | 15732 MiB | eval reduced to 2048 only |
-| wall local | completed | 21776 MiB | 21776 MiB | `ATMA_WALL_IMPL=local`, step 1 took 557.6 s |
+| wall local | completed | 21770-21776 MiB | 21770-21776 MiB | `ATMA_WALL_IMPL=local`; warm-cache step took 84.9 s |
 | wall upstream | completed | 22480 MiB | 22480 MiB | `ATMA_WALL_IMPL=upstream`, step 1 took 956.9 s |
 
 Worker log evidence for the two decisive Wall rows:
 
 ```text
-local:    step:1/1 val_loss:11.38087 wall:557.6s step_avg:557585.6ms MFU:2.1%
+local:    step:1/1 val_loss:11.37652 wall:84.9s step_avg:84929.4ms MFU:13.8%   # warm cache
 upstream: step:1/1 val_loss:11.38430 wall:956.9s step_avg:956909.3ms MFU:1.2%
 ```
 
@@ -565,6 +568,90 @@ Interpretation:
 - A full permutation sweep over attention type, memory, window, distractor, regularization, and
   implementation remains the right next step if we need a defensible attribution table rather than
   a high-overhead smoke result.
+
+### Worker allocation attribution
+
+To separate first-compile overhead from runtime allocation, the local Wall `mbs=4` worker was run
+again with the same `TORCHINDUCTOR_CACHE_DIR=/tmp/atma_inductor_worker_wall_mbs4` after the first
+compile. It still peaked at `21770 MiB`, but step time dropped from `557.6 s` to `84.9 s`. That
+means the high memory is not explained away by cold compilation.
+
+An opt-in worker profiler was added to `ablation.train`:
+
+```text
+ATMA_MEM_PROFILE=1
+ATMA_MEM_TRACE=/tmp/atma_wall_investigation/wall_mbs4_profile_local_snapshot.pkl
+```
+
+With `ATMA_MEM_PROFILE=1`, the actual worker logs `torch.cuda` allocated/reserved memory around
+each microbatch. Because `batch_size=524288`, `seq_len=2048`, and `mbs=4`, one train step contains
+64 microbatches.
+
+Matched phase marks for `rope` and warm-cache local Wall:
+
+| phase / metric | rope mbs=4 | wall local mbs=4 | wall - rope |
+| --- | ---: | ---: | ---: |
+| external `nvidia-smi` process peak | 11346 MiB | 21770 MiB | +10424 MiB |
+| `torch.cuda` max allocated | 10938.9 MiB | 20457.6 MiB | +9518.7 MiB |
+| `torch.cuda` max reserved | 11016.0 MiB | 21270.0 MiB | +10254.0 MiB |
+| steady live before micro forward | 2711.0 MiB | 2743.2 MiB | +32.2 MiB |
+| live after micro forward | 10922.9 MiB | 15741.6 MiB | +4818.7 MiB |
+| backward transient over post-forward live | 16.0 MiB | 4716.0 MiB | +4700.0 MiB |
+| live after micro backward | 2711.0 MiB | 2743.2 MiB | +32.2 MiB |
+| live after optimizer step | 4351.3 MiB | 4399.6 MiB | +48.3 MiB |
+
+This is the best current allocation accounting for the 20+ GB result:
+
+- Wall's excess over `rope` in the actual worker is about `9.52 GiB` allocated peak, or about
+  `10.42 GiB` process memory by `nvidia-smi`.
+- About `4.82 GiB` of that difference is already live after Wall forward.
+- About `4.70 GiB` more is a backward transient.
+- Optimizer state is not the source: after optimizer step, Wall is only `48.3 MiB` above `rope`.
+- The post-backward live state is also not the source: Wall is only `32.2 MiB` above `rope`.
+
+Allocator trace summary for the profiled local Wall run:
+
+```text
+snapshot=/tmp/atma_wall_investigation/wall_mbs4_profile_local_snapshot.pkl
+events=300000  # hit the configured cap; peak reconstruction is a lower bound
+peak_live=17714.4 MiB
+
+live breakdown at sampled peak:
+  train_model              9790.4 MiB
+  unattributed_empty       7860.0 MiB
+  wall_local_kernel          64.0 MiB
+```
+
+The trace is capped, so the `17714.4 MiB` reconstructed live peak is lower than the real
+`20457.6 MiB` allocator peak. It is still useful because it shows that direct live allocations from
+`kernel/wall/training.py` are small at the sampled peak; the large live buckets are the compiled
+`train/model.py` graph and unattributed autograd temporaries. Cumulative Wall-kernel allocations are
+large across 64 microbatches, but they do not remain live as a single 9-10 GiB tensor.
+
+Tensor-size sanity for the Wall core shape:
+
+| tensor shape at `B=4,T=2048,HQ=8,H=2,K=V=128` | size |
+| --- | ---: |
+| full query-head bf16 tensor `(B,T,HQ,K)` | 16 MiB |
+| full query-head fp32 tensor `(B,T,HQ,K)` | 32 MiB |
+| KV-head bf16 tensor `(B,T,H,K)` | 4 MiB |
+| KV-head fp32 tensor `(B,T,H,K)` | 8 MiB |
+| upstream GQA `dk` or `dv` temporary `(B,T,HQ,K)` fp32 | 32 MiB each |
+| local GQA `dk` or `dv` output `(B,T,H,K)` fp32 | 8 MiB each |
+| distractor full query-head bf16 tensor at `R+T=4096` | 32 MiB |
+
+Therefore the model-level Wall overhead is not explained by the isolated training kernel peak
+(`0.135 GB` reserved in the earlier `B=2,T=2048` isolated benchmark). The distractor-length Wall
+kernel is also too small by itself:
+
+```text
+python -m kernel.wall.bench_wall --impl local --B 4 --T 4096 --HQ 8 --H 2 --K 128 --V 128 --dtype bf16 --window 0 --warmup 1 --iters 1
+impl=local,B=4,T=4096,...,window=None,status=ok,peak_alloc_gb=0.485,peak_reserved_gb=0.490,elapsed_ms=71.94
+```
+
+The current suspect is compiled graph liveness around the Wall integration: checkpointed Wall
+forward, the second distractor Wall call over `R+T`, MSE alignment, and backward recomputation
+together keep much more of the graph live than the non-Wall Flash/SDPA path.
 
 ### Full-model Wall feature breakdown
 
