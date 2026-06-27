@@ -461,7 +461,13 @@ Compiled synthetic full-model rows:
 | rope | 2 | OK | 11.828 GB | 12.246 GB | finite losses |
 | polar | 2 | OK | 13.221 GB | 13.637 GB | allocation row only; losses were `nan` in this synthetic run |
 | wall local | 2 | OK | 11.530 GB | 11.953 GB | finite losses; local source confirmed |
+| nope | 4 | OOM | 20.251 GB | 21.064 GB | failed on a 1.54 GiB allocation request |
+| rope | 4 | OK | 21.629 GB | 21.709 GB | finite losses; close to L4 limit |
+| polar | 4 | OOM | 21.439 GB | 21.496 GB | failed on a 1.54 GiB allocation request; compiler emitted Triton warnings |
 | wall local | 4 | OOM | 19.577 GB | 20.398 GB | failed on a 1.54 GiB allocation request |
+
+The `mbs=2` rows above are synthetic profiler measurements, not values copied from the ablation
+logs. The checked ablation logs record configs and curves but do not record CUDA peak memory.
 
 Attempted compiled upstream Wall at `mbs=2` did not finish after several minutes and was terminated
 to keep later measurements uncontaminated. Do not use the eager upstream row as a substitute for a
@@ -470,6 +476,8 @@ compiled upstream result.
 Interpretation:
 
 - The compiled local Wall `mbs=2` result is in the same 11-12 GB reserved band as nope and rope.
+- Under this synthetic highest-overhead config, `mbs=4` is not an 11-12 GB case: nope and polar OOM
+  near 21 GB, rope completes at 21.709 GB reserved, and local Wall OOMs at a lower recorded peak.
 - The earlier `14-15 GB` `mbs=2` concern is therefore best treated as an eager/profiling-path
   artifact until a real ablation training run proves otherwise.
 - The compiled local Wall `mbs=4` row still OOMs under the highest-overhead synthetic setting, but
@@ -553,6 +561,8 @@ other attention variants. The current evidence says:
 - eager full-model `mbs=4` OOM at `21.064 GB` is shared by upstream and local Wall, and all tested
   eager high-overhead variants OOM near the L4 limit;
 - compiled local Wall at `mbs=2` survives in the 11-12 GB band;
+- compiled `mbs=4` under the highest-overhead synthetic config is near the L4 limit for the tested
+  variants, not an 11-12 GB case;
 - the full-model Wall peak at `mbs=2` is mostly explained by model/pipeline allocations, especially
   the memory branch, not by the isolated Wall kernel alone;
 - a compiled upstream Wall full-model row is still missing because that run did not terminate within
@@ -564,8 +574,8 @@ Evidence still needed before making a stronger statement:
 - compiled full-model upstream Wall if it can be made to finish reproducibly;
 - a memory snapshot or allocator trace that assigns live bytes to attention, memory branch,
   vocabulary loss, regularization, and optimizer state;
-- repeated compiled `mbs=4` rows for nope/rope/polar if the claim depends on those variants
-  surviving the exact highest-overhead config.
+- repeated compiled `mbs=4` rows with a real ablation training step if the claim depends on exact
+  survival behavior rather than synthetic one-step profiling.
 
 ### Current implementation notes
 
