@@ -42,9 +42,11 @@ The corrected interpretation is:
 - Exact ablation logs for `nope__reg-strong__distr-1__mem-1__win-1`,
   `rope__reg-strong__distr-1__mem-1__win-1`, and `polar__reg-strong__distr-1__mem-1__win-1`
   completed with `mbs=4`, `seq_len=2048`, `torch.compile`, distractor, memory, and window enabled.
-- Operator-observed ablation memory for the non-Wall variants is 11-12 GB at `mbs=4`; until a real
-  Wall ablation run is measured the same way, any larger Wall number should be treated first as our
-  pipeline/profiling problem.
+- Worker-based smoke checks using `ablation.run_worker` reproduced the expected non-Wall memory
+  scale: `nope` trained at about `11304 MiB` GPU process memory and `polar` trained at about
+  `14380 MiB` under the same high-overhead `mbs=4` config family. Until a real Wall ablation run is
+  measured the same way, any larger Wall number should be treated first as our pipeline/profiling
+  problem.
 - Before claiming a Wall algorithm problem, compare the exact ablation training path, the exact
   enabled features, and the attention kernel in isolation.
 
@@ -469,12 +471,12 @@ Compiled synthetic full-model rows from `kernel.wall.profile_full_model_memory`:
 | polar | 4 | OOM | 21.439 GB | 21.496 GB | failed on a 1.54 GiB allocation request; compiler emitted Triton warnings |
 | wall local | 4 | OOM | 19.577 GB | 20.398 GB | failed on a 1.54 GiB allocation request |
 
-The rows above are synthetic profiler measurements, not values copied from the ablation logs. The
-checked ablation logs record configs and curves but do not record CUDA peak memory. The `mbs=4`
-synthetic rows contradict the established ablation behavior for nope/rope/polar, which are reported
-from production ablation runs to sit around 11-12 GB at `mbs=4` with compile enabled. Treat those
-synthetic `mbs=4` rows as evidence that this profiler path is mismatched, not as evidence about the
-actual ablation memory requirement.
+The rows above are synthetic profiler measurements, not values copied from the ablation logs. This
+profiler was also run before the environment was corrected to use the real installed FLA package:
+an in-repo `fla/` shim was shadowing `flash-linear-attention`, and the `transformers`/`kernels`
+versions were incompatible. The `mbs=4` synthetic rows contradict the actual worker path for
+nope/polar and should be treated as evidence that this profiler path was mismatched, not as evidence
+about the actual ablation memory requirement.
 
 Attempted compiled upstream Wall at `mbs=2` did not finish after several minutes and was terminated
 to keep later measurements uncontaminated. Do not use the eager upstream row as a substitute for a
@@ -484,12 +486,53 @@ Interpretation:
 
 - The compiled local Wall `mbs=2` result is in the same 11-12 GB reserved band as nope and rope.
 - The synthetic `mbs=4` rows are not credible ablation-memory rows because they disagree with the
-  repeated non-Wall ablation experience. They likely reflect profiler/environment mismatch, such as
-  missing optional kernels or a compile graph that is not the real training loop.
+  real worker checks. They reflect profiler/environment mismatch, including the former local FLA
+  shim and a compile graph that is not the real training loop.
 - The earlier `14-15 GB` `mbs=2` concern is therefore best treated as a profiling-path artifact
   until a real ablation training run proves otherwise.
 - The compiled local Wall `mbs=4` synthetic OOM should not be used as a Wall conclusion. It only
   says this profiler cannot reproduce the known non-Wall ablation memory baseline.
+
+### Worker-based non-Wall smoke checks
+
+The correct way to check the ablation memory path is through the worker:
+
+```text
+FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir <shard> --log_dir <logs> --gpu 0
+```
+
+On 2026-06-27 the environment was corrected to use the real installed packages:
+
+```text
+torch==2.12.1+cu130
+flash-linear-attention==0.5.1
+fla-core==0.5.1
+transformers==4.57.6
+kernels==0.11.7
+wall-attn==0.1.0 editable from /home/sagemaker-user/wall-attention-release
+```
+
+The previously committed local `atma/fla` shim was removed because it shadowed the real
+`flash-linear-attention` package whenever commands ran from the repository root. `causal-conv1d`
+could not be installed on this host because its source build detected CUDA 12.9 while PyTorch was
+compiled for CUDA 13.0, but the Hugging Face `kernels` causal-conv path loaded during the worker
+run.
+
+Short worker smoke configs were copied from the exact completed strong+distractor+memory+window
+ablation logs, then capped to `max_steps=1`, `num_chunks=1`, and `val_tokens=8192` so the same
+compile/training path could run without a full sweep. Both kept `mbs=4`, `seq_len=2048`,
+`batch_size=524288`, `FLA_CUSTOM_OP=1`, memory, distractor, window, and strong regularization.
+GPU memory was sampled externally with `nvidia-smi` once per second.
+
+| attention | worker status | training memory | full smoke peak | notes |
+| --- | --- | ---: | ---: | --- |
+| nope | train step completed; long eval interrupted | 11304 MiB | 12792 MiB | exact strong+distractor+memory+window config family |
+| polar | completed | 14380 MiB | 15732 MiB | eval reduced to 2048 only |
+
+These are process-level `nvidia-smi` samples, not `torch.cuda.max_memory_*` allocator counters.
+They are still the relevant sanity check here because they exercise the same worker infrastructure
+as the ablation sweep. The synthetic profiler is invalid for `mbs=4` conclusions until it reproduces
+these non-Wall worker baselines.
 
 ### Full-model Wall feature breakdown
 
@@ -579,7 +622,7 @@ other attention variants. The current evidence says:
 
 - isolated local Wall backward memory reduction is real and source-confirmed;
 - the synthetic full-model profiler is not reliable for `mbs=4` ablation memory, because it reports
-  20+ GB for non-Wall configs that the real sweep has repeatedly run around 11-12 GB;
+  20+ GB for non-Wall configs that the real worker path runs far lower;
 - the real comparison must be an exact ablation-path Wall run measured the same way as the 120
   completed non-Wall runs;
 - until that exists, a high Wall number is our profiling/pipeline problem first, not a defensible
