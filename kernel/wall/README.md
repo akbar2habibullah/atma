@@ -326,12 +326,26 @@ window 1024, and memory enabled. The sanity script used synthetic token batches 
 downloads while exercising the same model path. In this environment the optional `kernels` package
 was absent, so causal conv used the repository's PyTorch fallback.
 
-Training survival on NVIDIA L4:
+Training survival on NVIDIA L4, with the Wall kernel source forced explicitly:
 
-| mbs | status | peak allocated | peak reserved | notes |
-| ---: | --- | ---: | ---: | --- |
-| 4 | OOM | 20.913 GB | 21.064 GB | failed on a 1.54 GiB allocation request |
-| 2 | OK | 13.726 GB | 14.193 GB | matches the Wall ablation JSON setting |
+```text
+local:    /home/sagemaker-user/atma/kernel/wall/training.py
+upstream: /home/sagemaker-user/wall-attention-release/wall_attn/training.py
+```
+
+| impl | mbs | status | peak allocated | peak reserved | notes |
+| --- | ---: | --- | ---: | ---: | --- |
+| local low-memory | 4 | OOM | 20.913 GB | 21.064 GB | failed on a 1.54 GiB allocation request |
+| upstream `wall_attn` | 4 | OOM | 20.913 GB | 21.064 GB | same failure profile as local |
+| local low-memory | 2 | OK | 13.726 GB | 14.193 GB | matches the Wall ablation JSON setting |
+| upstream `wall_attn` | 2 | OK | 13.734 GB | 14.213 GB | full-model peak is effectively unchanged |
+
+The `mbs=4` OOM is therefore not an accidental upstream-kernel measurement. It also is not fixed
+by the local DKV-backward storage change because this full-model peak is dominated by tensors
+outside that isolated allocation. In a local `mbs=2` split measurement, peak memory was already
+12.198 GB after forward and rose to 13.726 GB after backward. The isolated kernel memory reduction
+from the table above is real, but at this full-model setting it is hidden under larger activation,
+distractor-alignment, vocabulary-loss, and memory-branch allocations.
 
 The `mbs=2` run completed one full forward/backward optimizer-step equivalent over the heavy loss
 composition:
