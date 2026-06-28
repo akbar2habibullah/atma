@@ -2,18 +2,18 @@
 
 Polar Attention is designed to **train short, infer long**. All numbers below come from the **120-cell ablation** — identical 370M models, `seq_len=2048`, ~1B tokens, evaluated at full context from 2K to 64K (32× train length) on a single 24 GB L4. The full grid is browsable in [pages/dashboard.html](../pages/dashboard.html); the probes themselves are produced by [eval.py](../eval.py) (reference at the bottom). See [POLAR_ATTENTION.md](POLAR_ATTENTION.md) for the mechanism.
 
-## 1. Attention alone does not extrapolate — with or without polar
+## 1. Attention alone does not extrapolate — with or without polar/RoPE
 
-Memoryless cores (baseline regularizer, no distractor, no window). Both collapse on retrieval and degrade on perplexity within a few × of the training length:
+Memoryless cores (baseline regularizer, no distractor, no window). They collapse on retrieval and degrade on perplexity within a few × of the training length:
 
-| Length (× train) | softmax clean ppl | polar clean ppl | softmax needle | polar needle |
-|---|---|---|---|---|
-| 2,048 (1×) | 2.76 | 2.83 | 98 % | 96 % |
-| 8,192 (4×) | 2.67 | 3.32 | 28 % | 15 % |
-| 32,768 (16×) | 3.38 | 3.60 | 3 % | 3 % |
-| 65,536 (32×) | 3.71 | 3.60 | 1 % | 0 % |
+| Length (× train) | softmax clean ppl | polar clean ppl | rope clean ppl | softmax needle | polar needle | rope needle |
+|---|---|---|---|---|---|---|
+| 2,048 (1×) | 2.76 | 2.83 | 2.85 | 98 % | 96 % | 43 % |
+| 8,192 (4×) | 2.67 | 3.32 | 2.78 | 28 % | 15 % | 4 % |
+| 32,768 (16×) | 3.38 | 3.60 | 3.07 | 3 % | 3 % | 0 % |
+| 65,536 (32×) | 3.71 | 3.60 | 3.36 | 1 % | 0 % | 0 % |
 
-Softmax dilutes as keys accumulate; polar's attention *pool* grows out-of-distribution (the participation ratio `n_eff` blows up past the training length). Neither core retrieves far on its own. Polar degrades a little more gracefully on the raw stream at long range (junk-stream ppl `5.68` vs softmax `6.68` @ 32×), but both are far from usable — the fix is not in the attention core alone.
+Softmax dilutes as keys accumulate; polar's attention *pool* grows out-of-distribution (the participation ratio `n_eff` blows up past the training length). RoPE suffers from position-shifting out-of-distribution and fails to retrieve at long ranges. None of these cores retrieve far on their own. Polar degrades a little more gracefully on the raw stream at long range (junk-stream ppl `5.68` vs softmax `6.68` and RoPE `5.21` @ 32×), but all are far from usable — the fix is not in the attention core alone.
 
 > The distractor loss (`num_random_keys > 0`) calibrates the null floor against random keys. On the **memoryless** polar core in this sweep it does **not** rescue retrieval — it collapses the needle (`85 % → 0 %`). The lever that works is the memory.
 
@@ -24,16 +24,16 @@ Adding the [Titans compression memory](TITANS_MEMORY.md) to **full polar, with n
 - **Perplexity reverses and improves monotonically.** Clean-document perplexity (coherent finepdfs documents) *falls* with length, `2.70 → 1.96` across the 2K→64K sweep, where the memoryless polar core was the **worst** option (blowing up past `3.6`). The gain is the memory, not a window: the polar core trains at the same `N ≤ 1024` operating point either way.
 - **Retrieval stays flat above 90 % to 32× train length.** The induction needle holds `91–98 %` across the whole sweep (length-weighted `94 %`).
 
-| Needle distance | polar, no memory (§1) | softmax + memory | **polar + memory** |
-|---|---|---|---|
-| 2,048 (1×) | 96 % | 98 % | 91 % |
-| 4,096 (2×) | 40 % | 98 % | 95 % |
-| 8,192 (4×) | 15 % | 94 % | 93 % |
-| 16,384 (8×) | 8 % | 85 % | **98 %** |
-| 32,768 (16×) | 3 % | 48 % | **96 %** |
-| 65,536 (32×) | 0 % | 16 % | **93 %** |
+| Needle distance | polar, no memory (§1) | softmax + memory | rope + memory | **polar + memory** |
+|---|---|---|---|---|
+| 2,048 (1×) | 96 % | 98 % | 74 % | **91 %** |
+| 4,096 (2×) | 40 % | 98 % | 55 % | **95 %** |
+| 8,192 (4×) | 15 % | 94 % | 29 % | **93 %** |
+| 16,384 (8×) | 8 % | 85 % | 9 % | **98 %** |
+| 32,768 (16×) | 3 % | 48 % | 0 % | **96 %** |
+| 65,536 (32×) | 0 % | 16 % | 0 % | **93 %** |
 
-**Polar earns its keep at extreme length.** Softmax + the *same* memory holds early but collapses past ~16× (the `n_eff` blow-up reappears in its readout); only **polar + memory** stays flat to 32× — and its perplexity is best and monotonic (`1.96` vs softmax-memory `2.34 @ 64×`). Convergence and quality rank **Polar+Titans > Softmax+Titans > polar-only**.
+**Polar earns its keep at extreme length.** Softmax + the *same* memory holds early but collapses past ~16× (the `n_eff` blow-up reappears in its readout); RoPE + memory collapses even faster. Only **polar + memory** stays flat to 32× — and its perplexity is best and monotonic (`1.96` vs softmax-memory `2.34 @ 64×`, and RoPE-memory `2.86 @ 64×`). Convergence and quality rank **Polar+Titans > Softmax+Titans > RoPE+Titans > polar-only**.
 
 ## 3. With the memory, the distractor and window only hurt
 
@@ -63,8 +63,10 @@ For orientation, the main Atma rows converted from nats/token to bits/GPT2tok:
 |---|---:|---:|---:|---:|---:|---:|
 | Atma polar + Titans memory | 378M | 3.04 | 2.83 | 4.51 | 94.1% | 92.5% |
 | Atma softmax + Titans memory | 378M | 3.37 | 3.38 | 4.66 | 41.7% | 16.3% |
+| Atma rope + Titans memory | 378M | 4.08 | 4.12 | 5.16 | 5.9% | 0.0% |
 | Atma polar, no memory | 370M | 5.11 | 5.20 | 8.19 | 5.3% | 0.0% |
 | Atma softmax, no memory | 370M | 4.93 | 5.35 | 9.63 | 7.9% | 1.3% |
+| Atma rope, no memory | 370M | 4.55 | 4.84 | 7.51 | 1.2% | 0.0% |
 
 Open-weight pretrained baselines:
 

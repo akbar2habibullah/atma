@@ -608,18 +608,18 @@
     <h2>Train at 2K, evaluate to 64K</h2>
     <p class="lead" style="margin-bottom:22px">370M parameters (16 layers, 12 gated-conv + 4 attention), ~1B tokens of FineWeb-Edu, sequence length 2K. Every cell evaluates at full context. The winning recipe is <span class="mono">polar + memory</span> (no window, no distractor, baseline regularizer).</p>
 
-    <div class="grid2">
+    <div style="display:flex; flex-direction:column; gap:28px;">
       <div>
         <h3 style="font-size:17px; color:var(--mut); font-weight:600; margin:0 0 10px">Needle retrieval accuracy</h3>
         <div class="tblwrap">
           <table class="tbl">
-            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax+Titans</th><th>Polar only</th></tr></thead>
+            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax (NoPE)+Titans</th><th>RoPE+Titans</th><th>Polar only</th><th>Softmax (NoPE) only</th><th>RoPE only</th></tr></thead>
             <tbody>
-              <tr><td>2K (1&times;)</td><td class="win">91%</td><td>98%</td><td>96%</td></tr>
-              <tr><td>8K (4&times;)</td><td class="win">93%</td><td>94%</td><td class="bad">15%</td></tr>
-              <tr><td>16K (8&times;)</td><td class="win">98%</td><td>85%</td><td class="bad">8%</td></tr>
-              <tr><td>32K (16&times;)</td><td class="win">96%</td><td class="bad">48%</td><td class="bad">3%</td></tr>
-              <tr><td>64K (32&times;)</td><td class="win">93%</td><td class="bad">16%</td><td class="bad">0%</td></tr>
+              <tr><td>2K (1&times;)</td><td class="win">91%</td><td>98%</td><td>74%</td><td>96%</td><td>98%</td><td class="bad">43%</td></tr>
+              <tr><td>8K (4&times;)</td><td class="win">93%</td><td>94%</td><td class="bad">29%</td><td class="bad">15%</td><td class="bad">28%</td><td class="bad">4%</td></tr>
+              <tr><td>16K (8&times;)</td><td class="win">98%</td><td>85%</td><td class="bad">9%</td><td class="bad">8%</td><td class="bad">8%</td><td class="bad">0%</td></tr>
+              <tr><td>32K (16&times;)</td><td class="win">96%</td><td class="bad">48%</td><td class="bad">0%</td><td class="bad">3%</td><td class="bad">3%</td><td class="bad">0%</td></tr>
+              <tr><td>64K (32&times;)</td><td class="win">93%</td><td class="bad">16%</td><td class="bad">0%</td><td class="bad">0%</td><td class="bad">1%</td><td class="bad">0%</td></tr>
             </tbody>
           </table>
         </div>
@@ -628,20 +628,20 @@
         <h3 style="font-size:17px; color:var(--mut); font-weight:600; margin:0 0 10px">Clean-document perplexity</h3>
         <div class="tblwrap">
           <table class="tbl">
-            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax+Titans</th><th>Polar only</th></tr></thead>
+            <thead><tr><th>Context</th><th>Polar+Titans</th><th>Softmax (NoPE)+Titans</th><th>RoPE+Titans</th><th>Polar only</th><th>Softmax (NoPE) only</th><th>RoPE only</th></tr></thead>
             <tbody>
-              <tr><td>2K (1&times;)</td><td class="win">2.70</td><td>2.66</td><td>2.83</td></tr>
-              <tr><td>8K (4&times;)</td><td class="win">2.44</td><td>2.39</td><td class="bad">3.32</td></tr>
-              <tr><td>16K (8&times;)</td><td class="win">2.28</td><td>2.29</td><td class="bad">3.53</td></tr>
-              <tr><td>32K (16&times;)</td><td class="win">2.14</td><td>2.29</td><td class="bad">3.60</td></tr>
-              <tr><td>64K (32&times;)</td><td class="win">1.96</td><td>2.34</td><td class="bad">3.60</td></tr>
+              <tr><td>2K (1&times;)</td><td class="win">2.70</td><td>2.66</td><td>2.81</td><td>2.83</td><td>2.76</td><td>2.85</td></tr>
+              <tr><td>8K (4&times;)</td><td class="win">2.44</td><td>2.39</td><td>2.74</td><td class="bad">3.32</td><td>2.67</td><td>2.78</td></tr>
+              <tr><td>16K (8&times;)</td><td class="win">2.28</td><td>2.29</td><td class="bad">2.79</td><td class="bad">3.53</td><td class="bad">2.97</td><td class="bad">2.85</td></tr>
+              <tr><td>32K (16&times;)</td><td class="win">2.14</td><td>2.29</td><td class="bad">2.82</td><td class="bad">3.60</td><td class="bad">3.38</td><td class="bad">3.07</td></tr>
+              <tr><td>64K (32&times;)</td><td class="win">1.96</td><td>2.34</td><td class="bad">2.86</td><td class="bad">3.60</td><td class="bad">3.71</td><td class="bad">3.36</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </div>
     <p class="cap" style="text-align:left; margin-top:14px">
-      Polar + Titans is the only recipe whose perplexity <b>improves monotonically</b> as context grows (2.70&rarr;1.96 across a 32&times; sweep) while retrieval stays flat. Softmax holds early then collapses past ~16&times;; polar without the memory loses long-context perplexity. Convergence and quality rank <b>Polar+Titans &gt; Causal &gt; Polar-only</b> at ~6&ndash;9% MFU overhead.
+      Polar + Titans is the only recipe whose perplexity <b>improves monotonically</b> as context grows (2.70&rarr;1.96 across a 32&times; sweep) while retrieval stays flat. Softmax holds early then collapses past ~16&times;; RoPE collapses even faster. Polar without the memory loses long-context perplexity. Convergence and quality rank <b>Polar+Titans &gt; Softmax+Titans &gt; RoPE+Titans &gt; Polar-only</b> at ~6&ndash;9% MFU overhead.
     </p>
   </div>
 </section>

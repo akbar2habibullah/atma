@@ -1,10 +1,10 @@
 \begin{longtable}{llcccrrrrrrrr}
-\caption{Complete Results of the 100-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. Clean PPL is measured on coherent FinePDFs documents; junk PPL is measured on the concatenated validation stream. PPL is in nats (lower is better), Needle is accuracy in \% (higher is better), MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
+\caption{Complete Results of the 120-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. Clean PPL is measured on coherent FinePDFs documents; junk PPL is measured on the concatenated validation stream. PPL is in nats (lower is better), Needle is accuracy in \% (higher is better), MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
 \toprule
 Type & Reg & Dist & Mem & Win & Val & Clean2K & Clean64K & Junk2K & Junk64K & Ndl2K & Ndl64K & MFU \\
 \midrule
 \endfirsthead
-\caption[]{Complete Results of the 100-Run Ablation Sweep (continued).}\\
+\caption[]{Complete Results of the 120-Run Ablation Sweep (continued).}\\
 \toprule
 Type & Reg & Dist & Mem & Win & Val & Clean2K & Clean64K & Junk2K & Junk64K & Ndl2K & Ndl64K & MFU \\
 \midrule
@@ -103,16 +103,36 @@ ROPE & baseline & On & Off & Off & 3.163 & 3.00 & 3.47 & 3.10 & 5.46 & 38.8 & 0.
 ROPE & baseline & On & Off & On & 3.167 & 2.88 & 4.06 & 3.16 & 5.92 & 0.0 & 0.0 & 30.2 \\
 ROPE & baseline & On & On & Off & 3.153 & 2.73 & 2.45 & 3.09 & 3.57 & 75.0 & 0.0 & 31.4 \\
 ROPE & baseline & On & On & On & 3.154 & 2.83 & 2.86 & 3.12 & 3.72 & 32.5 & 0.0 & 29.4 \\
+ROPE & weak & Off & Off & Off & 3.158 & 2.88 & 3.46 & 3.10 & 5.36 & 46.3 & 0.0 & 41.4 \\
+ROPE & weak & Off & Off & On & 3.163 & 2.84 & 3.96 & 3.18 & 5.93 & 12.5 & 0.0 & 37.8 \\
+ROPE & weak & Off & On & Off & 3.149 & 2.71 & 2.46 & 3.09 & 3.56 & 37.5 & 0.0 & 36.5 \\
+ROPE & weak & Off & On & On & 3.156 & 2.85 & 2.77 & 3.12 & 3.60 & 23.8 & 0.0 & 34.9 \\
+ROPE & weak & On & Off & Off & 3.155 & 2.83 & 3.49 & 3.10 & 5.27 & 38.8 & 0.0 & 32.3 \\
+ROPE & weak & On & Off & On & 3.157 & 3.05 & 4.12 & 3.18 & 5.86 & 8.8 & 0.0 & 30.5 \\
+ROPE & weak & On & On & Off & 3.149 & 2.77 & 2.76 & 3.09 & 3.56 & 57.5 & 0.0 & 31.1 \\
+ROPE & weak & On & On & On & 3.149 & 2.77 & 3.13 & 3.12 & 3.80 & 17.5 & 0.0 & 28.0 \\
 ROPE & strong & Off & Off & Off & 3.165 & 2.78 & 3.34 & 3.10 & 5.27 & 30.0 & 0.0 & 39.0 \\
+ROPE & strong & Off & Off & On & 3.169 & 2.90 & 3.68 & 3.19 & 5.80 & 31.3 & 0.0 & 36.3 \\
 ROPE & strong & Off & On & Off & 3.158 & 2.85 & 2.63 & 3.10 & 3.50 & 51.3 & 0.0 & 35.9 \\
 ROPE & strong & Off & On & On & 3.162 & 2.86 & 3.08 & 3.14 & 3.76 & 10.0 & 0.0 & 33.2 \\
 ROPE & strong & On & Off & Off & 3.161 & 2.85 & 3.58 & 3.10 & 5.28 & 47.5 & 0.0 & 31.1 \\
+ROPE & strong & On & Off & On & 3.165 & 2.85 & 4.03 & 3.19 & 5.90 & 2.5 & 0.0 & 29.2 \\
+ROPE & strong & On & On & Off & 3.155 & 2.80 & 2.70 & 3.10 & 3.62 & 61.3 & 0.0 & 29.3 \\
 ROPE & strong & On & On & On & 3.162 & 2.85 & 3.08 & 3.13 & 3.74 & 2.5 & 0.0 & 28.4 \\
 ROPE & discrete & Off & Off & Off & 3.165 & 2.91 & 3.43 & 3.11 & 5.42 & 22.5 & 0.0 & 39.7 \\
 ROPE & discrete & Off & Off & On & 3.158 & 2.84 & 4.05 & 3.15 & 5.90 & 3.8 & 0.0 & 36.9 \\
 ROPE & discrete & Off & On & Off & 3.159 & 2.83 & 2.67 & 3.11 & 3.56 & 47.5 & 0.0 & 36.3 \\
 ROPE & discrete & Off & On & On & 3.161 & 2.79 & 2.71 & 3.13 & 3.74 & 41.3 & 0.0 & 33.7 \\
+ROPE & discrete & On & Off & Off & 3.171 & 2.79 & 3.45 & 3.12 & 5.36 & 51.3 & 0.0 & 31.5 \\
 ROPE & discrete & On & Off & On & 3.164 & 2.80 & 3.74 & 3.16 & 5.86 & 21.3 & 0.0 & 30.0 \\
 ROPE & discrete & On & On & Off & 3.162 & 2.74 & 2.47 & 3.11 & 3.53 & 50.0 & 0.0 & 30.9 \\
 ROPE & discrete & On & On & On & 3.154 & 2.79 & 2.68 & 3.11 & 3.67 & 18.8 & 0.0 & 28.9 \\
+ROPE & zipfian & Off & Off & Off & 3.163 & 2.82 & 3.25 & 3.10 & 5.22 & 62.5 & 0.0 & 39.8 \\
+ROPE & zipfian & Off & Off & On & 3.161 & 2.94 & 3.94 & 3.18 & 5.81 & 16.3 & 0.0 & 37.1 \\
+ROPE & zipfian & Off & On & Off & 3.149 & 2.78 & 2.70 & 3.09 & 3.63 & 46.3 & 0.0 & 36.7 \\
+ROPE & zipfian & Off & On & On & 3.151 & 2.80 & 2.63 & 3.11 & 3.68 & 2.5 & 0.0 & 33.9 \\
+ROPE & zipfian & On & Off & Off & 3.161 & 2.78 & 3.38 & 3.10 & 5.32 & 47.5 & 0.0 & 32.6 \\
+ROPE & zipfian & On & Off & On & 3.160 & 3.01 & 4.11 & 3.17 & 5.81 & 17.5 & 0.0 & 30.2 \\
+ROPE & zipfian & On & On & Off & 3.149 & 2.73 & 2.39 & 3.09 & 3.55 & 62.5 & 0.0 & 29.8 \\
+ROPE & zipfian & On & On & On & 3.152 & 2.79 & 2.99 & 3.12 & 3.78 & 26.3 & 0.0 & 28.5 \\
 \end{longtable}
