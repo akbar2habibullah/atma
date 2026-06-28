@@ -1,0 +1,3 @@
+timestamp,profile,device,dtype,kernel,heads,tokens,head_dim,window,iters,status,wall_s,runs_s,tokens_s,replay_s,first_call_s,capture_s,checksum,returncode,error
+2026-06-24T14:12:07+0700,rx6700xt,cl,fp16,polar,4,16,16,16,3,ok,5.649542699989979,1661.87,26589.85,0.0018,2.5166,0.0329,-38.11249,0,
+2026-06-24T14:12:13+0700,rx6700xt,cl,fp16,gdn,4,16,16,16,3,ok,7.639724400010891,1237.83,19805.25,0.0024,3.2909,0.0382,-93.628662,0,

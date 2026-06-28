@@ -54,7 +54,7 @@ Paper Under Review for COLM Workshop
 \maketitle
 
 \begin{abstract}
-Modern large language models based on softmax scaled-dot-product attention are constrained by their training sequence length: as the key-value sequence grows, softmax probability mass can dilute across a wider distribution, inducing activation shift and long-context performance collapse. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. Neither the Polar Attention core nor the recurrent memory is sufficient alone; their combination enables monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 100-run factorial ablation sweep, demonstrating that the combined Polar + memory model maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
+Modern large language models based on softmax scaled-dot-product attention are constrained by their training sequence length: as the key-value sequence grows, softmax probability mass can dilute across a wider distribution, inducing activation shift and long-context performance collapse. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. Neither the Polar Attention core nor the recurrent memory is sufficient alone; their combination enables monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 120-run factorial ablation sweep, demonstrating that the combined Polar + memory model maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
 \end{abstract}
 
 \section{Introduction}
@@ -85,7 +85,7 @@ The first two streams (\textbf{content} and \textbf{count}) form our proposed \t
 
 The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, while Polar Attention supplies the bounded full-context readout needed for exact recall. The ablations show that neither ingredient is enough in isolation: memoryless Polar Attention still loses retrieval at long range, and softmax paired with the same memory collapses at extreme lengths.
 
-To rigorously validate our architectural design, we perform a \textbf{100-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory resolves the window-vs-retrieval trade-off in our setting. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
+To rigorously validate our architectural design, we perform a \textbf{120-run factorial ablation sweep}, training 370M-parameter models on a 1-billion token FineWeb-Edu corpus, and evaluating them across context lengths from 2K to 64K tokens (up to 32$\times$ training length). The results show a clear hierarchy: the combination of Polar Attention and Titans memory resolves the window-vs-retrieval trade-off in our setting. ATMA models hold induction needle-in-a-haystack retrieval flat above 90\% across the entire 2K$\to$64K sweep while clean-document perplexity improves monotonically, outperforming both vanilla softmax and softmax-recurrent hybrid baselines.
 
 Our implementation is optimized and numerically cross-verified across three parallel pipelines: a pure-PyTorch reference, an FP16/FP8 training harness, and a paged inference engine. We introduce a FlashAttention-style Triton kernel that handles the streaming participation-ratio calculations in $O(\text{block})$ memory, and we wrap the fast gated-delta training recurrence as opaque custom ops to avoid dynamo compiler graph breaks. This codesign keeps the recurrent memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs.
 
@@ -220,7 +220,7 @@ We initialize $W_{\text{mem\_proj}}$ to zero so that the memory branch acts as a
 
 \FloatBarrier
 \section{Experimental Setup}
-To evaluate the length-extrapolation and retrieval capabilities of ATMA, we perform a factorial sweep across 100 completed configurations.
+To evaluate the length-extrapolation and retrieval capabilities of ATMA, we perform a factorial sweep across 120 completed configurations.
 
 \subsection{Model Configuration and Training}
 All ablation candidates share a fixed model architecture to isolate the impact of the sequence mixer:
@@ -235,7 +235,7 @@ All ablation candidates share a fixed model architecture to isolate the impact o
 We train each candidate for exactly 1B tokens (1 epoch) on the FineWeb-Edu corpus, using a sequence length of 2048. We use the Muon optimizer for coordinate-descent weight updates on the sequence-mixer and MLP blocks, combined with AdamW on embedding and normalization layers. The learning rate uses a cosine schedule with a 70\% cooldown fraction.
 
 \subsection{Ablation Grid Axes}
-Our 100-run factorial sweep evaluates combinations across five categorical axes:
+Our 120-run factorial sweep evaluates combinations across five categorical axes:
 \begin{enumerate}
     \item \textbf{Attention Type} (\texttt{attn\_type}): \texttt{polar} (our proposed Polar Attention), \texttt{rope} (standard softmax attention with Rotary Position Embeddings \citep{rope2021}), and \texttt{nope} (softmax attention without positional encodings, which organically develop positional representations in causal transformers \citep{haviv2022transformer, wang2024length, zuo-etal-2025-position}, relying on LFM2 convolutions for spatial awareness).
     \item \textbf{Regularizer Mode} (\texttt{reg\_mode}): \texttt{baseline}, \texttt{weak}, \texttt{strong}, \texttt{discrete}, and \texttt{zipfian} (varying the strength and layout of signature-stream regularization; see Appendix~\ref{appendix:reg_modes}).
@@ -258,17 +258,21 @@ We first analyze the performance of attention-only models (with no memory branch
 
 \begin{table}[h]
 \centering
-\begin{tabular}{lcccc}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccccc}
 \toprule
-\textbf{Length (Multiplier)} & \textbf{Softmax PPL} & \textbf{Polar PPL} & \textbf{Softmax Needle} & \textbf{Polar Needle} \\
+ & \multicolumn{3}{c}{\textbf{Clean Perplexity (nats) $\downarrow$}} & \multicolumn{3}{c}{\textbf{Needle Accuracy (\%) $\uparrow$}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+\textbf{Length} & \textbf{NoPE} & \textbf{Polar} & \textbf{RoPE} & \textbf{NoPE} & \textbf{Polar} & \textbf{RoPE} \\
 \midrule
-2,048 (1$\times$)  & 2.76 & 2.83 & 98\% & 96\% \\
-8,192 (4$\times$)  & 2.67 & 3.32 & 28\% & 15\% \\
-32,768 (16$\times$) & 3.38 & 3.60 & 3\%  & 3\%  \\
-65,536 (32$\times$) & 3.71 & 3.60 & 1\%  & 0\%  \\
+2,048 (1$\times$)  & 2.76 & 2.83 & 2.85 & 98\% & 96\% & 43\% \\
+8,192 (4$\times$)  & 2.67 & 3.32 & 2.78 & 28\% & 15\% & 4\%  \\
+32,768 (16$\times$) & 3.38 & 3.60 & 3.07 & 3\%  & 3\%  & 0\%  \\
+65,536 (32$\times$) & 3.71 & 3.60 & 3.36 & 1\%  & 0\%  & 0\%  \\
 \bottomrule
 \end{tabular}
-\caption{Performance of memoryless, windowless attention models. Both softmax and polar attention alone degrade rapidly in perplexity and experience complete retrieval collapse past 4$\times$ training length.}
+\caption{Performance of memoryless, windowless attention models. Softmax (NoPE), polar, and RoPE attention alone degrade in perplexity and experience retrieval collapse past 4$\times$ training length.}
 \label{table:attention_alone}
 \end{table}
 
@@ -281,27 +285,29 @@ Enabling the recurrent Titans gated-delta memory branch on top of the global Pol
 \centering
 \scriptsize
 \setlength{\tabcolsep}{3pt}
-\begin{tabular}{lccccc}
+\begin{tabular}{lccccccc}
 \toprule
-\textbf{Distance} & \textbf{Polar-only Acc} & \textbf{Softmax+Mem Acc} & \textbf{Ours Acc} & \textbf{Softmax+Mem PPL} & \textbf{Ours PPL} \\
+ & \multicolumn{4}{c}{\textbf{Needle Accuracy (\%) $\uparrow$}} & \multicolumn{3}{c}{\textbf{Clean Perplexity (nats) $\downarrow$}} \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-8}
+\textbf{Distance} & \textbf{Polar (no mem)} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} \\
 \midrule
-2,048 (1$\times$)  & 96\% & 98\% & 91\% & 2.66 & 2.70 \\
-4,096 (2$\times$)  & 40\% & 98\% & 95\% & 2.52 & \textbf{2.45} \\
-8,192 (4$\times$)  & 15\% & 94\% & 93\% & 2.39 & \textbf{2.22} \\
-16,384 (8$\times$) & 8\%  & 85\% & \textbf{98\%} & 2.29 & \textbf{2.09} \\
-32,768 (16$\times$)& 3\%  & 48\% & \textbf{96\%} & 2.29 & \textbf{2.01} \\
-65,536 (32$\times$)& 0\%  & 16\% & \textbf{93\%} & 2.34 & \textbf{1.96} \\
+2,048 (1$\times$)  & 96\% & 98\% & 74\% & 91\% & 2.66 & 2.81 & 2.70 \\
+4,096 (2$\times$)  & 40\% & 98\% & 55\% & 95\% & 2.52 & 2.72 & \textbf{2.45} \\
+8,192 (4$\times$)  & 15\% & 94\% & 29\% & 93\% & 2.39 & 2.74 & \textbf{2.22} \\
+16,384 (8$\times$) & 8\%  & 85\% & 9\%  & \textbf{98\%} & 2.29 & 2.79 & \textbf{2.09} \\
+32,768 (16$\times$)& 3\%  & 48\% & 0\%  & \textbf{96\%} & 2.29 & 2.82 & \textbf{2.01} \\
+65,536 (32$\times$)& 0\%  & 16\% & 0\%  & \textbf{93\%} & 2.34 & 2.86 & \textbf{1.96} \\
 \bottomrule
 \end{tabular}
-\caption{Retrieval accuracy and document perplexity comparison under long-context extrapolation. Softmax + Titans memory improves perplexity but collapses in retrieval at extreme length, while Polar + Titans memory holds retrieval above 90\% out to 64K and achieves the best 64K perplexity.}
+\caption{Retrieval accuracy and document perplexity comparison under long-context extrapolation. Softmax (NoPE) + Titans memory improves perplexity but collapses in retrieval at extreme length; RoPE + Titans memory collapses even faster. Polar + Titans memory holds retrieval above 90\% out to 64K and achieves the best 64K perplexity.}
 \label{table:memory_unlock}
 \end{table}
 
 The combination of Polar Attention and Titans memory achieves the best of both worlds:
 \begin{enumerate}
-    \item \textbf{Monotonic Perplexity Reduction:} Document perplexity falls consistently from 2.70 nats down to 1.96 nats at 64K tokens, improving over the softmax-memory baseline's 2.34 nats at 64K and demonstrating that the model actively uses the longer context to improve predictions.
+    \item \textbf{Monotonic Perplexity Reduction:} Document perplexity falls consistently from 2.70 nats down to 1.96 nats at 64K tokens, improving over the softmax-memory baseline's 2.34 nats and the RoPE-memory's 2.86 nats at 64K, demonstrating that the model actively uses the longer context to improve predictions.
     \item \textbf{Flat Retrieval Generalization:} Retrieval accuracy remains flat at 91--98\% (length-weighted average of 94\%) out to 32$\times$ training length.
-    \item \textbf{Polar vs. Softmax Contrast:} While Softmax + Titans memory performs well at shorter context lengths, it collapses to 16\% retrieval at 64K. This collapse occurs because the softmax representation is not length-invariant, leading to activation drift that corrupts the memory readout.
+    \item \textbf{Polar vs. Baselines Contrast:} While Softmax + Titans memory performs well at shorter context lengths, it collapses to 16\% retrieval at 64K. RoPE + Titans memory collapses even faster, falling to 0\% retrieval by 32K context. This occurs because neither traditional softmax nor RoPE representations are length-invariant, leading to activation drift that corrupts the memory readout.
 \end{enumerate}
 
 \subsection{Ablation of Windowing and Distractors}
@@ -384,8 +390,10 @@ LFM2.5-350M & 354M & 6.96 & 3.79 & 6.90 & 10.78 & 5.82 & 11.11 & 44.6 & 45.6 & 4
 \midrule
 \textbf{ATMA Polar + Titans Memory} & 378M & 3.04 & 3.90 & 2.83 & 4.49 & 4.49 & 4.51 & 94.1 & 91.3 & 92.5 \\
 ATMA Softmax + Titans Memory & 378M & 3.37 & 3.84 & 3.38 & 4.58 & 4.46 & 4.66 & 41.7 & 97.5 & 16.3 \\
+ATMA RoPE + Titans Memory & 378M & 4.08 & 4.05 & 4.12 & 4.98 & 4.46 & 5.16 & 5.9 & 73.8 & 0.0 \\
 ATMA Polar, no Memory & 370M & 5.11 & 4.08 & 5.20 & 7.69 & 4.71 & 8.19 & 5.3 & 96.3 & 0.0 \\
 ATMA Softmax, no Memory & 370M & 4.93 & 3.99 & 5.35 & 8.57 & 4.57 & 9.63 & 7.9 & 97.5 & 1.3 \\
+ATMA RoPE, no Memory & 370M & 4.55 & 4.12 & 4.84 & 6.66 & 4.46 & 7.51 & 1.2 & 42.5 & 0.0 \\
 \bottomrule
 \end{tabular}
 }
@@ -445,7 +453,7 @@ Polar + Memory + Distractor ($R=2048$) & 36.39 s & 31.8\% & 20.7\% \\
 \end{table}
 
 \section{Conclusion}
-We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off. By pairing a length-invariant Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We rigorously verified our design through a 100-run sweep, and demonstrated that hardware-level software codesign keeps the memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs. Future work will investigate extending write-path distractors to further enhance memory capacity.
+We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off. By pairing a length-invariant Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We rigorously verified our design through a 120-run sweep, and demonstrated that hardware-level software codesign keeps the memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs. Future work will investigate extending write-path distractors to further enhance memory capacity.
 
 \bibliography{colm2026_conference}
 \bibliographystyle{colm2026_conference}
@@ -619,7 +627,7 @@ def _polar_fwd_kernel_core(q, K, V, VNULL, SPG, NULLBASE, SPS, BETA,
 \end{lstlisting}
 \begin{landscape}
 \section{Complete Ablation Sweep Results}
-We present the full numerical results of our 100-run factorial ablation sweep. The table lists the attention type, signature-stream regularization mode, distractor status, memory branch status, sliding-window status, training validation loss, clean-document perplexity and junk-stream perplexity at multipliers 1$\times$ and 32$\times$ (2K and 64K tokens), needle-in-a-haystack retrieval accuracy at 2K and 64K tokens, and training Model Flops Utilization (MFU).
+We present the full numerical results of our 120-run factorial ablation sweep. The table lists the attention type, signature-stream regularization mode, distractor status, memory branch status, sliding-window status, training validation loss, clean-document perplexity and junk-stream perplexity at multipliers 1$\times$ and 32$\times$ (2K and 64K tokens), needle-in-a-haystack retrieval accuracy at 2K and 64K tokens, and training Model Flops Utilization (MFU).
 
 \input{appendix_table.tex}
 \end{landscape}
