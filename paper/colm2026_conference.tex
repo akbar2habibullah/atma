@@ -283,20 +283,20 @@ Enabling the recurrent Titans gated-delta memory branch on top of the global Pol
 
 \begin{table}[h]
 \centering
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lccccccc}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccccc}
 \toprule
- & \multicolumn{4}{c}{\textbf{Needle Accuracy (\%) $\uparrow$}} & \multicolumn{3}{c}{\textbf{Clean Perplexity (nats) $\downarrow$}} \\
-\cmidrule(lr){2-5} \cmidrule(lr){6-8}
-\textbf{Distance} & \textbf{Polar (no mem)} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} \\
+ & \multicolumn{3}{c}{\textbf{Needle Accuracy (\%) $\uparrow$}} & \multicolumn{3}{c}{\textbf{Clean Perplexity (nats) $\downarrow$}} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+\textbf{Distance} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} & \textbf{NoPE+Mem} & \textbf{RoPE+Mem} & \textbf{Ours} \\
 \midrule
-2,048 (1$\times$)  & 96\% & 98\% & 74\% & 91\% & 2.66 & 2.81 & 2.70 \\
-4,096 (2$\times$)  & 40\% & 98\% & 55\% & 95\% & 2.52 & 2.72 & \textbf{2.45} \\
-8,192 (4$\times$)  & 15\% & 94\% & 29\% & 93\% & 2.39 & 2.74 & \textbf{2.22} \\
-16,384 (8$\times$) & 8\%  & 85\% & 9\%  & \textbf{98\%} & 2.29 & 2.79 & \textbf{2.09} \\
-32,768 (16$\times$)& 3\%  & 48\% & 0\%  & \textbf{96\%} & 2.29 & 2.82 & \textbf{2.01} \\
-65,536 (32$\times$)& 0\%  & 16\% & 0\%  & \textbf{93\%} & 2.34 & 2.86 & \textbf{1.96} \\
+2,048 (1$\times$)  & 98\% & 74\% & 91\% & 2.66 & 2.81 & 2.70 \\
+4,096 (2$\times$)  & 98\% & 55\% & 95\% & 2.52 & 2.72 & \textbf{2.45} \\
+8,192 (4$\times$)  & 94\% & 29\% & 93\% & 2.39 & 2.74 & \textbf{2.22} \\
+16,384 (8$\times$) & 85\% & 9\%  & \textbf{98\%} & 2.29 & 2.79 & \textbf{2.09} \\
+32,768 (16$\times$)& 48\% & 0\%  & \textbf{96\%} & 2.29 & 2.82 & \textbf{2.01} \\
+65,536 (32$\times$)& 16\% & 0\%  & \textbf{93\%} & 2.34 & 2.86 & \textbf{1.96} \\
 \bottomrule
 \end{tabular}
 \caption{Retrieval accuracy and document perplexity comparison under long-context extrapolation. Softmax (NoPE) + Titans memory improves perplexity but collapses in retrieval at extreme length; RoPE + Titans memory collapses even faster. Polar + Titans memory holds retrieval above 90\% out to 64K and achieves the best 64K perplexity.}
