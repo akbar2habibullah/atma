@@ -1,0 +1,3 @@
+timestamp,profile,device,dtype,kernel,heads,tokens,head_dim,window,iters,gdn_variant,chunk_size,status,wall_s,runs_s,tokens_s,replay_s,first_call_s,capture_s,checksum,returncode,error
+2026-06-25T16:43:20+0700,rx6700xt,cl,fp16,gdn,4,48,16,48,3,chunked,16,ok,6.632191199983936,662.95,31821.8,0.0045,3.5084,0.1073,-545.535956,0,
+2026-06-25T16:43:27+0700,rx6700xt,cl,fp16,gdn,4,48,16,48,3,chunked,32,ok,14.033044899988454,921.12,44213.82,0.0033,10.5871,0.1007,-545.535956,0,
