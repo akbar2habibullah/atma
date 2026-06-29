@@ -536,12 +536,9 @@ class CausalSelfAttention(AtmaAttnBase):
 
         W = self.window
         if self.pos == "wall":
-            if self.training:
-                def wall_fn(x_, q_, k_, v_):
-                    return self._wall_attention(x_, q_, k_, v_, groups, W)
-                y, align_loss = checkpoint(wall_fn, x, q_attn, k_attn, v_attn, use_reentrant=False)
-            else:
-                y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
+            y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
+        else:
+            align_loss = torch.tensor(0.0, device=x.device)
         else:
             align_loss = torch.tensor(0.0, device=x.device)
             if W is None and self.pos == "nope" and _fa3 is not None:
