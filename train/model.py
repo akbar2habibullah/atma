@@ -539,8 +539,6 @@ class CausalSelfAttention(AtmaAttnBase):
             y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
         else:
             align_loss = torch.tensor(0.0, device=x.device)
-        else:
-            align_loss = torch.tensor(0.0, device=x.device)
             if W is None and self.pos == "nope" and _fa3 is not None:
                 # fast path: FA3 GQA causal (nope, no window) — preserves the legacy behavior
                 y = flash_attn.flash_attn_func(q_attn, k_attn, v_attn, causal=True)
