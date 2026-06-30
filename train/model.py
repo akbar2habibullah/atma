@@ -27,7 +27,7 @@ except Exception:
     polar_attention_triton_fwd = None
     HAS_TRITON = False
 
-# Tilde Research Wall Attention (data-dependent per-channel forget gates lifted into softmax;
+# Tilde Research Wall Attention (data-dependent per-channel gates lifted into softmax;
 # https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used for
 # the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
 # missing-kernel development runs.
@@ -344,6 +344,14 @@ class Linear(nn.Linear):
         return F.linear(x, self.weight.type_as(x), self.bias.type_as(x))
 
 
+class LinearNoBias(nn.Linear):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features, out_features, bias=False)
+
+    def forward(self, x):
+        return F.linear(x, self.weight.type_as(x), None)
+
+
 class LFM2Conv(AtmaConvBase):
     """Liquid Foundation Model 2 gated short convolutions
     (LFM2 Report, https://arxiv.org/abs/2511.23404)."""
@@ -390,10 +398,9 @@ class CausalSelfAttention(AtmaAttnBase):
     """Softmax attention core for the ablation grid, three position schemes:
       pos="nope" -> canon convs on q/k/v, NO positional encoding (the legacy default).
       pos="rope" -> rotary on q/k, NO canon, tuned SDPA scale 0.12.
-      pos="wall" -> canon convs + Wall Attention (Tilde Research): data-dependent per-channel
-                    log-forget gates g, cumulative prefix sum P, score q_i.k_j.exp(P_i-P_j)
-                    per channel, then softmax. Implemented as the stable q/k rescale
-                    q~=exp(P)q, k~=exp(-P)k feeding standard attention.
+      pos="wall" -> canon convs + Wall Attention (Tilde Research): raw data-dependent
+                    per-channel gates g, cumulative prefix sum P, score
+                    q_i.k_j.exp(P_i-P_j) per channel, then softmax.
     Shares the GQA + output-gate surround with PolarAttention. The optional training
     sliding window (SWA), MSE distractor, and additive Titans memory branch are wired
     here so every grid cell (reg x distractor x memory x window x core) is distinct.
@@ -404,7 +411,7 @@ class CausalSelfAttention(AtmaAttnBase):
                  kernel_size=4, pos: str = "nope", window: int = None,
                  mem_enabled: bool = False, mem_chunk: int = 64,
                  mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto",
-                 wall_gate_bias: float = -4.0):
+                 wall_gate_bias: float | None = None):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.pos = pos
@@ -417,9 +424,10 @@ class CausalSelfAttention(AtmaAttnBase):
             # true no-canon baseline.
             self.canon_q = self.canon_k = self.canon_v = None
         H, dk = self.num_heads, self.head_dim
-        # Wall keeps canon (so all params are used); adds a per-channel log-forget gate head.
-        self.w_wall = Linear(dim, H * dk) if pos == "wall" else None
-        self.wall_gate_bias = wall_gate_bias                # g = -softplus(W_g x + bias); bias<0 -> slow forget at init
+        # Wall keeps canon (so all params are used); g is passed to the kernel directly.
+        self.w_wall = LinearNoBias(dim, H * dk) if pos == "wall" else None
+        if self.w_wall is not None:
+            nn.init.zeros_(self.w_wall.weight)              # g=0 recovers vanilla softmax attention
         self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
                                  gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
                     if mem_enabled else None)
@@ -452,7 +460,7 @@ class CausalSelfAttention(AtmaAttnBase):
         backward. The torch fallback is only for CPU / missing-kernel development runs."""
         B, T = x.shape[0], x.shape[1]
         H, dk = self.num_heads, self.head_dim
-        g = -F.softplus(self.w_wall(x).view(B, T, H, dk) + self.wall_gate_bias)  # (B,T,H,dk) <= 0, nats
+        g = self.w_wall(x).view(B, T, H, dk)                # raw signed per-channel gates
         scale = dk ** -0.5
         align_loss = torch.tensor(0.0, device=x.device)
 
@@ -733,7 +741,7 @@ class Block(nn.Module):
         mem_gamma_bias: float = 3.9,
         mem_beta_bias: float = 0.0,
         mem_kernel: str = "auto",
-        wall_gate_bias: float = -4.0,
+        wall_gate_bias: float | None = None,
     ):
         super().__init__()
         if not attention:

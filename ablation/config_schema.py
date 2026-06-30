@@ -55,7 +55,7 @@ class RunConfig:
     mem_beta_bias: float = 0.0
     mem_kernel: str = "auto"
     fla_custom_op: bool = True         # set FLA_CUSTOM_OP=1 (compile-clean FLA path)
-    wall_gate_bias: float = -4.0       # wall core: log-forget gate init (slow forget)
+    wall_gate_bias: float | None = None # deprecated; raw wall g projection has no added bias
 
     # --- eval (fixed) ---
     eval_lengths: list = field(default_factory=lambda: list(EVAL_LENGTHS))
