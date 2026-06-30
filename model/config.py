@@ -26,10 +26,10 @@ class AtmaConfig:
     #   "polar" -> PolarAttention (length-invariant direction+count, canon)   [default, shipping]
     #   "nope"  -> softmax CausalSelfAttention, canon, no positional encoding
     #   "rope"  -> softmax CausalSelfAttention, rotary positions, no canon
-    #   "wall"  -> softmax CausalSelfAttention, canon + raw Wall Attention per-channel gates
+    #   "wall"  -> softmax CausalSelfAttention, canon + Wall Attention per-channel log-decay gates
     # softmax cores share the SAME GQA + output-gate surround; memory/window/distractor apply to all.
     attn_type: str = "polar"
-    wall_gate_bias: float | None = None  # deprecated; kept so old ablation configs still load
+    wall_gate_bias: float | None = None  # None -> Tilde-style open-gate init bias of 6.0
     # MAG compression memory (Titans-style linear gated-delta) + sliding window.
     # Defaults leave the model byte-identical to plain polar attention (no window, no
     # memory). Enable both together for the MAG configuration.

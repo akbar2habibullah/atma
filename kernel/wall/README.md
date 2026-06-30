@@ -9,6 +9,14 @@ training memory on the NVIDIA L4 ablation setup.
 The real ablation worker path shows a Wall-specific memory problem at the highest-overhead
 configuration, but the problem is not explained by the isolated Wall kernel allocation.
 
+There is now also a separate training-stability concern. After the model integration was changed
+from raw signed gates to Tilde-style bounded log-decays (`logsigmoid(W_g x + b)` plus soft clamp,
+default `b=6`), an upstream-kernel run was reported on 2026-06-30 to survive past the previous
+early-NaN point but hover between about `5.8` and `7.0` loss after `>500` optimizer steps, including
+a regression from `5.8` back toward `7.0`. This report is not yet a controlled ablation result, but
+it is strong enough that Wall pretraining in this codebase should be treated as unstable until the
+mechanism is isolated.
+
 Responsible numbers from the actual worker path:
 
 | attention | mbs | status | peak GPU process memory | notes |
@@ -53,6 +61,18 @@ The upstream package used for comparisons is editable from:
 ```text
 /home/sagemaker-user/wall-attention-release
 ```
+
+The model-level Wall input is a bounded natural-log decay, not a raw gate:
+
+```text
+logits = W_g x + wall_gate_bias
+g_hat  = logsigmoid(logits)
+g      = -g_max * (1 - exp(g_hat / g_max))   # g in [-g_max, 0], g_max=0.87
+```
+
+This matters because the kernels assume `g <= 0` when bounding the per-tile rescaling factors.
+Passing raw signed `W_g x` can invalidate those assumptions even though the exact Wall score is
+bounded when the retention gates are in `(0, 1]`.
 
 ## Environment
 
@@ -272,6 +292,62 @@ Coverage includes:
 | `q/k/v` gradients vs eager reference | `rtol=8e-2, atol=8e-2` | includes GQA `k.grad` and `v.grad` |
 | `g` gradient finite differences | `rtol=0.22, atol=0.13` | tiny fp32 problem |
 | `g_scalar` gradient finite differences | `rtol=0.22, atol=0.13` | tiny fp32 problem |
+
+Later note: after the bounded-gate integration fix, a rerun of the direct local-kernel test suite
+on 2026-06-30 failed several random signed-gate parity cases before being interrupted. Those tests
+feed `g ~ N(0, 0.05)`, which is outside the production log-decay contract because it includes
+positive values. The relevant next parity target is bounded log-decay input (`g in [-0.87, 0]`,
+with realistic open-gate bias), for both local and upstream kernels.
+
+## Training Stability Investigation
+
+The exact Wall score
+
+```text
+s_ij = sum_n q_i,n k_j,n prod_{r=j+1..i} retention_r,n
+```
+
+does not make logits larger than vanilla attention when each retention is in `(0, 1]`; it only
+attenuates channel contributions. The instability risk is in the factorized/tiled implementation
+and optimizer dynamics:
+
+- `P_t = cumsum(log retention_t)` drifts negative with position. The kernel avoids naive
+  `exp(P) q` / `exp(-P) k` overflow by anchoring tiles, but backward still contains large local
+  rescale factors and explicit clamps.
+- The gate gradient is a reverse cumsum over prefix sensitivities, so `W_g` receives long-horizon
+  credit assignment with potentially high variance and step-size sensitivity.
+- Muon orthogonalizes matrix updates. That may be too aggressive for `w_wall`, whose initialized
+  gate derivative is small at bias 6 but whose prefix effect is global once logits move.
+- Surrounding objectives can amplify the issue: distractor MSE adds a second Wall call, the MAG
+  memory branch changes residual statistics, and sliding-window/full-window differences alter the
+  prefix ranges seen by the kernel.
+
+Minimum diagnostic run before more Wall ablations:
+
+```text
+ATMA_WALL_IMPL=upstream ATMA_WALL_CUSTOM_OP=1 FLA_CUSTOM_OP=1 ...
+```
+
+For each validation interval or every 25-50 train steps, record:
+
+| signal | why |
+| --- | --- |
+| train loss and val loss | distinguish noisy minibatches from true divergence |
+| pre-clip total grad norm and `w_wall.grad` norms | detects gate-gradient spikes hidden by clipping |
+| `w_wall.weight` norm per Wall layer | detects Muon-driven gate drift |
+| retention quantiles `exp(g)` | shows whether channels are near-open, shut, or bimodal |
+| prefix range `max(P)-min(P)` per layer/head | measures numerical stress on tiled rescaling |
+| output RMS before/after Wall and after projection | detects residual-scale drift |
+
+Falsification matrix:
+
+| Variant | Interpretation if stable |
+| --- | --- |
+| `w_wall` in AdamW at 5-10x lower LR, excluded from Muon | optimizer/update geometry is the culprit |
+| `wall_gate_bias=8` | open-gate operating point was too easy to leave |
+| no distractor, memory/window unchanged | second Wall call or MSE alignment destabilizes gradients |
+| no memory, distractor/window unchanged | residual interaction with MAG destabilizes training |
+| local vs upstream with bounded-gate parity checked first | kernel backward difference matters |
 
 ## Long-Context Forward Sanity
 

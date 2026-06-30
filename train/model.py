@@ -100,6 +100,14 @@ _LEN_GAIN_INIT = -1.0
 _NULL_SLOPE_INIT = 0.5
 _NULL_BASE_INIT = 2.0
 _MAG_BETA_INIT = -1.5
+_WALL_GATE_BIAS_INIT = 6.0
+_WALL_GATE_LOG_MAX = 0.87
+
+
+def _wall_log_decay(logits: Tensor, *, log_max: float = _WALL_GATE_LOG_MAX) -> Tensor:
+    """Map Wall gate logits to bounded natural-log decays for the Triton kernel."""
+    g_hat = F.logsigmoid(logits.float())
+    return (-log_max * (1.0 - torch.exp(g_hat / log_max))).to(logits.dtype)
 
 def _causal_conv1d_fallback(x: Tensor, weight: Tensor) -> Tensor:
     """Pure PyTorch depthwise causal conv1d. x: (B, H, L), weight: (H, k)."""
@@ -443,8 +451,8 @@ class CausalSelfAttention(AtmaAttnBase):
     """Softmax attention core for the ablation grid, three position schemes:
       pos="nope" -> canon convs on q/k/v, NO positional encoding (the legacy default).
       pos="rope" -> rotary on q/k, NO canon, tuned SDPA scale 0.12.
-      pos="wall" -> canon convs + Wall Attention (Tilde Research): raw data-dependent
-                    per-channel gates g, cumulative prefix sum P, score
+      pos="wall" -> canon convs + Wall Attention (Tilde Research): data-dependent
+                    per-channel log-decay gates g, cumulative prefix sum P, score
                     q_i.k_j.exp(P_i-P_j) per channel, then softmax.
     Shares the GQA + output-gate surround with PolarAttention. The optional training
     sliding window (SWA), MSE distractor, and additive Titans memory branch are wired
@@ -472,7 +480,8 @@ class CausalSelfAttention(AtmaAttnBase):
         # Wall keeps canon (so all params are used); g is passed to the kernel directly.
         self.w_wall = LinearNoBias(dim, H * dk) if pos == "wall" else None
         if self.w_wall is not None:
-            nn.init.zeros_(self.w_wall.weight)              # g=0 recovers vanilla softmax attention
+            nn.init.zeros_(self.w_wall.weight)              # bias keeps init near vanilla softmax attention
+        self.wall_gate_bias = _WALL_GATE_BIAS_INIT if wall_gate_bias is None else float(wall_gate_bias)
         self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
                                  gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
                     if mem_enabled else None)
@@ -505,7 +514,8 @@ class CausalSelfAttention(AtmaAttnBase):
         backward. The torch fallback is only for CPU / missing-kernel development runs."""
         B, T = x.shape[0], x.shape[1]
         H, dk = self.num_heads, self.head_dim
-        g = self.w_wall(x).view(B, T, H, dk)                # raw signed per-channel gates
+        g_logits = self.w_wall(x).view(B, T, H, dk) + self.wall_gate_bias
+        g = _wall_log_decay(g_logits)                       # natural-log decay in (-g_max, 0]
         scale = dk ** -0.5
         align_loss = torch.tensor(0.0, device=x.device)
 

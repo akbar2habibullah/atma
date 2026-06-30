@@ -54,8 +54,9 @@ FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m ablation.run_worker --config_dir
 
 Wall keeps canon (so it's the matched comparison to `nope` - isolates the per-channel gating).
 On CUDA, training requires the Wall Triton kernel and defaults to `ATMA_WALL_CUSTOM_OP=1`, which
-wraps the Wall forward/backward as opaque `torch.library` custom ops to reduce `torch.compile`
-graph liveness. Set `ATMA_WALL_CUSTOM_OP=0` for the raw kernel path. Faithful long-context eval
+wraps the Wall forward/backward as opaque `torch.library` custom ops and fixes the raw-path
+`torch.compile` memory leak. Set `ATMA_WALL_CUSTOM_OP=0` only for the diagnostic raw kernel path.
+Faithful long-context eval
 (>~4k) needs the Wall kernel installed on the host and validated before trusting 65k
 needle/perplexity numbers. See [FUTURE.md section 4](../docs/FUTURE.md).
 

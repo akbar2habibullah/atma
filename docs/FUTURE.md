@@ -140,17 +140,36 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
 **Status - wired as a 2nd-batch axis (2026-06-20).** `attn_type="wall"` is implemented in
 [train/model.py](../train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
 the matched comparison to `nope` - isolates the gating; all params used -> no Muon issue), adds a
-bias-free raw per-channel gate projection `g = W_g*x` initialized at zero so Wall starts from the
-vanilla-softmax limit, and applies Wall's score `q_i*k_j*exp(P_i-P_j)` per channel via the stable
-rescale `q_tilde=exp(P)q, k_tilde=exp(-P)k` into standard attention. Two backends: a
-**pure-PyTorch fallback** (recentered prefix sum -> exact at the training length, compile-friendly,
-CPU-testable; used for the compiled training pass) and **Tilde's `wall_attn` Triton kernel**
-(per-chunk anchors -> faithful at long context; used at eval on CUDA when installed). The 40 wall
-cells (5x2x2x2) are generated at
-[ablation/shards/shard5](../ablation/shards/shard5) (grid is now 160). **Caveat:** the torch fallback
-recenters+clamps the prefix sum, which is exact only while the centred range is small (≈ train
-length); for faithful long-context eval (>~4k) the host must `pip install` the `wall_attn` kernel —
-validate it (à la `verify_fla.py`) before trusting wall's 65k needle/perplexity numbers.
+bias-free per-channel gate-logit projection `l = W_g*x + b` initialized with `b=6`, maps it through
+`logsigmoid` and Tilde's soft clamp into a bounded log-decay `g in [-0.87, 0]`, then applies Wall's
+score `q_i*k_j*exp(P_i-P_j)` per channel via the stable tiled rescale into attention. The active CUDA
+training path uses the selected Wall Triton kernel (`ATMA_WALL_IMPL=local|upstream|auto`), and a
+CPU/missing-kernel fallback remains for development. The 40 wall cells (5x2x2x2) are generated at
+[ablation/shards/shard5](../ablation/shards/shard5) (grid is now 160).
+
+**Training-instability note (2026-06-30).** After fixing the invalid raw-gate parameterization,
+an upstream-kernel run no longer immediately NaNs, but was reported to hover between about `5.8`
+and `7.0` loss after `>500` training steps, including regression from `5.8` back toward `7.0`.
+Treat Wall in this codebase as numerically unvalidated for pretraining stability until a controlled
+run pins the mechanism. This is not evidence that the exact Wall score is inherently explosive:
+in exact arithmetic `prod(g) <= 1` only attenuates per-channel dot-product contributions. The risk
+is the training implementation and optimization path: tiled `exp(P_i-R)` / `exp(R-P_j)` rescaling,
+suffix-cumsum gate gradients, bf16 dot paths, and Muon updates on a gate matrix whose gradients are
+long-horizon credit assignments.
+
+**Mechanistic questions to settle before trusting Wall results:**
+
+- Does the gate distribution stay near-open, or does Muon drive a rapid bimodal split into shut and
+  static channels? Track retention quantiles `exp(g)`, prefix range `max(P)-min(P)`, and gate-logit
+  weight norms per attention layer.
+- Is the loss jump preceded by a spike in `w_wall.grad`, reverse-cumsum `dg`, or total grad norm
+  before clipping? If yes, test a separate lower LR / AdamW-only group for `w_wall`.
+- Does upstream behave differently from the local kernel with the same bounded log-decay inputs?
+  If yes, isolate forward parity, `dq/dk/dv`, and `dg` finite differences in the bounded-gate
+  regime, not the old signed-random-gate tests.
+- Does disabling distractors, MAG memory, or windowing remove the oscillation? If one switch fixes
+  it, the instability is an interaction with the surrounding training objective rather than Wall
+  attention alone.
 
 **Caveat.** All Wall numbers are single-source (Tilde blog, 1B scale, their benchmarks). The
 mechanism is sound and the bimodal result is credible *because* it echoes our own retention
