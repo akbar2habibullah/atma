@@ -29,8 +29,8 @@ python -m ablation.generate_configs --out ablation/shards --shards 4
 
 # 2) copy one shard dir to each GPU host and run a worker on it (these hosts need NOT share
 #    a filesystem). The worker trains the 30 cells sequentially; it is resumable (restart it
-#    and it skips done cells). FLA_CUSTOM_OP=1 is set automatically.
-FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir <shardN> --log_dir ablation/logs --gpu 0
+#    and it skips done cells). FLA_CUSTOM_OP=1 and ATMA_WALL_CUSTOM_OP=1 are set automatically.
+FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m ablation.run_worker --config_dir <shardN> --log_dir ablation/logs --gpu 0
 #    (--once does a single cell; --reset un-claims crashed/failed cells back to pending)
 
 # 3) collect every <run_id>.log from the 4 hosts into ONE folder, then build the dashboard
@@ -49,16 +49,15 @@ is a 4th core, added after the first 120-cell batch — making the full grid **1
 ```bash
 python -m ablation.generate_configs --attn_types wall --mbs 2 --out ablation/shards/shard5   # 40 *.json
 # run like any other shard (one or more GPUs):
-FLA_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/shards/shard5 --log_dir ablation/logs --gpu 0
+FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m ablation.run_worker --config_dir ablation/shards/shard5 --log_dir ablation/logs --gpu 0
 ```
 
-Wall keeps canon (so it's the matched comparison to `nope` — isolates the per-channel forget
-gating). **Dependency:** training runs on a pure-PyTorch fallback (exact at train length); at
-eval the core automatically uses Tilde's Triton kernel **if `wall_attn` is importable on a CUDA
-device** (falling back safely otherwise). **Faithful long-context eval (>~4k) needs that kernel**
-— `pip install` the `wall_attn` package on the host and validate it (à la `verify_fla.py`) before
-trusting wall's 65k needle/perplexity numbers; without it the fallback recenters+clamps the gate
-prefix-sum and only approximates past train length. See [FUTURE.md §4](../docs/FUTURE.md).
+Wall keeps canon (so it's the matched comparison to `nope` - isolates the per-channel gating).
+On CUDA, training requires the Wall Triton kernel and defaults to `ATMA_WALL_CUSTOM_OP=1`, which
+wraps the Wall forward/backward as opaque `torch.library` custom ops to reduce `torch.compile`
+graph liveness. Set `ATMA_WALL_CUSTOM_OP=0` for the raw kernel path. Faithful long-context eval
+(>~4k) needs the Wall kernel installed on the host and validated before trusting 65k
+needle/perplexity numbers. See [FUTURE.md section 4](../docs/FUTURE.md).
 
 > The full flat set is also available (`python -m ablation.generate_configs --out ablation/configs`
 > → 120 `*.json`). On a single host with multiple GPUs that *do* share a filesystem, point one

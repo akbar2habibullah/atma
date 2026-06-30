@@ -295,6 +295,7 @@ Run a worker smoke config:
 ```text
 CPATH=/opt/conda/lib/python3.12/site-packages/tensorflow/include/external/cuda_cudart/include \
 FLA_CUSTOM_OP=1 \
+ATMA_WALL_CUSTOM_OP=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 TORCHINDUCTOR_CACHE_DIR=/tmp/atma_inductor_worker_wall_mbs4 \
 ATMA_WALL_IMPL=local \
@@ -344,6 +345,7 @@ seq_len: 2048
 The highest-priority Wall-specific isolation tests are:
 
 - Wall local with distractor disabled, memory/window/strong unchanged;
+- Wall local with `ATMA_WALL_CUSTOM_OP=1` vs `0` (opaque compile boundary vs raw Wall autograd path);
 - Wall local with checkpoint disabled for the Wall attention call only;
 - Wall local with the second distractor Wall call disabled but `align_loss=0` retained;
 - Wall local with `torch.compile` disabled only as a diagnostic, not as a final ablation number;

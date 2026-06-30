@@ -50,6 +50,51 @@ except Exception:
         _wall_attn_kernel = None
         _HAS_WALL = False
 
+def _wall_kernel_call(q, k, v, g, scale: float, window_size: int):
+    return _wall_attn_kernel(q, k, v, g, scale=scale, window_size=(None if window_size == 0 else window_size))
+
+
+_wall_attn = _wall_kernel_call if _HAS_WALL else None
+_WALL_CUSTOM_OP = os.environ.get("ATMA_WALL_CUSTOM_OP", "0") == "1"
+if _HAS_WALL and _WALL_CUSTOM_OP:
+    try:
+        @torch.library.custom_op("atma::wall_attn_fwd", mutates_args=())
+        def _wall_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, g: torch.Tensor,
+                      scale: float, window_size: int) -> torch.Tensor:
+            return _wall_kernel_call(q, k, v, g, scale, window_size)
+
+        @_wall_fwd.register_fake
+        def _(q, k, v, g, scale: float, window_size: int):
+            return q.new_empty((*q.shape[:-1], v.shape[-1]))
+
+        @torch.library.custom_op("atma::wall_attn_bwd", mutates_args=())
+        def _wall_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                      v: torch.Tensor, g: torch.Tensor, scale: float,
+                      window_size: int) -> list[torch.Tensor]:
+            with torch.enable_grad():
+                ins = [t.detach().requires_grad_(True) for t in (q, k, v, g)]
+                o = _wall_kernel_call(*ins, scale, window_size)
+                return list(torch.autograd.grad(o, ins, grad_o))
+
+        @_wall_bwd.register_fake
+        def _(grad_o, q, k, v, g, scale: float, window_size: int):
+            return [torch.empty_like(t) for t in (q, k, v, g)]
+
+        def _wall_setup(ctx, inputs, output):
+            q, k, v, g, scale, window_size = inputs
+            ctx.save_for_backward(q, k, v, g)
+            ctx.scale = scale
+            ctx.window_size = window_size
+
+        def _wall_backward(ctx, grad_o):
+            grads = _wall_bwd(grad_o, *ctx.saved_tensors, ctx.scale, ctx.window_size)
+            return tuple(grads) + (None, None)
+
+        _wall_fwd.register_autograd(_wall_backward, setup_context=_wall_setup)
+        _wall_attn = _wall_fwd
+    except Exception:
+        _wall_attn = _wall_kernel_call
+
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
 _NULL_SLOPE_INIT = 0.5
@@ -469,8 +514,9 @@ class CausalSelfAttention(AtmaAttnBase):
 
         if _HAS_WALL and q_attn.is_cuda:
             try:                                                    # fused fwd+bwd kernel; supports GQA
-                y = _wall_attn_kernel(q_attn.contiguous(), k_attn.contiguous(), v_attn.contiguous(),
-                                      g.to(q_attn.dtype).contiguous(), scale=scale, window_size=W)
+                wall_window = 0 if W is None else int(W)
+                y = _wall_attn(q_attn.contiguous(), k_attn.contiguous(), v_attn.contiguous(),
+                               g.to(q_attn.dtype).contiguous(), scale, wall_window)
                 if self.num_random_keys > 0 and self.training:
                     R = self.num_random_keys
                     rand_input = torch.randn(B, R, x.shape[2], device=x.device, dtype=x.dtype)
@@ -478,13 +524,13 @@ class CausalSelfAttention(AtmaAttnBase):
                     v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
                     q_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=q_attn.dtype)
                     g_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=g.dtype)
-                    y_dist = _wall_attn_kernel(
+                    y_dist = _wall_attn(
                         torch.cat([q_pad, q_attn], dim=1).contiguous(),
                         torch.cat([k_rand, k_attn], dim=1).contiguous(),
                         torch.cat([v_rand, v_attn], dim=1).contiguous(),
                         torch.cat([g_pad, g], dim=1).to(q_attn.dtype).contiguous(),
-                        scale=scale,
-                        window_size=None,
+                        scale,
+                        0,
                     )[:, R:]
                     align_loss = F.mse_loss(y_dist, y)
                 return y, align_loss
