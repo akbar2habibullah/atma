@@ -6,8 +6,6 @@ tokenizer) so every (length, depth) cell is an EXACT token length and the needle
 controlled depth. Covers the realistic-at-370M subset of RULER (niah_single); multi-key and the
 full RULER 13-task pipeline are deferred (heavy data-gen, ~0 signal at 370M base).
 
->>> Numbers are PLACEHOLDERS until the inference port lands (see benchmarks/model.py). <<<
-
 This complements two existing things:
   - BABILong tests retrieval+*reasoning*; this tests pure retrieval at length.
   - eval.py's induction-needle scores the value by loglikelihood via direct forward; this scores
@@ -82,7 +80,7 @@ def make_sample(kind, target_tokens, depth, rng, haystack_ids=None):
 def run_retrieval(model, kinds, lengths, depths, num_samples=10, max_tokens=16,
                   seed=1234, haystack=None, log_fn=print):
     """Evaluate retrieval accuracy on a (kind, length, depth) grid. Returns a results dict.
-    Generation goes through the (WIP) inference adapter -> placeholders until inference lands."""
+    Generation goes through the production inference adapter."""
     rng = random.Random(seed)
     length_toks = [(_l, _parse_len(_l)) for _l in lengths]
     hay_ids = None
@@ -121,7 +119,7 @@ def run_retrieval(model, kinds, lengths, depths, num_samples=10, max_tokens=16,
         "haystack": haystack or "synthetic-filler",
         "results": results,
         "elapsed_s": round(time.perf_counter() - t0, 1),
-        "wip_placeholder": bool(getattr(model, "wip", [])),
+        "unsupported_checkpoint": bool(getattr(model, "wip", [])),
     }
 
 
@@ -135,9 +133,9 @@ def emit_log(fh, model, res):
             row = res["results"].get(kind, {}).get(lname, {})
             fh.write(f"   {lname:>5}  " + "  ".join(
                 (f"{row[d]:5.1f}" if row.get(d) is not None else f"{'—':>5}") for d in depths) + "\n")
-    if res["wip_placeholder"]:
-        fh.write("\n  *** PLACEHOLDER NUMBERS: inference port not finished (docs/inference.md) ***\n")
+    if res["unsupported_checkpoint"]:
+        fh.write("\n  *** INVALID: checkpoint is unsupported by the benchmark inference path ***\n")
     fh.write("\n===RETRIEVAL_RESULTS_JSON===\n")
     fh.write(json.dumps({**res, "model_config": getattr(model, "cfg", {}),
-                         "model_wip": getattr(model, "wip", [])}))
+                         "model_unsupported": getattr(model, "wip", [])}))
     fh.write("\n===END===\n")

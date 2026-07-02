@@ -4,8 +4,7 @@ Paper: arXiv 2406.10149 (NeurIPS 2024 D&B). Dataset: RMT-team/babilong[-1k-sampl
 This is a GENERATIVE QA benchmark, a natural fit for the autoregressive generate() interface.
 
 Two important notes:
-  1. *** Results are placeholders until the inference port lands *** (see benchmarks/model.py).
-  2. BABILong is a *fine-tuned* capability probe. A 370M BASE model scores ~0 zero-shot (it
+  1. BABILong is a *fine-tuned* capability probe. A 370M BASE model scores ~0 zero-shot (it
      won't follow the QA format). The decisive protocol (RMT/Mamba 130-137M reached 90%+ on
      qa1 to 1M+ tokens) is: fine-tune a candidate on bAbI qa1 (then qa1-5) with a length
      curriculum, THEN run this harness across the length configs. The memory-on vs memory-off
@@ -104,8 +103,7 @@ def _columns(row):
 def run_babilong(model, tasks, lengths, num_samples=100,
                  dataset_id="RMT-team/babilong-1k-samples", max_tokens=16, log_fn=print):
     """Evaluate `model` (benchmarks.EvalModel) on BABILong. Returns a results dict
-    {task: {length: accuracy}} plus metadata. Generation goes through the (WIP) inference
-    adapter, so numbers are placeholders until the inference port lands."""
+    {task: {length: accuracy}} plus metadata."""
     from datasets import load_dataset
 
     official = _load_official_prompts()
@@ -144,7 +142,7 @@ def run_babilong(model, tasks, lengths, num_samples=100,
         "results": results,
         "counts": counts,
         "elapsed_s": round(time.perf_counter() - t_start, 1),
-        "wip_placeholder": bool(getattr(model, "wip", [])),
+        "unsupported_checkpoint": bool(getattr(model, "wip", [])),
     }
 
 
@@ -157,9 +155,9 @@ def emit_log(fh, model, res):
         row = res["results"].get(t, {})
         fh.write(f"  {t:>4}  " + "  ".join(
             (f"{row[c]:6.1f}" if row.get(c) is not None else f"{'—':>6}") for c in cols) + "\n")
-    if res["wip_placeholder"]:
-        fh.write("\n  *** PLACEHOLDER NUMBERS: inference port not finished (see docs/inference.md) ***\n")
+    if res["unsupported_checkpoint"]:
+        fh.write("\n  *** INVALID: checkpoint is unsupported by the benchmark inference path ***\n")
     fh.write("\n===BABILONG_RESULTS_JSON===\n")
     fh.write(json.dumps({**res, "model_config": getattr(model, "cfg", {}),
-                         "model_wip": getattr(model, "wip", [])}))
+                         "model_unsupported": getattr(model, "wip", [])}))
     fh.write("\n===END===\n")
