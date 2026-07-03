@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import math
+import os
 
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+
+from model.layers import RMSNorm
 
 try:
     from fla.ops.gsa import chunk_gsa as _chunk_raven
@@ -14,6 +17,90 @@ except Exception:
     _chunk_raven = None
     _fused_recurrent_raven = None
     _HAS_FLA_GSA = False
+
+
+_fla_chunk_raven = None
+_fla_fused_recurrent_raven = None
+if _HAS_FLA_GSA:
+    def _raven_chunk_raw(q, k, v, s, g, scale: float):
+        return _chunk_raven(q=q, k=k, v=v, s=s, g=g, scale=scale)[0]
+
+    def _raven_fused_recurrent_raw(q, k, v, s, g, scale: float):
+        return _fused_recurrent_raven(q=q, k=k, v=v, s=s, g=g, scale=scale)[0]
+
+    _fla_chunk_raven = _raven_chunk_raw
+    _fla_fused_recurrent_raven = _raven_fused_recurrent_raw
+
+    if os.environ.get("FLA_CUSTOM_OP", "0") == "1":
+        try:
+            @torch.library.custom_op("atma::raven_chunk_fwd", mutates_args=())
+            def _raven_chunk_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                                  s: torch.Tensor, g: torch.Tensor, scale: float) -> torch.Tensor:
+                return _raven_chunk_raw(q, k, v, s, g, scale)
+
+            @_raven_chunk_fwd.register_fake
+            def _(q, k, v, s, g, scale: float):
+                return torch.empty_like(v)
+
+            @torch.library.custom_op("atma::raven_chunk_bwd", mutates_args=())
+            def _raven_chunk_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                                  v: torch.Tensor, s: torch.Tensor, g: torch.Tensor,
+                                  scale: float) -> list[torch.Tensor]:
+                with torch.enable_grad():
+                    ins = [t.detach().requires_grad_(True) for t in (q, k, v, s, g)]
+                    o = _raven_chunk_raw(*ins, scale)
+                    return list(torch.autograd.grad(o, ins, grad_o))
+
+            @_raven_chunk_bwd.register_fake
+            def _(grad_o, q, k, v, s, g, scale: float):
+                return [torch.empty_like(t) for t in (q, k, v, s, g)]
+
+            def _chunk_setup(ctx, inputs, output):
+                q, k, v, s, g, scale = inputs
+                ctx.save_for_backward(q, k, v, s, g)
+                ctx.scale = scale
+
+            def _chunk_backward(ctx, grad_o):
+                return tuple(_raven_chunk_bwd(grad_o, *ctx.saved_tensors, ctx.scale)) + (None,)
+
+            _raven_chunk_fwd.register_autograd(_chunk_backward, setup_context=_chunk_setup)
+            _fla_chunk_raven = _raven_chunk_fwd
+
+            @torch.library.custom_op("atma::raven_recurrent_fwd", mutates_args=())
+            def _raven_recurrent_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                                     s: torch.Tensor, g: torch.Tensor, scale: float) -> torch.Tensor:
+                return _raven_fused_recurrent_raw(q, k, v, s, g, scale)
+
+            @_raven_recurrent_fwd.register_fake
+            def _(q, k, v, s, g, scale: float):
+                return torch.empty_like(v)
+
+            @torch.library.custom_op("atma::raven_recurrent_bwd", mutates_args=())
+            def _raven_recurrent_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                                     v: torch.Tensor, s: torch.Tensor, g: torch.Tensor,
+                                     scale: float) -> list[torch.Tensor]:
+                with torch.enable_grad():
+                    ins = [t.detach().requires_grad_(True) for t in (q, k, v, s, g)]
+                    o = _raven_fused_recurrent_raw(*ins, scale)
+                    return list(torch.autograd.grad(o, ins, grad_o))
+
+            @_raven_recurrent_bwd.register_fake
+            def _(grad_o, q, k, v, s, g, scale: float):
+                return [torch.empty_like(t) for t in (q, k, v, s, g)]
+
+            def _recurrent_setup(ctx, inputs, output):
+                q, k, v, s, g, scale = inputs
+                ctx.save_for_backward(q, k, v, s, g)
+                ctx.scale = scale
+
+            def _recurrent_backward(ctx, grad_o):
+                return tuple(_raven_recurrent_bwd(grad_o, *ctx.saved_tensors, ctx.scale)) + (None,)
+
+            _raven_recurrent_fwd.register_autograd(_recurrent_backward, setup_context=_recurrent_setup)
+            _fla_fused_recurrent_raven = _raven_recurrent_fwd
+        except Exception:
+            _fla_chunk_raven = _raven_chunk_raw
+            _fla_fused_recurrent_raven = _raven_fused_recurrent_raw
 
 
 class Linear(nn.Linear):
@@ -104,9 +191,9 @@ class RavenAttention(nn.Module):
             self.r_bias = nn.Parameter(torch.empty(num_heads, num_slots, dtype=torch.float32))
             nn.init.zeros_(self.r_bias)
 
-        self.q_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
-        self.k_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
-        self.o_norm = nn.RMSNorm(self.head_dim, eps=1e-6)
+        self.q_norm = RMSNorm(self.head_dim, eps=1e-6)
+        self.k_norm = RMSNorm(self.head_dim, eps=1e-6)
+        self.o_norm = RMSNorm(self.head_dim, eps=1e-6)
         self.o_proj = Linear(hidden_size, hidden_size, bias=False)
 
         if mem_enabled:
@@ -189,9 +276,9 @@ class RavenAttention(nn.Module):
         if _HAS_FLA_GSA and q.is_cuda:
             mode = "fused_recurrent" if T <= 64 else "chunk"
             if mode == "fused_recurrent":
-                o, _ = _fused_recurrent_raven(q=q, k=k, v=v, s=s, g=f, scale=self.scale)
+                o = _fla_fused_recurrent_raven(q, k, v, s, f, self.scale)
             else:
-                o, _ = _chunk_raven(q=q, k=k, v=v, s=s, g=f, scale=self.scale)
+                o = _fla_chunk_raven(q, k, v, s, f, self.scale)
         else:
             o = self._torch_raven(q, k, v, f, s)
 
