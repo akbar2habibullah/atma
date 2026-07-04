@@ -23,6 +23,7 @@ class RavenBlock(nn.Module):
             self.attn = RavenAttention(
                 hidden_size=cfg["hidden_size"],
                 num_heads=cfg["num_heads"],
+                num_kv_heads=cfg.get("num_kv_heads"),
                 num_slots=cfg["num_slots"],
                 topk=cfg["topk"],
                 feature_map=cfg["feature_map"],

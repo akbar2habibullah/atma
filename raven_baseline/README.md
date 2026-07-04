@@ -18,9 +18,9 @@ This writes three configs:
 - `atma_raven`: 16 Atma-style layers with 12 LFM2 conv layers and 4 Raven mixers.
 - `atma_raven_titans`: the same 3:1 transplant with Titans memory added to Raven mixer layers.
 
-Atma-Raven variants default to 8 Raven heads, matching Atma's 128-d head shape. Native
-Raven keeps 4 heads. This keeps the Titans fast-weight state in the transplant at the
-same per-head scale as Atma instead of using native Raven's larger 256-d heads.
+Atma-Raven variants default to Atma-style GQA: 8 query heads and 2 KV heads. Native
+Raven keeps full 4-query/4-KV heads. This keeps the transplant's head shape and K/V
+projection footprint aligned with Atma instead of using native Raven's full-head path.
 
 Raven configs default to `optimizer="adamw_raven"`: AdamW at `3e-4` with short warmup,
 cosine decay to `0.1x`, gradient clipping, and non-finite-gradient skips. Use

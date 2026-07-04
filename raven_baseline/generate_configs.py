@@ -17,6 +17,8 @@ def main():
     ap.add_argument("--mbs", type=int, default=None)
     ap.add_argument("--num_eval_docs", type=int, default=None)
     ap.add_argument("--num_needle_trials", type=int, default=None)
+    ap.add_argument("--num_heads", type=int, default=None)
+    ap.add_argument("--num_kv_heads", type=int, default=None)
     ap.add_argument("--optimizer", choices=["adamw_raven", "atma_muon"], default=None)
     ap.add_argument("--adamw_lr", type=float, default=None)
     ap.add_argument("--no_compile", action="store_true", help="disable torch.compile in raven_baseline.train")
@@ -24,7 +26,7 @@ def main():
     args = ap.parse_args()
 
     overrides = {}
-    for name in ("num_chunks", "val_tokens", "mbs", "num_eval_docs", "num_needle_trials"):
+    for name in ("num_chunks", "val_tokens", "mbs", "num_eval_docs", "num_needle_trials", "num_heads", "num_kv_heads"):
         value = getattr(args, name)
         if value is not None:
             overrides[name] = value

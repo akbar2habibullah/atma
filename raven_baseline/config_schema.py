@@ -31,6 +31,7 @@ class RavenRunConfig:
     hidden_size: int = 1024
     num_hidden_layers: int = field(init=False, default=0)
     num_heads: int = 4
+    num_kv_heads: int | None = None
     atma_head_match: bool = True
     num_slots: int = 256
     topk: int = 32
@@ -98,6 +99,8 @@ class RavenRunConfig:
         self.num_hidden_layers = 16
         if self.arch_type != "raven_native" and self.atma_head_match and self.num_heads == 4:
             self.num_heads = 8
+        if self.num_kv_heads is None:
+            self.num_kv_heads = self.num_heads if self.arch_type == "raven_native" else max(1, self.num_heads // 4)
         self.mixer_ratio = "16_raven" if self.arch_type == "raven_native" else "12_lfm2_4_raven"
         self.comparison_group = "raven_bridge_1b"
         self.num_random_keys = 0

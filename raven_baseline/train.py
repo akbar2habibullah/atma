@@ -33,6 +33,10 @@ def _fill_runtime_defaults(cfg):
     cfg.setdefault("atma_head_match", True)
     if cfg.get("arch_type") != "raven_native" and cfg.get("atma_head_match", True) and cfg.get("num_heads") == 4:
         cfg["num_heads"] = 8
+    cfg.setdefault(
+        "num_kv_heads",
+        cfg["num_heads"] if cfg.get("arch_type") == "raven_native" else max(1, cfg["num_heads"] // 4),
+    )
     return cfg
 
 

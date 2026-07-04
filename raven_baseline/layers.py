@@ -123,6 +123,7 @@ class RavenAttention(nn.Module):
         self,
         hidden_size: int = 1024,
         num_heads: int = 4,
+        num_kv_heads: int | None = None,
         num_slots: int = 256,
         topk: int = 32,
         feature_map: str = "swish",
@@ -146,6 +147,10 @@ class RavenAttention(nn.Module):
 
         self.hidden_size = hidden_size
         self.num_heads = num_heads
+        self.num_kv_heads = num_heads if num_kv_heads is None else num_kv_heads
+        if self.num_heads % self.num_kv_heads != 0:
+            raise ValueError("num_heads must be divisible by num_kv_heads")
+        self.num_kv_groups = self.num_heads // self.num_kv_heads
         self.head_dim = hidden_size // num_heads
         self.num_slots = num_slots
         self.topk = topk
@@ -159,8 +164,8 @@ class RavenAttention(nn.Module):
         self.scale = self.head_dim ** -0.5
 
         self.q_proj = Linear(hidden_size, hidden_size, bias=False)
-        self.k_proj = Linear(hidden_size, hidden_size, bias=False)
-        self.v_proj = Linear(hidden_size, hidden_size, bias=False)
+        self.k_proj = Linear(hidden_size, self.num_kv_heads * self.head_dim, bias=False)
+        self.v_proj = Linear(hidden_size, self.num_kv_heads * self.head_dim, bias=False)
 
         if decay_type == "Mamba2":
             self.a_proj = Linear(hidden_size, num_heads, bias=False)
@@ -265,13 +270,16 @@ class RavenAttention(nn.Module):
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim)
-        k = self.k_proj(x).view(B, T, self.num_heads, self.head_dim)
-        v = self.v_proj(x).view(B, T, self.num_heads, self.head_dim)
+        k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim)
+        v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim)
 
         q = self.q_norm(self._feature_map(q))
         k = self.k_norm(self._feature_map(k))
         v = F.silu(v)
         f, s = self._route(x)
+        if self.num_kv_groups > 1:
+            k = k.repeat_interleave(self.num_kv_groups, dim=2)
+            v = v.repeat_interleave(self.num_kv_groups, dim=2)
 
         if _HAS_FLA_GSA and q.is_cuda:
             mode = "fused_recurrent" if T <= 64 else "chunk"
