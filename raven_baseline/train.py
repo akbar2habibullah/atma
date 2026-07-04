@@ -29,6 +29,10 @@ def _fill_runtime_defaults(cfg):
     cfg.setdefault("adamw_eps", 1e-15)
     cfg.setdefault("adamw_weight_decay", 0.1)
     cfg.setdefault("skip_nan_inf", True)
+    cfg.setdefault("compile_model", True)
+    cfg.setdefault("atma_head_match", True)
+    if cfg.get("arch_type") != "raven_native" and cfg.get("atma_head_match", True) and cfg.get("num_heads") == 4:
+        cfg["num_heads"] = 8
     return cfg
 
 
@@ -116,7 +120,7 @@ def main():
             {**cfg, "num_params": num_params, "host": socket.gethostname(), "device": str(device)},
         )
 
-        if device.type == "cuda":
+        if device.type == "cuda" and cfg.get("compile_model", True):
             model = torch.compile(model)
 
         for name, p in model.named_parameters():

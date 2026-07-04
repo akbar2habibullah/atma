@@ -31,6 +31,7 @@ class RavenRunConfig:
     hidden_size: int = 1024
     num_hidden_layers: int = field(init=False, default=0)
     num_heads: int = 4
+    atma_head_match: bool = True
     num_slots: int = 256
     topk: int = 32
     feature_map: str = "swish"
@@ -61,6 +62,7 @@ class RavenRunConfig:
     adamw_eps: float = 1e-15
     adamw_weight_decay: float = 0.1
     skip_nan_inf: bool = True
+    compile_model: bool = True
 
     # Titans branch, only meaningful for atma_raven_titans.
     mem_chunk: int = 128
@@ -94,6 +96,8 @@ class RavenRunConfig:
         self.memory = self.arch_type == "atma_raven_titans"
         self.mem_enabled = self.memory
         self.num_hidden_layers = 16
+        if self.arch_type != "raven_native" and self.atma_head_match and self.num_heads == 4:
+            self.num_heads = 8
         self.mixer_ratio = "16_raven" if self.arch_type == "raven_native" else "12_lfm2_4_raven"
         self.comparison_group = "raven_bridge_1b"
         self.num_random_keys = 0

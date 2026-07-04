@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--num_needle_trials", type=int, default=None)
     ap.add_argument("--optimizer", choices=["adamw_raven", "atma_muon"], default=None)
     ap.add_argument("--adamw_lr", type=float, default=None)
+    ap.add_argument("--no_compile", action="store_true", help="disable torch.compile in raven_baseline.train")
     ap.add_argument("--max_steps", type=int, default=None)
     args = ap.parse_args()
 
@@ -31,6 +32,8 @@ def main():
         overrides["optimizer"] = args.optimizer
     if args.adamw_lr is not None:
         overrides["adamw_lr"] = args.adamw_lr
+    if args.no_compile:
+        overrides["compile_model"] = False
 
     arch_types = args.arch_types or ARCH_TYPES
     configs = expand_scaled(arch_types, **overrides) if args.scaled else [
