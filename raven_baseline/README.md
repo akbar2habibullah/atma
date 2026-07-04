@@ -18,6 +18,11 @@ This writes three configs:
 - `atma_raven`: 16 Atma-style layers with 12 LFM2 conv layers and 4 Raven mixers.
 - `atma_raven_titans`: the same 3:1 transplant with Titans memory added to Raven mixer layers.
 
+Raven configs default to `optimizer="adamw_raven"`: AdamW at `3e-4` with short warmup,
+cosine decay to `0.1x`, gradient clipping, and non-finite-gradient skips. Use
+`--optimizer atma_muon` only for an optimizer-control run; the Atma Muon schedule is much
+more aggressive for Raven and can become unstable.
+
 ## Scaled Promotion
 
 After choosing the best bridge run, generate only that promoted variant:

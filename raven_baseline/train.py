@@ -19,6 +19,19 @@ def _emit_block(fh, name, obj):
     fh.write(f"\n==={name}===\n{json.dumps(obj)}\n===END===\n")
 
 
+def _fill_runtime_defaults(cfg):
+    cfg.setdefault("optimizer", "adamw_raven")
+    cfg.setdefault("adamw_lr", 3e-4)
+    cfg.setdefault("adamw_lr_min_frac", 0.1)
+    cfg.setdefault("adamw_warmup_frac", 0.05)
+    cfg.setdefault("adamw_beta1", 0.9)
+    cfg.setdefault("adamw_beta2", 0.95)
+    cfg.setdefault("adamw_eps", 1e-15)
+    cfg.setdefault("adamw_weight_decay", 0.1)
+    cfg.setdefault("skip_nan_inf", True)
+    return cfg
+
+
 def _save_checkpoint(model, cfg, ckpt_root, log_fn):
     import torch
 
@@ -42,7 +55,7 @@ def main():
     ap.add_argument("--no_save_ckpt", action="store_true")
     args = ap.parse_args()
 
-    cfg = json.load(open(args.config, encoding="utf-8"))
+    cfg = _fill_runtime_defaults(json.load(open(args.config, encoding="utf-8")))
     fh = _log_open(args.log)
 
     import torch
@@ -65,7 +78,6 @@ def main():
 
     try:
         from train.data import data_generator, get_data
-        from train.optimizer import Muon
         from raven_baseline.evaluate import run_eval
         from raven_baseline.model import create_model
 
@@ -115,19 +127,31 @@ def main():
             ):
                 p.data.zero_()
 
-        opt1 = AdamW(
-            [
-                dict(params=[model.embed.weight], lr=0.3),
-                dict(params=[model.proj.weight], lr=1 / 320),
-                dict(params=[p for p in model.parameters() if p.ndim < 2], lr=0.01),
-            ],
-            betas=(0.8, 0.95),
-            eps=1e-10,
-            weight_decay=0,
-            fused=(device.type == "cuda"),
-        )
-        opt2 = Muon([p for p in model.blocks.parameters() if p.ndim >= 2], lr=0.02, weight_decay=0.01)
-        optimizers = [opt1, opt2]
+        if cfg.get("optimizer", "adamw_raven") == "atma_muon":
+            from train.optimizer import Muon
+            opt1 = AdamW(
+                [
+                    dict(params=[model.embed.weight], lr=0.3),
+                    dict(params=[model.proj.weight], lr=1 / 320),
+                    dict(params=[p for p in model.parameters() if p.ndim < 2], lr=0.01),
+                ],
+                betas=(0.8, 0.95),
+                eps=1e-10,
+                weight_decay=0,
+                fused=(device.type == "cuda"),
+            )
+            opt2 = Muon([p for p in model.blocks.parameters() if p.ndim >= 2], lr=0.02, weight_decay=0.01)
+            optimizers = [opt1, opt2]
+        else:
+            opt = AdamW(
+                model.parameters(),
+                lr=cfg.get("adamw_lr", 3e-4),
+                betas=(cfg.get("adamw_beta1", 0.9), cfg.get("adamw_beta2", 0.95)),
+                eps=cfg.get("adamw_eps", 1e-15),
+                weight_decay=cfg.get("adamw_weight_decay", 0.1),
+                fused=(device.type == "cuda"),
+            )
+            optimizers = [opt]
         assert set(p for opt in optimizers for g in opt.param_groups for p in g["params"]) == set(model.parameters())
         for opt in optimizers:
             for g in opt.param_groups:
@@ -136,8 +160,17 @@ def main():
         cooldown = cfg["cooldown_frac"]
 
         def set_hparams(step):
-            progress = step / train_steps
-            eta = 1.0 if progress < 1 - cooldown else (1 - progress) / cooldown
+            if cfg.get("optimizer", "adamw_raven") == "atma_muon":
+                progress = step / train_steps
+                eta = 1.0 if progress < 1 - cooldown else (1 - progress) / cooldown
+            else:
+                warmup_steps = max(1, int(cfg.get("adamw_warmup_frac", 0.05) * train_steps))
+                min_frac = cfg.get("adamw_lr_min_frac", 0.1)
+                if step < warmup_steps:
+                    eta = (step + 1) / warmup_steps
+                else:
+                    progress = (step - warmup_steps) / max(train_steps - warmup_steps, 1)
+                    eta = min_frac + 0.5 * (1.0 - min_frac) * (1.0 + torch.cos(torch.tensor(progress * 3.141592653589793)).item())
             for opt in optimizers:
                 for g in opt.param_groups:
                     g["lr"] = g["initial_lr"] * eta
@@ -208,7 +241,11 @@ def main():
                 ls, reg_loss, align_loss = model(inputs[i * mbs:(i + 1) * mbs], targets[i * mbs:(i + 1) * mbs])
                 loss = (1 - sigr_alpha) * ls + sigr_alpha * reg_loss + dist_w * align_loss
                 loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            grad_norm = nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if cfg.get("skip_nan_inf", True) and not torch.isfinite(grad_norm):
+                p0(f"[raven_baseline] non-finite grad_norm at step {step}; skipping optimizer step")
+                model.zero_grad(set_to_none=True)
+                continue
             set_hparams(step)
             for opt in optimizers:
                 opt.step()

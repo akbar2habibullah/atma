@@ -52,6 +52,15 @@ class RavenRunConfig:
     sketch_dim: int = 64
     sigr_alpha_on: float = 0.01
     dist_align_weight_on: float = 0.01
+    optimizer: str = "adamw_raven"      # "adamw_raven" | "atma_muon"
+    adamw_lr: float = 3e-4
+    adamw_lr_min_frac: float = 0.1
+    adamw_warmup_frac: float = 0.05
+    adamw_beta1: float = 0.9
+    adamw_beta2: float = 0.95
+    adamw_eps: float = 1e-15
+    adamw_weight_decay: float = 0.1
+    skip_nan_inf: bool = True
 
     # Titans branch, only meaningful for atma_raven_titans.
     mem_chunk: int = 128

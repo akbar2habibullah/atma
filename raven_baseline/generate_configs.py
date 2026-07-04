@@ -17,6 +17,8 @@ def main():
     ap.add_argument("--mbs", type=int, default=None)
     ap.add_argument("--num_eval_docs", type=int, default=None)
     ap.add_argument("--num_needle_trials", type=int, default=None)
+    ap.add_argument("--optimizer", choices=["adamw_raven", "atma_muon"], default=None)
+    ap.add_argument("--adamw_lr", type=float, default=None)
     ap.add_argument("--max_steps", type=int, default=None)
     args = ap.parse_args()
 
@@ -25,6 +27,10 @@ def main():
         value = getattr(args, name)
         if value is not None:
             overrides[name] = value
+    if args.optimizer is not None:
+        overrides["optimizer"] = args.optimizer
+    if args.adamw_lr is not None:
+        overrides["adamw_lr"] = args.adamw_lr
 
     arch_types = args.arch_types or ARCH_TYPES
     configs = expand_scaled(arch_types, **overrides) if args.scaled else [
