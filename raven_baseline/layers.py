@@ -8,6 +8,7 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 
 from model.layers import RMSNorm
+from model.blocks import TitansMemory
 
 try:
     from fla.ops.gsa import chunk_gsa as _chunk_raven
@@ -201,14 +202,8 @@ class RavenAttention(nn.Module):
         self.o_norm = RMSNorm(self.head_dim, eps=1e-6)
         self.o_proj = Linear(hidden_size, hidden_size, bias=False)
 
-        if mem_enabled:
-            from model.blocks import TitansMemory
-            self.mem = TitansMemory(
-                hidden_size, num_heads, self.head_dim, Linear, chunk=mem_chunk,
-                gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel,
-            )
-        else:
-            self.mem = None
+        self.mem = (TitansMemory(hidden_size, num_heads, self.head_dim, Linear, chunk=mem_chunk,
+                    gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel) if mem_enabled else None)
 
     def _feature_map(self, x: Tensor) -> Tensor:
         if self.feature_map == "swish":
