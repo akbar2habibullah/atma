@@ -1,9 +1,9 @@
-"""EvalModel: adapter over the production inference engine (`inference.LLM`).
+"""EvalModel adapter over production Polar or isolated baseline inference.
 
-The paged engine implements the polar + Canon + Titans memory path. Non-polar
-ablation checkpoints are rejected because the engine-side model is the polar
-serving model.
+NoPE, RoPE, and Raven use the minimal fork in ``baseline_inference/`` so their
+benchmark serving code cannot alter the production Atma engine.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,8 +42,15 @@ def unsupported_features(cfg: dict) -> list[str]:
     if not cfg:
         return ["missing config.json (cannot verify architecture)"]
     attn_type = cfg.get("attn_type", "polar")
-    if attn_type != "polar":
-        return [f"attn_type={attn_type!r} (benchmark inference currently serves polar checkpoints)"]
+    if attn_type not in {
+        "polar",
+        "nope",
+        "rope",
+        "raven_native",
+        "atma_raven",
+        "atma_raven_titans",
+    }:
+        return [f"attn_type={attn_type!r} is not supported by benchmark inference"]
     return []
 
 
@@ -68,6 +75,29 @@ def atma_config_from_dict(cfg: dict):
     return AtmaConfig(**kwargs)
 
 
+def checkpoint_config(cfg: dict):
+    if "arch_type" not in cfg:
+        return atma_config_from_dict(cfg)
+    from types import SimpleNamespace
+
+    D = cfg["hidden_size"]
+    H = cfg["num_heads"]
+    return SimpleNamespace(
+        dtype=_dtype_from_config(cfg.get("dtype")),
+        attn_type="raven",
+        raven_cfg=cfg,
+        vocab_size=cfg["vocab_size"],
+        hidden_size=D,
+        num_hidden_layers=cfg["num_hidden_layers"],
+        head_dim=D // H,
+        num_attention_heads=H,
+        num_key_value_heads=cfg["num_kv_heads"],
+        conv_kernel_size=cfg.get("conv_kernel_size", 3),
+        attn_kernel_size=1,
+        mem_enabled=cfg.get("arch_type") == "atma_raven_titans",
+    )
+
+
 class EvalModel:
     """Autoregressive generation adapter over `inference.LLM`.
 
@@ -75,8 +105,7 @@ class EvalModel:
         m = EvalModel("checkpoints/<run_id>", max_tokens=16)
         texts = m.generate(["...prompt..."])
 
-    Pass `strict=True` to hard-fail if the checkpoint is not supported by the
-    polar inference path.
+    Pass `strict=True` to hard-fail if the checkpoint architecture is unsupported.
     """
 
     def __init__(
@@ -92,10 +121,16 @@ class EvalModel:
         self.model_path = model_path
         self.weights_path, self.ckpt_dir = resolve_checkpoint(model_path)
         self.cfg = read_checkpoint_config(model_path)
-        self.hf_config = atma_config_from_dict(self.cfg) if self.cfg else None
+        self.hf_config = checkpoint_config(self.cfg) if self.cfg else None
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._llm = None
+        self._serving_totals = {
+            "prefill_tokens": 0,
+            "decode_tokens": 0,
+            "prefill_time": 0.0,
+            "decode_time": 0.0,
+        }
         self._llm_kwargs = llm_kwargs
         if self.hf_config is not None:
             self._llm_kwargs.setdefault("hf_config", self.hf_config)
@@ -123,19 +158,43 @@ class EvalModel:
                 )
             )
         else:
-            print(f"Using polar inference checkpoint: {self.weights_path}")
+            print(f"Using benchmark inference checkpoint: {self.weights_path}")
         print(_BANNER)
 
     def load(self):
-        """Construct the underlying inference.LLM lazily."""
+        """Construct the production or isolated baseline engine lazily."""
         if self._llm is not None:
             return self
-        from inference import LLM
+        architecture = getattr(self.hf_config, "attn_type", "polar")
+        if architecture == "polar":
+            from inference import LLM
 
-        if LLM is None:
-            raise RuntimeError("inference.LLM is unavailable (transformers not importable).")
-        self._llm = LLM(self.weights_path, **self._llm_kwargs)
+            if LLM is None:
+                raise RuntimeError(
+                    "inference.LLM is unavailable (transformers not importable)."
+                )
+            cls = LLM
+        else:
+            from baseline_inference import BaselineLLM
+
+            cls = BaselineLLM
+        self._llm = cls(self.weights_path, **self._llm_kwargs)
         return self
+
+    @property
+    def last_metrics(self):
+        totals = dict(self._serving_totals)
+        totals["prefill_throughput"] = (
+            totals["prefill_tokens"] / totals["prefill_time"]
+            if totals["prefill_time"]
+            else 0.0
+        )
+        totals["decode_throughput"] = (
+            totals["decode_tokens"] / totals["decode_time"]
+            if totals["decode_time"]
+            else 0.0
+        )
+        return totals
 
     def generate(self, prompts, max_tokens=None, temperature=None, use_tqdm=False):
         """Generate continuations for a list of string or token-id prompts."""
@@ -147,4 +206,7 @@ class EvalModel:
             max_tokens=self.max_tokens if max_tokens is None else max_tokens,
         )
         outs = self._llm.generate(list(prompts), sp, use_tqdm=use_tqdm)
+        metrics = getattr(self._llm, "last_metrics", None) or {}
+        for key in self._serving_totals:
+            self._serving_totals[key] += metrics.get(key, 0)
         return [o["text"] for o in outs]

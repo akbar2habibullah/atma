@@ -4,10 +4,10 @@ This directory is for downstream evals run after `scaled_ablation/` has produced
 Benchmarks stay outside the ablation worker so training, intrinsic eval, downstream generation,
 and any task fine-tuning remain separable.
 
-The current generation adapter supports checkpoints whose `config.json` has `attn_type="polar"`.
-It passes the saved `AtmaConfig` into `inference.LLM` and resolves checkpoint directories to
-`weights.pt`. Non-polar checkpoints should be run with direct-forward evals until the serving
-engine has matching non-polar paths.
+The generation adapter supports Polar, NoPE, RoPE, and Raven checkpoints. Polar uses the
+production `inference.LLM`; the other architectures are selected from `config.json` and use
+the isolated minimal forks in `baseline_inference/`. Checkpoint directories resolve to
+`weights.pt` without conversion.
 
 ## Confound Rules
 
@@ -31,7 +31,7 @@ Use these rules for every reported number:
 | Long reasoning after adaptation | BABILong qa1-10 | Implemented harness, requires task fine-tune | Measures each 10B attention type's adapted long-context potential | Same fixed recipe and fine-tune protocol for each attention type, with per-task reporting |
 | Base LM quality controls | LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-E, ARC-C, OpenBookQA, BoolQ | Needs loglikelihood adapter | Check that long-context architecture did not destroy normal LM capability | Multiple-choice/loglikelihood only, no chat prompts |
 | Long-doc LM controls | PG-19, Proof-Pile, FinePDFs bits-per-byte | Direct-forward eval path, not generation | Domain/generalization check at long lengths | Per-token/byte likelihood, no decoding |
-| Serving performance | Prefill tok/s, decode tok/s, max context before OOM | Partly exposed by `inference.LLM.last_metrics` | Practical deployment tradeoff | Same hardware, same batch/context settings |
+| Serving performance | Prefill tok/s, decode tok/s, max context before OOM | Exposed for all supported engines through `last_metrics` | Practical deployment tradeoff | Same hardware, same batch/context settings |
 
 ## Open-Source Baseline Policy
 
@@ -137,7 +137,7 @@ and BABILong-style exact-answer tasks.
 
 | File | Role |
 |---|---|
-| `model.py` | `EvalModel` adapter over `inference.LLM.generate()`; loads `config.json` and checkpoint weights |
+| `model.py` | `EvalModel` architecture router; loads `config.json` and checkpoint weights |
 | `babilong.py` | BABILong prompt formatting, generation, and answer scoring |
 | `retrieval.py` | Synthetic passkey + NIAH over length x depth grids |
 | `run.py` | CLI dispatcher and structured logs |

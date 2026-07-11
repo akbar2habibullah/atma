@@ -159,5 +159,6 @@ def emit_log(fh, model, res):
         fh.write("\n  *** INVALID: checkpoint is unsupported by the benchmark inference path ***\n")
     fh.write("\n===BABILONG_RESULTS_JSON===\n")
     fh.write(json.dumps({**res, "model_config": getattr(model, "cfg", {}),
-                         "model_unsupported": getattr(model, "wip", [])}))
+                         "model_unsupported": getattr(model, "wip", []),
+                         "serving_metrics": getattr(model, "last_metrics", None)}))
     fh.write("\n===END===\n")
