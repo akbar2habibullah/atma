@@ -61,9 +61,37 @@ except Exception:
     gated_delta_decode_step = None
     _HAS_STEP_KERNEL = False
 
+try:
+    from kernel.causal_conv1d_triton import causal_conv1d_decode_step
+    from kernel.causal_conv1d_triton import HAS_TRITON as _HAS_CONV_STEP_KERNEL
+except Exception:
+    causal_conv1d_decode_step = None
+    _HAS_CONV_STEP_KERNEL = False
+
+try:
+    from kernel.inference_ops_triton import squared_relu_gate, softcap_logits
+    from kernel.inference_ops_triton import HAS_TRITON as _HAS_INFERENCE_OPS
+except Exception:
+    squared_relu_gate = None
+    softcap_logits = None
+    _HAS_INFERENCE_OPS = False
+
 
 def _infer_linear(in_f, out_f):
     return ReplicatedLinear(in_f, out_f, bias=True)
+
+
+class InferenceMLP(MLP):
+    """MLP with a forward-only fused activation for CUDA inference."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_gate = self.fc(x)
+        x, gate = torch.chunk(x_gate, 2, dim=-1)
+        if squared_relu_gate is not None and _HAS_INFERENCE_OPS and x.is_cuda:
+            x = squared_relu_gate(x, gate)
+        else:
+            x = gate * x.relu().square()
+        return self.proj(x)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +136,24 @@ def prefill_causal_conv1d(
     return out
 
 
+def prefill_causal_conv1d_dense(
+    layer_id: str,
+    seq_slots: torch.Tensor,
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias,
+    conv_state_tables: dict,
+) -> torch.Tensor:
+    """Batched fresh-prefill depthwise convolution and final-state scatter."""
+    _, _, channels = x.shape
+    kernel_size = weight.shape[1]
+    x_input = x.transpose(1, 2).contiguous()
+    x_padded = F.pad(x_input, (kernel_size - 1, 0))
+    out = F.conv1d(x_padded, weight.unsqueeze(1), bias, groups=channels)
+    conv_state_tables[layer_id][seq_slots] = x_padded[:, :, -(kernel_size - 1):]
+    return out.transpose(1, 2)
+
+
 def _gpu_conv_step(
     layer_id: str,
     seq_slots: torch.Tensor,
@@ -124,6 +170,11 @@ def _gpu_conv_step(
     weight            : (hdim, kernel_size) — depthwise conv weights
     Returns           : (bs, hdim) conv output (residual; caller adds to input)
     """
+    if (bias is None and causal_conv1d_decode_step is not None
+            and _HAS_CONV_STEP_KERNEL and new_vals.is_cuda):
+        return causal_conv1d_decode_step(
+            new_vals, weight, seq_slots, conv_state_tables[layer_id]
+        )
     states = conv_state_tables[layer_id][seq_slots]          # (bs, hdim, ks-1) gather
     out = (states * weight[:, :-1].unsqueeze(0)).sum(2)      # (bs, hdim)
     out = out + new_vals * weight[:, -1].unsqueeze(0)
@@ -246,6 +297,44 @@ class AtmaAttention(AtmaAttnBase):
         r_flat = r.reshape(T, H * dk).to(x_seq.dtype)
         return mem.proj(r_flat * torch.sigmoid(mem.gate(x_seq)))
 
+    def _mem_prefill_dense(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
+        """Batched equivalent of _mem_prefill for fresh equal-length prompts."""
+        mem = self.mem
+        B, T, _ = x.shape
+        H, dk = self.num_heads, self.head_dim
+        g_logit = mem.w_gamma(x).float() + mem.gamma_bias
+        b_logit = mem.w_beta(x).float() + mem.beta_bias
+        S0 = mem_state_table[seq_slots]
+
+        if self._mem_use_fla(x):
+            g = F.logsigmoid(g_logit).contiguous()
+            beta = torch.sigmoid(b_logit).contiguous()
+            q = q_t.transpose(1, 2).contiguous()
+            k = k_t.transpose(1, 2).contiguous()
+            v = v_t.transpose(1, 2).contiguous()
+            r, S = chunk_gated_delta_rule(
+                q=q, k=k, v=v, g=g, beta=beta, scale=1.0,
+                initial_state=S0, output_final_state=True,
+                use_qk_l2norm_in_kernel=True,
+            )
+            mem_state_table[seq_slots] = S
+            r = F.rms_norm(r, (dk,))
+        else:
+            gamma = torch.sigmoid(g_logit).transpose(1, 2)
+            beta = torch.sigmoid(b_logit).transpose(1, 2)
+            qn = F.normalize(q_t.float(), dim=-1)
+            kn = F.normalize(k_t.float(), dim=-1)
+            r, S = gated_delta_chunked(
+                qn, kn, v_t.float(), gamma, beta, chunk=mem.chunk,
+                S0=S0.transpose(-1, -2),
+            )
+            mem_state_table[seq_slots] = S.transpose(-1, -2)
+            r = F.rms_norm(r.transpose(1, 2), (dk,))
+
+        r_flat = r.reshape(B * T, H * dk).to(x.dtype)
+        x_flat = x.reshape(B * T, -1)
+        return mem.proj(r_flat * torch.sigmoid(mem.gate(x_flat)))
+
     def _mem_decode(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
         """x: (B, D); q_t,k_t,v_t: (B, H, dk) current-token tensors (KV heads expanded).
         Single gated-delta step, batched over sequences (CUDA-graph compatible).
@@ -301,6 +390,38 @@ class AtmaAttention(AtmaAttnBase):
 
             q_all = F.rms_norm(q_all, (self.head_dim,))
             k_all = F.rms_norm(k_all, (self.head_dim,))
+
+            if context.dense_prefill:
+                B, T = context.dense_batch_size, context.dense_seq_len
+                slots = context.seq_slots
+                q_flat = q_all.reshape(B, T, -1)
+                k_flat = k_all.reshape(B, T, -1)
+                v_flat = v_all.reshape(B, T, -1)
+                q_conv = q_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_q", slots, q_flat, w_q, None, context.conv_state_tables)
+                k_conv = k_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_k", slots, k_flat, w_k, None, context.conv_state_tables)
+                v_conv = v_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_v", slots, v_flat, w_v, None, context.conv_state_tables)
+
+                k_packed = k_conv.reshape(total, self.num_kv_heads, dk)
+                v_packed = v_conv.reshape(total, self.num_kv_heads, dk)
+                if self.attn.k_cache.numel() > 0 and context.slot_mapping.numel() > 0:
+                    store_kvcache(k_packed, v_packed, self.attn.k_cache,
+                                  self.attn.v_cache, context.slot_mapping)
+
+                qh = q_conv.view(B, T, H, dk).transpose(1, 2).contiguous()
+                kh = (k_conv.view(B, T, self.num_kv_heads, dk)
+                      .repeat_interleave(groups, dim=2).transpose(1, 2).contiguous())
+                vh = (v_conv.view(B, T, self.num_kv_heads, dk)
+                      .repeat_interleave(groups, dim=2).transpose(1, 2).contiguous())
+                n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
+                c, mag = self._polar(qh, kh, vh, n_keys, is_causal=True)
+                out = self._combine(c, mag, gate_all, total)
+                if self.mem is not None:
+                    out = out + self._mem_prefill_dense(
+                        x.view(B, T, -1), qh, kh, vh, slots, mem_table)
+                return out
 
             conv_state_tables = context.conv_state_tables
             q_parts, k_parts, v_parts, tok_starts = [], [], [], []
@@ -465,6 +586,14 @@ class AtmaLFM2Conv(AtmaConvBase):
 
         if context.is_prefill:
             conv_state_tables = context.conv_state_tables
+            if context.dense_prefill:
+                B, T = context.dense_batch_size, context.dense_seq_len
+                x_gated = x_gated_all.view(B, T, -1)
+                x_conv = prefill_causal_conv1d_dense(
+                    f"conv_{self.layer_idx}_gated", context.seq_slots, x_gated,
+                    w_conv, None, conv_state_tables,
+                )
+                return self.out_proj((C_all.view(B, T, -1) * x_conv).reshape(B * T, -1))
             y_parts = []
             start = 0
             for i, seqlen in enumerate(context.seqlens_q):
@@ -517,7 +646,7 @@ class AtmaDecoderBlock(nn.Module):
             if attention
             else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
         )
-        self.mlp = MLP(dim, linear_cls=_infer_linear)
+        self.mlp = InferenceMLP(dim, linear_cls=_infer_linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
 
@@ -563,4 +692,6 @@ class Atma(nn.Module):
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         logits = self.proj(hidden_states)
+        if softcap_logits is not None and _HAS_INFERENCE_OPS and logits.is_cuda:
+            return softcap_logits(logits)
         return 15.0 * logits * (logits.square() + 225.0).rsqrt()

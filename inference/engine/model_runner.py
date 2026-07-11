@@ -252,7 +252,7 @@ class ModelRunner:
             return
 
         hf = self.config.hf_config
-        max_bs = max(self.config.max_num_seqs, 2048)
+        max_bs = self.config.max_num_seqs
         max_num_blocks = (self.config.max_model_len + self.block_size - 1) // self.block_size
 
         input_ids    = torch.zeros(max_bs, dtype=torch.int64)
@@ -263,7 +263,8 @@ class ModelRunner:
         seq_slots    = torch.zeros(max_bs, dtype=torch.int64)
         outputs      = torch.zeros(max_bs, hf.hidden_size)
 
-        self.graph_bs   = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        graph_candidates = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16)) + [max_bs]
+        self.graph_bs   = sorted({bs for bs in graph_candidates if bs <= max_bs})
         self.graphs     = {}
         self.graph_pool = None
 
@@ -356,11 +357,25 @@ class ModelRunner:
 
         seqlens_q = [cu_seqlens_q[i + 1] - cu_seqlens_q[i] for i in range(len(cu_seqlens_q) - 1)]
 
+        # Dense v1 is deliberately narrow: fresh, complete, equal-length prompts.
+        # A prefix-cache hit makes num_cached_tokens nonzero, while chunking makes
+        # num_scheduled_tokens differ from num_tokens. Both use the packed fallback.
+        dense_prefill = (
+            len(seqs) > 1
+            and seqlens_q[0] > 0
+            and len(set(seqlens_q)) == 1
+            and all(seq.num_cached_tokens == 0 for seq in seqs)
+            and all(seq.num_scheduled_tokens == seq.num_tokens for seq in seqs)
+            and sum(seqlens_q) <= self.config.max_num_batched_tokens
+        )
+
         input_ids_t    = self._to_cuda(torch.tensor(input_ids,    dtype=torch.int64))
         positions_t    = self._to_cuda(torch.tensor(positions,    dtype=torch.int64))
         cu_seqlens_q_t = self._to_cuda(torch.tensor(cu_seqlens_q, dtype=torch.int32))
         cu_seqlens_k_t = self._to_cuda(torch.tensor(cu_seqlens_k, dtype=torch.int32))
         slot_mapping_t = self._to_cuda(torch.tensor(slot_mapping, dtype=torch.int32))
+        seq_slots_t = (self._to_cuda(torch.tensor([seq.seq_slot for seq in seqs], dtype=torch.int64))
+                       if dense_prefill else None)
 
         set_context(
             is_prefill=True,
@@ -372,6 +387,10 @@ class ModelRunner:
             block_tables=block_tables,
             seqlens_q=seqlens_q,
             conv_state_tables=self.conv_state_tables,
+            seq_slots=seq_slots_t,
+            dense_prefill=dense_prefill,
+            dense_batch_size=len(seqs) if dense_prefill else 0,
+            dense_seq_len=seqlens_q[0] if dense_prefill else 0,
         )
         get_context().seqs = seqs
         return input_ids_t, positions_t

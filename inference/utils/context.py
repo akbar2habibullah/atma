@@ -16,6 +16,9 @@ class Context:
         context_lens_list: list = None,
         conv_state_tables: dict = None,
         seq_slots=None,
+        dense_prefill: bool = False,
+        dense_batch_size: int = 0,
+        dense_seq_len: int = 0,
     ):
         self.is_prefill = is_prefill
         self.cu_seqlens_q = cu_seqlens_q
@@ -31,6 +34,11 @@ class Context:
         self.conv_state_tables = conv_state_tables
         # GPU tensor (bs,) of sequence slot indices for CUDA-graph-compatible conv state I/O
         self.seq_slots = seq_slots
+        # Fresh, equal-length prefills stay flat at the model boundary while
+        # layers view their storage as [B, T, ...] and launch batched kernels.
+        self.dense_prefill = dense_prefill
+        self.dense_batch_size = dense_batch_size
+        self.dense_seq_len = dense_seq_len
 
 
 _local = threading.local()
@@ -49,6 +57,9 @@ def set_context(
     context_lens_list: list = None,
     conv_state_tables: dict = None,
     seq_slots=None,
+    dense_prefill: bool = False,
+    dense_batch_size: int = 0,
+    dense_seq_len: int = 0,
 ):
     _local.context = Context(
         is_prefill=is_prefill,
@@ -63,6 +74,9 @@ def set_context(
         context_lens_list=context_lens_list,
         conv_state_tables=conv_state_tables,
         seq_slots=seq_slots,
+        dense_prefill=dense_prefill,
+        dense_batch_size=dense_batch_size,
+        dense_seq_len=dense_seq_len,
     )
 
 

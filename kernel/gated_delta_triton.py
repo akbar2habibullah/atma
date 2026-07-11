@@ -77,7 +77,7 @@ if HAS_TRITON:
 
 @torch.no_grad()
 def gated_delta_decode_step(q, k, v, gamma, beta, state_table, slots,
-                            eps=1e-12, block_v=32):
+                            eps=1e-12, block_v=None):
     """One batched gated-delta step, in place on the slot-indexed state table.
 
     q, k, v     : (B, H, dk) current-token tensors (KV heads expanded to H)
@@ -89,6 +89,11 @@ def gated_delta_decode_step(q, k, v, gamma, beta, state_table, slots,
     """
     B, H, dk = q.shape
     dv = state_table.shape[3]
+    # Four 32-wide programs per head help occupancy for small batches, but once
+    # the fp32 state is larger than L2 the extra program scheduling limits HBM
+    # throughput. A 64-wide tile is ~15% faster on L40S at B>=256.
+    if block_v is None:
+        block_v = 64 if B >= 256 and dv >= 64 else 32
     q = q.contiguous()
     k = k.contiguous()
     v = v.contiguous()
@@ -107,6 +112,6 @@ def gated_delta_decode_step(q, k, v, gamma, beta, state_table, slots,
         r.stride(0), r.stride(1), r.stride(2),
         eps,
         DK=dk, BLOCK_V=block_v,
-        num_warps=4, num_stages=2,
+        num_warps=8 if block_v >= 64 else 4, num_stages=2,
     )
     return r
