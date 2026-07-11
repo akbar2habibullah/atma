@@ -1,11 +1,11 @@
 """RunConfig schema + grid expansion for the final scaled ablation.
 
-Grid axes (1 x 1 x 1 x 1 x 4 = 4):
+Grid axes (1 x 1 x 1 x 1 x 3 = 3):
   reg_mode  : baseline
   distractor: off
   memory    : on
   window    : off
-  attn_type : rope | nope | polar | wall
+  attn_type : rope | nope | polar
 
 Everything else is fixed base config (see RunConfig defaults). The JSON written per run is
 the full *resolved* config (axes + base + derived), so training and the dashboard need no
@@ -18,7 +18,9 @@ import itertools
 from dataclasses import dataclass, field
 
 REG_MODES = ["baseline"]
-ATTN_TYPES = ["rope", "nope", "polar", "wall"]   # wall = Tilde Research Wall Attention (2nd batch)
+ATTN_TYPES = ["rope", "nope", "polar"]
+INCOMPATIBLE_ATTN_TYPES = ["wall"]  # diagnostic only: unstable under this Atma/Muon protocol
+ALL_ATTN_TYPES = ATTN_TYPES + INCOMPATIBLE_ATTN_TYPES
 EVAL_LENGTHS = [2048, 4096, 8192, 16384, 32768, 65536, 131072]
 
 
@@ -55,7 +57,7 @@ class RunConfig:
     mem_beta_bias: float = 0.0
     mem_kernel: str = "auto"
     fla_custom_op: bool = True         # set FLA_CUSTOM_OP=1 (compile-clean FLA path)
-    wall_gate_bias: float | None = None # deprecated; raw wall g projection has no added bias
+    wall_gate_bias: float | None = None # Wall diagnostic only; incompatible with fair grid protocol
 
     # --- eval (fixed) ---
     eval_lengths: list = field(default_factory=lambda: list(EVAL_LENGTHS))
@@ -75,7 +77,7 @@ class RunConfig:
     mem_enabled: bool = field(init=False, default=False)
 
     def __post_init__(self):
-        assert self.attn_type in ATTN_TYPES, self.attn_type
+        assert self.attn_type in ALL_ATTN_TYPES, self.attn_type
         assert self.reg_mode in REG_MODES, self.reg_mode
         self.num_random_keys = self.seq_len if self.distractor else 0
         self.dist_align_loss_weight = self.dist_align_weight_on if self.distractor else 0.0
@@ -96,9 +98,16 @@ class RunConfig:
         return RunConfig(**{k: v for k, v in d.items() if k in init_names})
 
 
-def expand_grid(**base_overrides) -> list:
-    """The final scaled ablation cells. base_overrides forward to every cell."""
-    cells = itertools.product(ATTN_TYPES, REG_MODES, (False,), (True,), (False,))
+def expand_grid(attn_types=None, **base_overrides) -> list:
+    """The final scaled ablation cells.
+
+    `attn_types=["wall"]` remains available for reproducing the incompatible diagnostic run,
+    but Wall is excluded from the default expected grid and main dashboards.
+    """
+    attn_types = list(ATTN_TYPES if attn_types is None else attn_types)
+    unknown = sorted(set(attn_types) - set(ALL_ATTN_TYPES))
+    assert not unknown, f"unknown attn_type(s): {unknown}"
+    cells = itertools.product(attn_types, REG_MODES, (False,), (True,), (False,))
     return [RunConfig(attn_type=a, reg_mode=r, distractor=d, memory=m, window=w, **base_overrides)
             for (a, r, d, m, w) in cells]
 

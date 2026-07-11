@@ -4,6 +4,10 @@ This package keeps Raven-specific code outside the Atma `attn_type` implementati
 The runs are architecture baselines that emit the normal `ABLATION_*_JSON` log blocks, so
 `ablation.parse_logs` and `scaled_ablation.parse_logs` can consume them.
 
+Raven is the designated stronger outsider baseline after Wall Attention proved incompatible with
+the standardized Atma hybrid + native Muon ablation protocol. The comparison is intentionally not
+protocol-matched: Raven keeps its own architecture path and defaults to Raven's AdamW recipe.
+
 ## 1B Bridge
 
 ```bash
@@ -26,6 +30,14 @@ Raven configs default to `optimizer="adamw_raven"`: AdamW at `3e-4` with short w
 cosine decay to `0.1x`, gradient clipping, and non-finite-gradient skips. Use
 `--optimizer atma_muon` only for an optimizer-control run; the Atma Muon schedule is much
 more aggressive for Raven and can become unstable.
+
+To show Raven beside the Atma fair grid without copying logs:
+
+```bash
+python -m ablation.build_dashboard \
+  --log_dir ablation/logs raven_baseline/logs \
+  --out pages/dashboard.html
+```
 
 If `atma_raven_titans` still shows compile-time memory growth, regenerate that config with
 `--no_compile` as a diagnostic fallback.

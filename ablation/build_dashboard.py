@@ -1,6 +1,6 @@
 """Build a self-contained interactive dashboard (single .html, no deps) from the ablation logs.
 
-    python -m ablation.build_dashboard --log_dir ablation/logs --out pages/dashboard.html
+    python -m ablation.build_dashboard --log_dir ablation/logs raven_baseline/logs --out pages/dashboard.html
     # or from an existing results.json:
     python -m ablation.build_dashboard --results ablation/results.json --out pages/dashboard.html
 
@@ -71,6 +71,7 @@ HTML = r"""<!doctype html><html><head><meta charset="utf-8">
  tr.run:hover{background:#171b24} td.val{font-variant-numeric:tabular-nums;font-weight:600}
  .chip{display:inline-block;border-radius:4px;padding:0 5px;margin-right:3px;font-size:10px}
  .rope{background:#3a2d52;color:#cdb6ff}.nope{background:#1f3a4d;color:#9fd8ff}.polar{background:#173d2f;color:#9af0c6}.wall{background:#4d3a1f;color:#ffd89f}
+ .raven_native{background:#3c2431;color:#ffb4d2}.atma_raven{background:#24313c;color:#a8d8ff}.atma_raven_titans{background:#243c31;color:#a8ffc8}
  .on{background:#243; color:#9af0c6}.off{background:#332; color:#e0c08a}
  .reg{background:#2a2f3a;color:#aeb6c4}
  .muted{color:#6b7384}.bad{color:#e0736b}.good{color:#7fe0a0}
@@ -329,7 +330,7 @@ computeComposites(); buildFilters(); buildMetric(); render();
 
 def main():
     ap = argparse.ArgumentParser(description="Build the static ablation dashboard.")
-    ap.add_argument("--log_dir", default="ablation/logs")
+    ap.add_argument("--log_dir", nargs="+", default=["ablation/logs"])
     ap.add_argument("--results", default=None, help="use an existing results.json instead of parsing logs")
     ap.add_argument("--out", default="pages/dashboard.html")
     args = ap.parse_args()
@@ -337,7 +338,10 @@ def main():
     if args.results:
         records = json.load(open(args.results))
     else:
-        records = [parse_log(p) for p in sorted(glob.glob(os.path.join(args.log_dir, "*.log")))]
+        paths = []
+        for log_dir in args.log_dir:
+            paths.extend(glob.glob(os.path.join(log_dir, "*.log")))
+        records = [parse_log(p) for p in sorted(paths)]
 
     grid_expected = [c.run_id for c in expand_grid()]
     expected = sorted(set(grid_expected) | {r["run_id"] for r in records})

@@ -4,20 +4,21 @@
     python -m ablation.generate_configs --out ablation/smoke --num_chunks 1 --val_tokens 524288 \
         --max_steps 3                                          # tiny smoke configs
 
-Each file is <run_id>.json holding the full resolved RunConfig. Asserts exactly 120 unique cells.
+Each file is <run_id>.json holding the full resolved RunConfig. Wall can still be generated
+explicitly for incompatibility diagnostics, but it is not part of the fair grid.
 """
 import argparse
 import json
 import os
 
-from ablation.config_schema import expand_grid, shard_configs, ATTN_TYPES, REG_MODES
+from ablation.config_schema import ALL_ATTN_TYPES, ATTN_TYPES, REG_MODES, expand_grid, shard_configs
 
 
 def main():
     ap = argparse.ArgumentParser(description="Generate the ablation grid config files.")
     ap.add_argument("--out", default="ablation/configs", help="output directory for *.json")
     ap.add_argument("--attn_types", nargs="+", default=None,
-                    help="restrict to these attn_type(s), e.g. `--attn_types wall` for the 40 wall cells")
+                    help="restrict to these attn_type(s); `wall` is diagnostic-only/incompatible")
     ap.add_argument("--shards", type=int, default=1,
                     help="split into N balanced subdirs out/shard{0..N-1}/ (one per GPU/host)")
     ap.add_argument("--num_chunks", type=int, default=None, help="override token budget (chunks)")
@@ -35,15 +36,17 @@ def main():
     if args.mbs is not None:
         overrides["mbs"] = args.mbs
 
-    configs = expand_grid(**overrides)
-    assert len(configs) == len(ATTN_TYPES) * len(REG_MODES) * 2 * 2 * 2, f"grid size {len(configs)}"
     if args.attn_types:
-        keep = set(args.attn_types)
-        configs = [c for c in configs if c.attn_type in keep]
-        assert configs, f"no configs for attn_types={args.attn_types}"
+        unknown = sorted(set(args.attn_types) - set(ALL_ATTN_TYPES))
+        assert not unknown, f"unknown attn_type(s): {unknown}"
+    configs = expand_grid(attn_types=args.attn_types, **overrides)
+    if args.attn_types is None:
+        assert len(configs) == len(ATTN_TYPES) * len(REG_MODES) * 2 * 2 * 2, f"grid size {len(configs)}"
     ids = [c.run_id for c in configs]
     assert len(set(ids)) == len(ids), "duplicate run_id in grid"
     print(f"{len(configs)} configs (attn_types={args.attn_types or ATTN_TYPES})")
+    if args.attn_types and "wall" in args.attn_types:
+        print("  note: wall is diagnostic-only; exclude from fair comparison dashboards/tables")
 
     def _write(cfgs, out_dir):
         os.makedirs(out_dir, exist_ok=True)
@@ -69,7 +72,7 @@ def main():
     else:
         _write(configs, args.out)
         print(f"Wrote {len(configs)} configs to {args.out}/")
-        for a in ATTN_TYPES:
+        for a in (args.attn_types or ATTN_TYPES):
             n = sum(1 for c in configs if c.attn_type == a)
             print(f"  attn_type={a:<6} {n} configs")
         print(f"  reg_modes={REG_MODES}")

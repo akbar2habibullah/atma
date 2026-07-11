@@ -8,8 +8,8 @@ proj zero-init, torch.compile), records a val-loss-vs-wall-clock curve, then run
 structured eval (scaled_ablation/evaluate.py) on the in-memory model. Emits ONE self-describing
 .log holding three delimited JSON blocks (config / curve / eval) + human-readable lines.
 
-Set FLA_CUSTOM_OP=1 and ATMA_WALL_CUSTOM_OP=1 in the environment (the runner does) for the
-compile-clean FLA and compile-opaque Wall paths.
+Set FLA_CUSTOM_OP=1 for the compile-clean FLA path. ATMA_WALL_CUSTOM_OP=1 is only relevant when
+reproducing diagnostic Wall runs.
 """
 import argparse
 import dataclasses

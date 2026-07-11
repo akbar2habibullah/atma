@@ -51,6 +51,47 @@ reduction; both costs scale with batch size, which is why the gap only opens at 
 batch (bs=1 is within ~10%). Prefill (~1,550 tok/s) runs per-sequence polar kernels and
 the FLA chunked memory scan; batching the per-sequence loop is the remaining headroom.
 
+## Priority task: dense batched prefill
+
+Add a dense prefill fast path to the paged engine. This is a general inference-engine
+optimization, not benchmark-only plumbing: many serving and evaluation workloads have batches
+of fresh prompts where prefill dominates and decode is short.
+
+The existing paged/chunked path should stay as the fallback. Route to dense prefill only when
+the scheduled prefill batch is safe:
+
+```text
+all seq.num_cached_tokens == 0
+all seq.num_scheduled_tokens == seq.num_tokens
+no cross-request prefix-cache reuse
+same prompt length for v1
+len(seqs) > 1
+sum prompt tokens fits max_num_batched_tokens
+```
+
+Initial v1 scope:
+
+1. Fresh same-length request batches only; no padding and no prefix-cache hits.
+2. Run one dense `[B, T]` prefill forward instead of a Python loop over sequences.
+3. Compute and store final conv states and Titans memory states for each sequence.
+4. Scatter K/V into the existing paged cache using the existing slot mapping.
+5. Enter the current CUDA-graph decode path unchanged.
+
+Later extensions:
+
+- Length buckets with exact pad masks.
+- `torch.compile` per `(B, T)` bucket after correctness is stable.
+- Optional prefix-cache support only after conv/memory state reuse is made exact.
+
+Correctness requirements:
+
+- Dense prefill logits and final conv/memory states must match the current per-sequence prefill
+  path for same-length fresh prompts.
+- Padding tokens, once supported, must not contribute labels, attention context, conv state, or
+  Titans memory updates.
+- Cross-request prefix-cache hits remain disabled in dense mode until the known state-table drift
+  limitation is fixed.
+
 ### Legacy softmax baseline (previous architecture)
 
 `CausalSelfAttention` (FlashAttention) **without** the Titans memory — kept for

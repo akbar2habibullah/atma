@@ -1,6 +1,6 @@
 # Atma Scaled Ablation
 
-Final 10B-token ablation for the selected recipe:
+Final 10B-token ablation for the selected Atma recipe.
 
 | Axis | Value |
 |---|---|
@@ -8,21 +8,26 @@ Final 10B-token ablation for the selected recipe:
 | `distractor` | off |
 | `memory` | on |
 | `window` | off |
-| `attn_type` | `rope`, `nope`, `polar`, `wall` |
+| `attn_type` | `rope`, `nope`, `polar` |
 
-Defaults use all 99 `kjj0/finewebedu10B-gpt2` train chunks and evaluate clean PPL,
-junk PPL, and needle retrieval at:
+Wall Attention is excluded from the fair scaled grid because it was incompatible with the
+standardized Atma hybrid + native Muon protocol. Raven is tracked separately through
+[raven_baseline](../raven_baseline/) as the stronger outsider baseline, with the caveat that it uses
+a different architecture/protocol and defaults to Raven's AdamW recipe.
+
+Defaults use all 99 `kjj0/finewebedu10B-gpt2` train chunks and evaluate clean PPL, junk PPL, and
+needle retrieval at:
 
 `2048, 4096, 8192, 16384, 32768, 65536, 131072`
 
-Evaluation catches CUDA OOM per document/trial and records `None` for lengths that could
-not complete.
+Evaluation catches CUDA OOM per document/trial and records `None` for lengths that could not
+complete.
 
 ## Generate Configs
 
 ```bash
 python -m scaled_ablation.generate_configs
-# -> scaled_ablation/configs/*.json (4 configs)
+# -> scaled_ablation/configs/*.json (3 configs)
 ```
 
 Smoke test:
@@ -32,8 +37,14 @@ python -m scaled_ablation.generate_configs \
   --out scaled_ablation/smoke --num_chunks 1 --val_tokens 524288 --max_steps 3 \
   --num_eval_docs 2 --num_needle_trials 2
 
-FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m scaled_ablation.run_worker \
+FLA_CUSTOM_OP=1 python -m scaled_ablation.run_worker \
   --config_dir scaled_ablation/smoke --log_dir scaled_ablation/smoke_logs --gpu 0 --once
+```
+
+Wall can still be generated explicitly for reproducing the failed/incompatible diagnostic:
+
+```bash
+python -m scaled_ablation.generate_configs --attn_types wall --out scaled_ablation/wall_diagnostic
 ```
 
 ## Run
@@ -41,7 +52,7 @@ FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m scaled_ablation.run_worker \
 Single shared config directory, one worker per GPU:
 
 ```bash
-FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m scaled_ablation.run_worker \
+FLA_CUSTOM_OP=1 python -m scaled_ablation.run_worker \
   --config_dir scaled_ablation/configs --log_dir scaled_ablation/logs --ckpt_dir checkpoints --gpu 0
 ```
 
@@ -56,6 +67,30 @@ checkpoints/<run_id>/
 ```
 
 Use `--no_save_ckpt` only for smoke/debug runs where the checkpoint is disposable.
+
+## Raven Outsider Baseline
+
+After choosing the Raven bridge variant to promote, generate and run only that variant:
+
+```bash
+python -m raven_baseline.generate_configs --scaled \
+  --arch_types atma_raven_titans \
+  --out raven_baseline/scaled_configs
+
+FLA_CUSTOM_OP=1 python -m raven_baseline.run_worker \
+  --config_dir raven_baseline/scaled_configs \
+  --log_dir raven_baseline/scaled_logs \
+  --ckpt_dir checkpoints \
+  --gpu 0
+```
+
+Build a combined scaled dashboard:
+
+```bash
+python -m scaled_ablation.build_dashboard \
+  --log_dir scaled_ablation/logs raven_baseline/scaled_logs \
+  --out pages/scaled_dashboard.html
+```
 
 ## Hugging Face Upload
 
@@ -82,7 +117,8 @@ python -m scaled_ablation.parse_logs \
   --log_dir scaled_ablation/logs --out scaled_ablation/results.json
 
 python -m scaled_ablation.build_dashboard \
-  --log_dir scaled_ablation/logs --out pages/scaled_dashboard.html
+  --log_dir scaled_ablation/logs raven_baseline/scaled_logs \
+  --out pages/scaled_dashboard.html
 ```
 
 ## Downstream Benchmarks
