@@ -152,6 +152,7 @@ def _prefill_context(lengths, tables, route, block_size):
 
 def _run_prefill(args, model, config):
     from inference.utils.context import reset_context
+    from inference.layers.sampler import Sampler
 
     if args.lengths:
         lengths = [int(value) for value in args.lengths.split(",")]
@@ -166,15 +167,19 @@ def _run_prefill(args, model, config):
     _attach_cache(model, config, num_blocks, args.block_size)
     _prefill_context(lengths, tables, route, args.block_size)
     ids = torch.zeros(total, device="cuda", dtype=torch.int64)
+    sampler = Sampler() if args.include_sampler else None
+    temperatures = torch.ones(len(lengths), device="cuda", dtype=torch.float32)
 
     @torch.inference_mode()
     def step():
-        return model.compute_logits(model(ids))
+        logits = model.compute_logits(model(ids))
+        return sampler(logits, temperatures) if sampler is not None else logits
 
     result = _measure(step, args.warmup, args.iterations)
     result.update(
         mode="prefill", route=route, batch=len(lengths), lengths=lengths,
-        tokens=total, throughput_tok_s=total / (result["p50_ms"] / 1000.0))
+        tokens=total, throughput_tok_s=total / (result["p50_ms"] / 1000.0),
+        includes_sampler=args.include_sampler)
     reset_context()
     return result
 
@@ -209,6 +214,7 @@ def _decode_context(context_lengths, tables, block_size):
 
 def _run_decode(args, model, config):
     from inference.utils.context import reset_context
+    from inference.layers.sampler import Sampler
 
     if args.context_lengths:
         pattern = [int(value) for value in args.context_lengths.split(",")]
@@ -223,6 +229,8 @@ def _run_decode(args, model, config):
     ids = torch.zeros(batch, device="cuda", dtype=torch.int64)
     static_hidden = torch.empty(
         batch, config.hidden_size, device="cuda", dtype=config.dtype)
+    sampler = Sampler() if args.include_sampler else None
+    temperatures = torch.ones(batch, device="cuda", dtype=torch.float32)
 
     with torch.inference_mode():
         static_hidden.copy_(model(ids))
@@ -234,7 +242,8 @@ def _run_decode(args, model, config):
     @torch.inference_mode()
     def step():
         graph.replay()
-        return model.compute_logits(static_hidden)
+        logits = model.compute_logits(static_hidden)
+        return sampler(logits, temperatures) if sampler is not None else logits
 
     result = _measure(step, args.warmup, args.iterations)
     result.update(
@@ -242,7 +251,8 @@ def _run_decode(args, model, config):
         context_length=(context_lengths[0] if len(set(context_lengths)) == 1 else None),
         context_min=min(context_lengths), context_max=max(context_lengths),
         context_mean=statistics.fmean(context_lengths), tokens=batch,
-        throughput_tok_s=batch / (result["p50_ms"] / 1000.0))
+        throughput_tok_s=batch / (result["p50_ms"] / 1000.0),
+        includes_sampler=args.include_sampler)
     reset_context()
     return result
 
@@ -264,6 +274,7 @@ def main():
                         help="repeat --context-lengths pattern to form a larger batch")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--include-sampler", action="store_true")
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")

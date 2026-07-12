@@ -118,5 +118,8 @@ python -m scripts.stress_inference --mode decode --batch 768 --context-length 51
 The 9.2B L40S sweep and its memory-model caveats are documented in
 [kernel.md](kernel.md#92b-l40s-stress-test).
 
+An illustrative same-GPU comparison against the official Qwen3.5-9B BF16 checkpoint served by
+vLLM is documented in [kernel.md](kernel.md#illustrative-qwen35-9b--vllm-comparison).
+
 Benchmark compile/autotune separately from steady state and report the checkpoint status, dtype,
 tensor-parallel size, route, warmups, iterations, p50/p95 latency, throughput, and peak memory.
