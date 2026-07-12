@@ -159,6 +159,85 @@ python -m tests.verify_fla
 `tests/test_edge_kernels.py` additionally requires the optional `tinygrad` dependency, which was
 not installed during the L40S run.
 
+## 9.2B L40S stress test
+
+The serving model was also scaled to `hidden_size=4096`, `num_hidden_layers=32`, and
+`head_dim=128`. This produces 32 query heads, 8 KV heads, 8 Polar/Titans layers, and exactly
+9,209,125,504 parameters. BF16 weights occupy 17.15 GiB.
+
+The stress harness is [scripts/stress_inference.py](../scripts/stress_inference.py). It runs one
+workload per process, uses deterministic zero weights, allocates only the pages and sequence-state
+rows required by that workload, and includes the last-token LM head. Prefill uses the production
+dense or grouped route. Decode captures the model body in one exact-batch CUDA graph and runs the
+LM head outside the graph, matching `ModelRunner`; scheduler and sampler time is excluded.
+
+Zero values do not change GEMM/kernel shapes or memory traffic, but these results are systems
+stress measurements rather than checkpoint-quality measurements. Peak memory includes weights,
+live K/V, recurrent states, workspaces, outputs, and the single graph pool. It does not reserve
+unused serving cache capacity or retain all production graph buckets simultaneously, so the OOM
+boundary is an isolated-run ceiling rather than a recommended deployment limit.
+
+### Prefill
+
+All measurements used one warmup and five iterations.
+
+| Requests | Shape | Route | p50 | p95 | Throughput | Peak allocated |
+|---|---|---|---:|---:|---:|---:|
+| Homogeneous | 4 x 512 | Dense | 170.90 ms | 171.19 ms | **11,984 tok/s** | 17.68 GiB |
+| Homogeneous | 8 x 512 | Dense | 342.80 ms | 343.09 ms | 11,949 tok/s | 18.19 GiB |
+| Homogeneous | 16 x 512 | Dense | 711.85 ms | 712.10 ms | 11,508 tok/s | 19.21 GiB |
+| Heterogeneous short-heavy | `32,48,64,64,96,128,128,256` | Grouped | 138.03 ms | 140.58 ms | 5,912 tok/s | 17.43 GiB |
+| Heterogeneous mixed | `64,96,128,256,512,768,1024,1536` | Grouped | 342.95 ms | 343.10 ms | **12,783 tok/s** | 17.97 GiB |
+| Heterogeneous long-tail | `64,64,128,256,512,1024,2048,4096` | Grouped | 668.64 ms | 668.73 ms | 12,252 tok/s | 18.57 GiB |
+
+Peak observed prefill throughput was 11,984 tok/s for homogeneous prompts and 12,783 tok/s for
+heterogeneous prompts. The mixed batch is faster per token because it supplies enough work to
+saturate the large model without the long-tail batch's additional windowed attention tiles.
+
+### Decode
+
+Decode used context 512 for homogeneous requests. Heterogeneous requests repeat the mixed pattern
+`64,96,128,256,512,768,1024,1536`, whose mean context is 548 and maximum is 1536. Each measurement
+used two warmups and ten iterations.
+
+| Requests | Batch | Context | p50 | p95 | Throughput | Peak allocated | Status |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Homogeneous | 128 | 512 | 43.41 ms | 43.48 ms | 2,948 tok/s | 21.28 GiB | pass |
+| Homogeneous | 256 | 512 | 56.68 ms | 56.78 ms | 4,517 tok/s | 25.39 GiB | pass |
+| Homogeneous | 512 | 512 | 85.74 ms | 85.82 ms | 5,971 tok/s | 33.62 GiB | pass |
+| Homogeneous | 768 | 512 | 126.54 ms | 126.64 ms | **6,069 tok/s** | 41.81 GiB | pass |
+| Homogeneous | 800 | 512 | 134.89 ms | 134.99 ms | 5,931 tok/s | 42.84 GiB | pass |
+| Homogeneous | 832 | 512 | - | - | - | 43.80 GiB before failure | OOM |
+| Heterogeneous | 704 | 64-1536 | 120.01 ms | 120.11 ms | 5,866 tok/s | 41.85 GiB | pass |
+| Heterogeneous | 736 | 64-1536 | 122.76 ms | 122.80 ms | 5,996 tok/s | 42.96 GiB | pass |
+| Heterogeneous | 752 | 64-1536 | 124.18 ms | 124.27 ms | **6,056 tok/s** | 43.53 GiB | pass |
+| Heterogeneous | 768 | 64-1536 | - | - | - | 43.01 GiB before graph allocation | OOM |
+
+The homogeneous throughput peak is batch 768; batch 800 still fits but is slower. The isolated
+capacity boundary lies between batch 800 and 832. Heterogeneous decode peaks and reaches its
+capacity boundary earlier because its average context is larger and page rounding reserves more
+K/V blocks.
+
+At context 512, each active sequence requires approximately 16 MiB across the eight FP32 Titans
+states and another 16 MiB across the eight BF16 K/V caches, before convolution state, graph, and
+output workspace. This explains the nearly linear rise from 21.28 GiB at batch 128 to 41.81 GiB
+at batch 768.
+
+Reproduction examples:
+
+```bash
+python -m scripts.stress_inference \
+  --mode prefill --batch 8 --prompt-length 512 --warmup 1 --iterations 5
+python -m scripts.stress_inference \
+  --mode prefill --lengths 64,96,128,256,512,768,1024,1536 \
+  --warmup 1 --iterations 5
+python -m scripts.stress_inference \
+  --mode decode --batch 768 --context-length 512 --warmup 2 --iterations 10
+python -m scripts.stress_inference \
+  --mode decode --context-lengths 64,96,128,256,512,768,1024,1536 \
+  --repeat 94 --warmup 2 --iterations 10
+```
+
 ## Remaining work
 
 - Group Titans variable-length prefill only if FLA can emit each final state directly into its

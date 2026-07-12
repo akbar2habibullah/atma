@@ -108,5 +108,15 @@ python -m scripts.roofline_inference --measure \
   --prefill-tok-s 174571 --decode-tok-s 64583
 ```
 
+For isolated large-model capacity and throughput stress tests:
+
+```bash
+python -m scripts.stress_inference --mode prefill --batch 8 --prompt-length 512
+python -m scripts.stress_inference --mode decode --batch 768 --context-length 512
+```
+
+The 9.2B L40S sweep and its memory-model caveats are documented in
+[kernel.md](kernel.md#92b-l40s-stress-test).
+
 Benchmark compile/autotune separately from steady state and report the checkpoint status, dtype,
 tensor-parallel size, route, warmups, iterations, p50/p95 latency, throughput, and peak memory.
