@@ -83,6 +83,7 @@ Full per-length tables and the `eval.py` guide: **[docs/evaluation.md](docs/eval
 | [docs/training.md](docs/training.md) | Training pipeline, performance, checkpoints, tokenizing custom data |
 | [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
 | [docs/inference.md](docs/inference.md) | Inference engine: usage, verification status, Polar+Titans throughput |
+| [docs/KERNEL_EFFICIENCY_PLAN.md](docs/KERNEL_EFFICIENCY_PLAN.md) | L40S plan for norm/GEMM fusion and grouped heterogeneous prefill |
 | [kernel/README.md](kernel/README.md) | FlashAttention-style Triton polar kernels |
 
 ## Project structure
