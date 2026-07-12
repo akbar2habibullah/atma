@@ -79,22 +79,13 @@ depth, optimization, wall-clock cost, and extrapolation behavior at the same tim
 
 ---
 
-## Priority systems task: dense batched prefill (completed; grouped prefill next)
+## Systems status
 
-The immediate inference priority was a dense batched prefill fast path in the existing paged
-engine. The former fallback ran per-sequence Polar kernels and FLA memory scans, making
-generation-heavy benchmarks and fresh-prompt serving prefill-bound. See
-[inference.md](inference.md#priority-task-dense-batched-prefill).
-
-The dense path is now implemented. The next measured systems work - normalization/GEMM fusion
-and PackInfer-inspired grouped heterogeneous prefill - is specified in the
-[L40S kernel-efficiency implementation plan](KERNEL_EFFICIENCY_PLAN.md). That plan retains the
-paged KV cache and treats CODA as a source of selective epilogue patterns rather than a wholesale
-backend port.
-
-The completed first milestone was scoped narrowly: fresh same-length batches, no prefix-cache
-hits, no padding, writes into the existing paged/state tables, and reuse of CUDA-graph decode.
-Paged/chunked prefill remains the fallback.
+Dense equal-length and grouped heterogeneous fresh-prefill routes are implemented in the paged
+engine. Both retain the paged K/V cache and recurrent state tables; chunked/prefix prefill remains
+on the exact per-sequence fallback, and decode remains CUDA-graph captured. Implementation,
+measurements, rejected fusion experiments, and remaining systems work are maintained in
+[kernel.md](kernel.md).
 
 ---
 

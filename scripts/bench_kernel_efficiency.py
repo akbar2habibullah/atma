@@ -1,4 +1,4 @@
-"""Deterministic L40S gates for KERNEL_EFFICIENCY_PLAN workstreams A1 and B1/B2."""
+"""Deterministic L40S gates for projection fusion and grouped prefill kernels."""
 
 import argparse
 import statistics

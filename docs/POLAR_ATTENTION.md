@@ -288,7 +288,7 @@ Run: `python -m tests.verify`, `python -m kernel.test_polar_kernel`, `python -m 
   K/V gather for chunked prefill), the GQA-grouped paged `polar_attention_decode` kernel in
   decode (reads the paged KV cache via block tables; CUDA-graph capturable), window + Titans
   memory included. `verify.py` passes 30/30 on CPU and 30/30 with `--cuda` (NVIDIA L4).
-  Decode throughput: ~19.3k tok/s @ bs=512 on L4 (see [docs/inference.md](inference.md)).
+  Current decode and grouped-prefill measurements are maintained in [kernel.md](kernel.md).
 - **Query-dim memory.** The online path is `O(T)` in the query dimension (see §5).
 - **Polar-Zipf regularizer** deferred (see §4).
 - **`CausalSelfAttention`** classes remain in the codebase but are unused (the blocks now
