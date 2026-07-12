@@ -368,6 +368,31 @@ class ModelRunner:
             and all(seq.num_scheduled_tokens == seq.num_tokens for seq in seqs)
             and sum(seqlens_q) <= self.config.max_num_batched_tokens
         )
+        grouped_polar_prefill = (
+            len(seqs) > 1
+            and not dense_prefill
+            and all(length > 0 for length in seqlens_q)
+            and all(seq.num_cached_tokens == 0 for seq in seqs)
+            and all(seq.num_scheduled_tokens == seq.num_tokens for seq in seqs)
+            and sum(seqlens_q) <= self.config.max_num_batched_tokens
+            and self.device.type == "cuda"
+        )
+
+        # L40S BF16 Polar uses 128 query rows per tile. Each entry maps one
+        # independently scheduled tile to its packed sequence storage.
+        tile_seq_starts, tile_q_starts, tile_seq_lens = [], [], []
+        token_seq_starts, token_seq_ends, token_seq_slots = [], [], []
+        if grouped_polar_prefill:
+            packed_start = 0
+            for seq, length in zip(seqs, seqlens_q):
+                for query_start in range(0, length, 128):
+                    tile_seq_starts.append(packed_start)
+                    tile_q_starts.append(query_start)
+                    tile_seq_lens.append(length)
+                token_seq_starts.extend([packed_start] * length)
+                token_seq_ends.extend([packed_start + length] * length)
+                token_seq_slots.extend([seq.seq_slot] * length)
+                packed_start += length
 
         input_ids_t    = self._to_cuda(torch.tensor(input_ids,    dtype=torch.int64))
         positions_t    = self._to_cuda(torch.tensor(positions,    dtype=torch.int64))
@@ -375,7 +400,19 @@ class ModelRunner:
         cu_seqlens_k_t = self._to_cuda(torch.tensor(cu_seqlens_k, dtype=torch.int32))
         slot_mapping_t = self._to_cuda(torch.tensor(slot_mapping, dtype=torch.int32))
         seq_slots_t = (self._to_cuda(torch.tensor([seq.seq_slot for seq in seqs], dtype=torch.int64))
-                       if dense_prefill else None)
+                       if dense_prefill or grouped_polar_prefill else None)
+        tile_seq_starts_t = (self._to_cuda(torch.tensor(tile_seq_starts, dtype=torch.int32))
+                             if grouped_polar_prefill else None)
+        tile_q_starts_t = (self._to_cuda(torch.tensor(tile_q_starts, dtype=torch.int32))
+                           if grouped_polar_prefill else None)
+        tile_seq_lens_t = (self._to_cuda(torch.tensor(tile_seq_lens, dtype=torch.int32))
+                          if grouped_polar_prefill else None)
+        token_seq_starts_t = (self._to_cuda(torch.tensor(token_seq_starts, dtype=torch.int32))
+                              if grouped_polar_prefill else None)
+        token_seq_ends_t = (self._to_cuda(torch.tensor(token_seq_ends, dtype=torch.int32))
+                            if grouped_polar_prefill else None)
+        token_seq_slots_t = (self._to_cuda(torch.tensor(token_seq_slots, dtype=torch.int32))
+                             if grouped_polar_prefill else None)
 
         set_context(
             is_prefill=True,
@@ -391,6 +428,13 @@ class ModelRunner:
             dense_prefill=dense_prefill,
             dense_batch_size=len(seqs) if dense_prefill else 0,
             dense_seq_len=seqlens_q[0] if dense_prefill else 0,
+            grouped_polar_prefill=grouped_polar_prefill,
+            polar_tile_seq_starts=tile_seq_starts_t,
+            polar_tile_q_starts=tile_q_starts_t,
+            polar_tile_seq_lens=tile_seq_lens_t,
+            token_seq_starts=token_seq_starts_t,
+            token_seq_ends=token_seq_ends_t,
+            token_seq_slots=token_seq_slots_t,
         )
         get_context().seqs = seqs
         return input_ids_t, positions_t

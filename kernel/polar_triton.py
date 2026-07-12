@@ -180,6 +180,119 @@ if HAS_TRITON:
         tl.store(Q2_OUT + mbase, q2_i, mask=m_valid)
 
 
+    @triton.jit
+    def _polar_packed_fwd_kernel(
+        Q, K, V, TILE_SEQ_START, TILE_Q_START, TILE_SEQ_LEN,
+        VNULL, SPG, NULLBASE, SPS, BETA, C, MAG,
+        stride_qt, stride_qh, stride_qd,
+        stride_kt, stride_kh, stride_kd,
+        stride_vt, stride_vh, stride_vd,
+        stride_ct, stride_ch, stride_cd,
+        stride_mt, stride_mh,
+        H, scale, eps,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, DK: tl.constexpr,
+        INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        WINDOW: tl.constexpr,
+    ):
+        """Fresh causal Polar attention over a packed, ragged request batch.
+
+        TILE_* maps each program to an independent query tile. Unlike padding all
+        requests to max_seqlen, every scheduled tile contains useful query rows and
+        tiles from short and long requests can execute concurrently across SMs.
+        """
+        tile = tl.program_id(0)
+        h = tl.program_id(1)
+        seq_start = tl.load(TILE_SEQ_START + tile)
+        q_start = tl.load(TILE_Q_START + tile)
+        seq_len = tl.load(TILE_SEQ_LEN + tile)
+
+        scale = scale.to(tl.float32)
+        eps = eps.to(tl.float32)
+        offs_m = q_start + tl.arange(0, BLOCK_M)
+        offs_d = tl.arange(0, DK)
+        m_valid = offs_m < seq_len
+        q_idx = seq_start + offs_m
+        q = tl.load(
+            Q + q_idx[:, None] * stride_qt + h * stride_qh
+            + offs_d[None, :] * stride_qd,
+            mask=m_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+
+        # Fresh causal prompts have exactly local_query_position + 1 live keys.
+        n_i = (offs_m + 1).to(tl.float32)
+        if WINDOW > 0:
+            n_clamp = tl.maximum(tl.minimum(n_i, float(WINDOW)), 1.0)
+        else:
+            n_clamp = tl.maximum(n_i, 1.0)
+        spg = tl.load(SPG + h).to(tl.float32)
+        sps = tl.load(SPS + h).to(tl.float32)
+        beta = tl.load(BETA + h).to(tl.float32)
+        nb = tl.load(NULLBASE + h).to(tl.float32)
+        temp = 1.0 + spg * tl.log(n_clamp)
+        nullv = nb + sps * tl.sqrt(tl.log(n_clamp + 1.0))
+
+        m_i = tl.full([BLOCK_M], -1e38, tl.float32)
+        l_i = tl.zeros([BLOCK_M], tl.float32)
+        q2_i = tl.zeros([BLOCK_M], tl.float32)
+        acc = tl.zeros([BLOCK_M, DK], tl.float32)
+
+        # A tile only needs keys through its last query. The runtime bound is
+        # different for every tile/request and avoids max-length padding work.
+        hi = tl.minimum(q_start + BLOCK_M, seq_len)
+        for start_n in range(0, hi, BLOCK_N):
+            offs_n = start_n + tl.arange(0, BLOCK_N)
+            n_valid = offs_n < seq_len
+            k_idx = seq_start + offs_n
+            k = tl.load(
+                K + k_idx[:, None] * stride_kt + h * stride_kh
+                + offs_d[None, :] * stride_kd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            v = tl.load(
+                V + k_idx[:, None] * stride_vt + h * stride_vh
+                + offs_d[None, :] * stride_vd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            a = sig * temp[:, None]
+            valid = offs_n[None, :] < n_i[:, None]
+            if WINDOW > 0:
+                valid = valid & (offs_n[None, :] >= (n_i[:, None] - WINDOW))
+            a = tl.where(valid, a, -1e38).to(tl.float32)
+
+            m_new = tl.maximum(m_i, tl.max(a, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.where(valid, tl.exp(a - m_new[:, None]), 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(
+                p.to(DOT_DTYPE), v, input_precision=INPUT_PRECISION)
+            m_i = m_new
+
+        a_n = temp * nullv
+        m_new = tl.maximum(m_i, a_n)
+        alpha = tl.exp(m_i - m_new)
+        l_i *= alpha
+        q2_i *= alpha * alpha
+        acc *= alpha[:, None]
+        m_i = m_new
+        p_n = tl.exp(a_n - m_i)
+        z = l_i + p_n
+        vn = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
+        s = acc + p_n[:, None] * vn[None, :]
+        c = s / tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)[:, None]
+        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        m_eff = n_eff * (l_i / tl.maximum(z, eps))
+        mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
+
+        tl.store(
+            C + q_idx[:, None] * stride_ct + h * stride_ch
+            + offs_d[None, :] * stride_cd,
+            c, mask=m_valid[:, None],
+        )
+        tl.store(MAG + q_idx * stride_mt + h * stride_mh, mag, mask=m_valid)
+
+
 def _softplus(x):
     return F.softplus(x)
 
@@ -475,6 +588,66 @@ def polar_attention_fwd(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
         q.contiguous(), k.contiguous(), v.contiguous(), n_keys,
         v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
         eps, is_causal, input_precision, window=window)
+    return c, mag
+
+
+@torch.no_grad()
+def polar_attention_packed_fwd(
+    q, k, v, tile_seq_starts, tile_q_starts, tile_seq_lens, *,
+    v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
+    eps=1e-6, input_precision="ieee", window=None,
+):
+    """Grouped fresh-prefill Polar attention for packed variable-length requests.
+
+    q/k/v use ``[total_tokens, heads, head_dim]`` layout. ``tile_*`` contains one
+    entry per BLOCK_M query tile and is prepared once with the serving context.
+    The route is intentionally fresh-causal only; chunked/prefix requests retain
+    the established per-sequence implementation.
+    """
+    if not HAS_TRITON or not q.is_cuda:
+        raise RuntimeError("packed Polar attention requires CUDA and Triton")
+    if q.ndim != 3 or k.shape != q.shape or v.shape != q.shape:
+        raise ValueError("q, k, and v must have identical [tokens, heads, dim] shapes")
+    total, heads, dk = q.shape
+    if q.dtype not in (torch.bfloat16, torch.float16):
+        raise ValueError("packed Polar route is enabled only for 16-bit inference")
+    if dk & (dk - 1):
+        raise ValueError(f"head_dim (dk={dk}) must be a power of two")
+    if not (tile_seq_starts.numel() == tile_q_starts.numel() == tile_seq_lens.numel()):
+        raise ValueError("packed Polar tile-map tensors must have equal lengths")
+
+    dot_dtype, ip, is_fp32 = _dtype_meta(q.dtype)
+    if is_fp32:
+        ip = input_precision
+    cfg = _fwd_config(dk, is_fp32, q.device)
+    # The serving context builds its reusable map at the L40S-tuned 128 rows.
+    # Keep this explicit so an environment profile override cannot silently make
+    # the map and launch disagree.
+    block_m, block_n = 128, cfg["block_n"]
+    spg = _softplus(len_gain_raw.float()).contiguous()
+    sps = _softplus(null_slope_raw.float()).contiguous()
+    beta = _softplus(mag_beta_raw.float()).contiguous()
+    nb = null_base.float().contiguous()
+    vn = v_null.float().contiguous()
+    tile_seq_starts = tile_seq_starts.to(device=q.device, dtype=torch.int32).contiguous()
+    tile_q_starts = tile_q_starts.to(device=q.device, dtype=torch.int32).contiguous()
+    tile_seq_lens = tile_seq_lens.to(device=q.device, dtype=torch.int32).contiguous()
+    c = torch.empty_like(q)
+    mag = torch.empty((total, heads), device=q.device, dtype=q.dtype)
+    _polar_packed_fwd_kernel[(tile_seq_starts.numel(), heads)](
+        q, k, v, tile_seq_starts, tile_q_starts, tile_seq_lens,
+        vn, spg, nb, sps, beta, c, mag,
+        q.stride(0), q.stride(1), q.stride(2),
+        k.stride(0), k.stride(1), k.stride(2),
+        v.stride(0), v.stride(1), v.stride(2),
+        c.stride(0), c.stride(1), c.stride(2),
+        mag.stride(0), mag.stride(1),
+        heads, 1.0 / math.sqrt(dk), eps,
+        BLOCK_M=block_m, BLOCK_N=block_n, DK=dk,
+        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        WINDOW=0 if window is None else int(window),
+        num_warps=cfg["num_warps"], num_stages=cfg["num_stages"],
+    )
     return c, mag
 
 

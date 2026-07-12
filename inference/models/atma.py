@@ -29,9 +29,11 @@ except Exception:
 # capturable). Both fall back to the materialized polar_reduce on CPU. The sliding window
 # (attn_window) and the Titans MAG memory branch (mem_enabled) match model/reference.py.
 try:
-    from kernel.polar_triton import polar_attention_fwd, polar_attention_decode, HAS_TRITON  # noqa: F401
+    from kernel.polar_triton import (polar_attention_fwd, polar_attention_packed_fwd,
+                                     polar_attention_decode, HAS_TRITON)  # noqa: F401
 except Exception:
     polar_attention_fwd = None
+    polar_attention_packed_fwd = None
     polar_attention_decode = None
     HAS_TRITON = False
 
@@ -69,11 +71,12 @@ except Exception:
     _HAS_CONV_STEP_KERNEL = False
 
 try:
-    from kernel.inference_ops_triton import squared_relu_gate, softcap_logits
+    from kernel.inference_ops_triton import squared_relu_gate, softcap_logits, packed_causal_conv1d
     from kernel.inference_ops_triton import HAS_TRITON as _HAS_INFERENCE_OPS
 except Exception:
     squared_relu_gate = None
     softcap_logits = None
+    packed_causal_conv1d = None
     _HAS_INFERENCE_OPS = False
 
 
@@ -425,20 +428,40 @@ class AtmaAttention(AtmaAttnBase):
 
             conv_state_tables = context.conv_state_tables
             q_parts, k_parts, v_parts, tok_starts = [], [], [], []
-            start = 0
-            for i, seqlen in enumerate(context.seqlens_q):
-                seq = context.seqs[i]
-                qi = q_all[start:start + seqlen].reshape(seqlen, -1)
-                ki = k_all[start:start + seqlen].reshape(seqlen, -1)
-                vi = v_all[start:start + seqlen].reshape(seqlen, -1)
-                qi_conv = qi + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi, w_q, None, conv_state_tables)
-                ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k, None, conv_state_tables)
-                vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v, None, conv_state_tables)
-                q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
-                k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
-                v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
-                tok_starts.append(start)
-                start += seqlen
+            if context.grouped_polar_prefill and packed_causal_conv1d is not None:
+                packed_args = (context.token_seq_starts, context.token_seq_ends,
+                               context.token_seq_slots)
+                q_flat = q_all.reshape(total, -1)
+                k_flat = k_all.reshape(total, -1)
+                v_flat = v_all.reshape(total, -1)
+                q_flat = q_flat + packed_causal_conv1d(
+                    q_flat, w_q, conv_state_tables[f"attn_{self.layer_idx}_q"], *packed_args)
+                k_flat = k_flat + packed_causal_conv1d(
+                    k_flat, w_k, conv_state_tables[f"attn_{self.layer_idx}_k"], *packed_args)
+                v_flat = v_flat + packed_causal_conv1d(
+                    v_flat, w_v, conv_state_tables[f"attn_{self.layer_idx}_v"], *packed_args)
+                tok_starts, packed_start = [], 0
+                for seqlen in context.seqlens_q:
+                    tok_starts.append(packed_start)
+                    packed_start += seqlen
+                q_parts = list(q_flat.view(total, H, dk).split(context.seqlens_q, dim=0))
+                k_parts = list(k_flat.view(total, self.num_kv_heads, dk).split(context.seqlens_q, dim=0))
+                v_parts = list(v_flat.view(total, self.num_kv_heads, dk).split(context.seqlens_q, dim=0))
+            else:
+                start = 0
+                for i, seqlen in enumerate(context.seqlens_q):
+                    seq = context.seqs[i]
+                    qi = q_all[start:start + seqlen].reshape(seqlen, -1)
+                    ki = k_all[start:start + seqlen].reshape(seqlen, -1)
+                    vi = v_all[start:start + seqlen].reshape(seqlen, -1)
+                    qi_conv = qi + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi, w_q, None, conv_state_tables)
+                    ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k, None, conv_state_tables)
+                    vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v, None, conv_state_tables)
+                    q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
+                    k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                    v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                    tok_starts.append(start)
+                    start += seqlen
 
             k_packed = torch.cat(k_parts, dim=0)
             v_packed = torch.cat(v_parts, dim=0)
@@ -455,6 +478,34 @@ class AtmaAttention(AtmaAttnBase):
             # correctly here, but the per-seq conv/memory state tables start from zeros
             # for the new sequence, so its early outputs can drift — see docs/inference.md.
             c_parts, mag_parts, mem_parts = [], [], []
+            if context.grouped_polar_prefill and polar_attention_packed_fwd is not None:
+                q_grouped = torch.cat(q_parts, dim=0).contiguous()
+                k_grouped = k_packed.repeat_interleave(groups, dim=1).contiguous()
+                v_grouped = v_packed.repeat_interleave(groups, dim=1).contiguous()
+                c_grouped, mag_grouped = polar_attention_packed_fwd(
+                    q_grouped, k_grouped, v_grouped,
+                    context.polar_tile_seq_starts, context.polar_tile_q_starts,
+                    context.polar_tile_seq_lens, window=self.window,
+                    **self._polar_params(),
+                )
+                # _combine consumes [B,H,T,D]; these views retain packed token order.
+                c = c_grouped.transpose(0, 1).unsqueeze(0)
+                mag = mag_grouped.transpose(0, 1).unsqueeze(0)
+                if self.mem is not None:
+                    for i, qi in enumerate(q_parts):
+                        seq = context.seqs[i]
+                        seqlen = qi.shape[0]
+                        token_start = tok_starts[i]
+                        qh = q_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        kh = k_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        vh = v_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        x_seq = x[token_start:token_start + seqlen]
+                        mem_parts.append(self._mem_prefill(seq, x_seq, qh, kh, vh, mem_table))
+                out = self._combine(c, mag, gate_all, total)
+                if self.mem is not None:
+                    out = out + torch.cat(mem_parts, dim=0)
+                return out
+
             for i, (qi, ki, vi) in enumerate(zip(q_parts, k_parts, v_parts)):
                 seq = context.seqs[i]
                 seqlen = qi.shape[0]
@@ -594,6 +645,12 @@ class AtmaLFM2Conv(AtmaConvBase):
                     w_conv, None, conv_state_tables,
                 )
                 return self.out_proj((C_all.view(B, T, -1) * x_conv).reshape(B * T, -1))
+            if context.grouped_polar_prefill and packed_causal_conv1d is not None:
+                x_conv = packed_causal_conv1d(
+                    x_gated_all, w_conv, conv_state_tables[f"conv_{self.layer_idx}_gated"],
+                    context.token_seq_starts, context.token_seq_ends, context.token_seq_slots,
+                )
+                return self.out_proj(C_all * x_conv)
             y_parts = []
             start = 0
             for i, seqlen in enumerate(context.seqlens_q):
