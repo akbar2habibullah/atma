@@ -3,6 +3,7 @@
 *.zip
 /logs
 /profile_results
+/.torchinductor
 **/.ipynb_checkpoints
 ablation/shards
 paper/arxiv

@@ -13,6 +13,16 @@ Supports FP16 (safe scaled matmul) and FP8 (E4M3/E5M2) custom ops.
 python train.py
 ```
 
+For short synthetic training throughput/MFU profiling without downloading data:
+
+```bash
+python -m scripts.bench_training_mfu --microbatch 16 --seq-length 1024 \
+  --warmup 2 --iterations 5 --measure-peak
+```
+
+See [blackwell_profiling.md](blackwell_profiling.md#training-mfu) for the B200/B300 sweep protocol
+and the MFU counting conventions.
+
 Downloads FineWebEdu-10B (GPT-2 tokenized), memory-maps the shards, and trains with microbatch gradient accumulation (`mbs` microbatches per `batch_size` step). `train_steps` is derived from the tokens actually present — one 100M shard → ~190 steps, the full 1B-token set → 1900 steps. The `CHECKPOINT_DIR` and `TOKENIZER_NAME` constants at the top of `train.py` control where the checkpoint lands and which tokenizer is recorded.
 
 ## Training performance

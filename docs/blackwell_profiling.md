@@ -68,6 +68,40 @@ python -m scripts.profile_blackwell --phase benchmark --budget-minutes 15 \
   --output-dir /mnt/results/b300-capacity
 ```
 
+## Training MFU
+
+Training MFU uses synthetic token IDs so it performs no dataset download, validation, logging, or
+checkpoint I/O. It executes the real compiled training model, summed cross-entropy, backward,
+gradient clipping, fused AdamW, and Muon. Warmup/compilation is reported separately and excluded
+from steady-state latency.
+
+Run a B300 microbatch sweep in fresh processes:
+
+```bash
+python -m scripts.profile_blackwell --phase training --budget-minutes 30 \
+  --reserve-minutes 3 --train-microbatches 8,16,32 \
+  --output-dir /mnt/results/b300-training
+```
+
+Or run one shape directly:
+
+```bash
+python -m scripts.bench_training_mfu --microbatch 16 --seq-length 1024 \
+  --grad-accum 1 --warmup 2 --iterations 5 --measure-peak
+```
+
+The benchmark refuses to silently use the PyTorch causal-convolution fallback and requires FLA's
+fused gated-delta kernel. Cache/install the optimized training kernel before paid profiling. Use
+`--allow-conv-fallback` only when fallback performance is deliberately being measured.
+
+The primary `mfu_hybrid_*` fields use `6*N + 12*attention_layers*hidden*sequence` FLOPs per token.
+The `mfu_legacy_*` fields reproduce `train.py`'s historical convention, which charges quadratic
+attention to all layers even though Atma has four attention layers out of sixteen. Both formulas
+time Polar, Titans, causal convolution, loss, clipping, and optimizer work but do not fully credit
+those operations in the numerator. Treat MFU as a documented useful-model-FLOP proxy, not a count
+of every executed instruction. Nominal MFU uses the published dense BF16 peak; measured MFU uses
+the same-session representative BF16 GEMM calibration.
+
 An OOM is a capacity observation, not a deployment recommendation. The stress harness allocates
 only live state and one exact-batch CUDA graph; it does not retain every production graph bucket or
 reserve unused serving cache.

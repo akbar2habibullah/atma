@@ -24,8 +24,10 @@ PYTHON = sys.executable
 MIXED = "64,96,128,256,512,768,1024,1536"
 
 
-def command_plan(phase: str, decode_batches: list[int]) -> list[dict]:
+def command_plan(phase: str, decode_batches: list[int],
+                 train_microbatches: list[int] | None = None) -> list[dict]:
     py = PYTHON
+    train_microbatches = train_microbatches or [8, 16, 32]
     smoke = [
         dict(name="cuda_tests", argv=[py, "-m", "pytest", "tests/test_decode_kernels.py",
                                       "tests/test_dense_prefill.py", "-q"]),
@@ -83,9 +85,16 @@ def command_plan(phase: str, decode_batches: list[int]) -> list[dict]:
             "--export", "{output}", py, "-m", "scripts.bench_kernel_efficiency",
             "--only", "b", "--distribution", "mixed", "--cuda-profiler-range"]),
     ]
-    phases = {"smoke": smoke, "benchmark": benchmark, "trace": trace}
+    training = [
+        dict(name=f"training_mfu_mb{microbatch}", argv=[
+            py, "-m", "scripts.bench_training_mfu", "--microbatch", str(microbatch),
+            "--seq-length", "1024", "--grad-accum", "1", "--warmup", "2",
+            "--iterations", "5", "--measure-peak"])
+        for microbatch in train_microbatches
+    ]
+    phases = {"smoke": smoke, "benchmark": benchmark, "trace": trace, "training": training}
     if phase == "all":
-        return smoke + benchmark + trace
+        return smoke + benchmark + training + trace
     return phases.get(phase, [])
 
 
@@ -101,11 +110,12 @@ def metadata() -> dict:
     probe = (
         "import json,torch; assert torch.cuda.is_available(), 'CUDA unavailable'; "
         "p=torch.cuda.get_device_properties(0); x=torch.ones((128,128),device='cuda',dtype=torch.bfloat16); "
-        "y=x@x; torch.cuda.synchronize(); import triton,pytest,fla; "
+        "y=x@x; torch.cuda.synchronize(); import triton,fla,importlib.util; "
         "from inference.models.atma import _HAS_FLA; assert _HAS_FLA, 'FLA fused kernel unavailable'; "
+        "pytest_spec=importlib.util.find_spec('pytest'); "
         "print(json.dumps(dict(gpu=p.name, capability=[p.major,p.minor], memory_bytes=p.total_memory, "
         "smem_optin=getattr(p,'shared_memory_per_block_optin',None), torch=torch.__version__, "
-        "torch_cuda=torch.version.cuda, triton=triton.__version__, pytest=pytest.__version__, "
+        "torch_cuda=torch.version.cuda, triton=triton.__version__, pytest_installed=bool(pytest_spec), "
         "fla=getattr(fla,'__version__','unknown'))))"
     )
     return {
@@ -179,7 +189,7 @@ def build_summary(output_dir: Path, metadata_record: dict, results: list[dict]) 
                 value = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(value, dict) and "mode" in value:
+            if isinstance(value, dict) and ("mode" in value or "mfu_hybrid_nominal_pct" in value):
                 measurements[result["name"]] = value
                 break
     tuning_path = output_dir / "tuning.json"
@@ -194,18 +204,21 @@ def build_summary(output_dir: Path, metadata_record: dict, results: list[dict]) 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("preflight", "smoke", "benchmark", "trace", "all"),
+    parser.add_argument("--phase", choices=("preflight", "smoke", "benchmark", "training",
+                                            "trace", "all"),
                         default="all")
     parser.add_argument("--budget-minutes", type=float, default=50.0)
     parser.add_argument("--reserve-minutes", type=float, default=5.0)
     parser.add_argument("--decode-batches", default="512,1024,2048,4096")
+    parser.add_argument("--train-microbatches", default="8,16,32")
     parser.add_argument("--output-dir")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     batches = [int(value) for value in args.decode_batches.split(",") if value]
+    train_microbatches = [int(value) for value in args.train_microbatches.split(",") if value]
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir = Path(args.output_dir or ROOT / "profile_results" / stamp).resolve()
-    plan = command_plan(args.phase, batches)
+    plan = command_plan(args.phase, batches, train_microbatches)
     if args.dry_run:
         print(json.dumps({"output_dir": str(output_dir), "plan": plan}, indent=2))
         return
@@ -232,6 +245,9 @@ def main() -> None:
         if item["name"] in {"cuda_tests", "smoke_prefill", "smoke_decode"} \
                 and result["status"] != "ok":
             print("Correctness gate failed; stopping before expensive benchmarks.", file=sys.stderr)
+            break
+        if item["name"].startswith("training_mfu_") and result["status"] != "ok":
+            print("Training MFU gate failed; stopping the microbatch sweep.", file=sys.stderr)
             break
         if item["name"] == "polar_large":
             tuning = select_polar_profile(output_dir)
