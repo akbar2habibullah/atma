@@ -94,9 +94,17 @@ Run a B300 microbatch sweep in fresh processes:
 
 ```bash
 python -m scripts.profile_blackwell --phase training --budget-minutes 30 \
-  --reserve-minutes 3 --train-microbatches 8,16,32 \
+  --reserve-minutes 3 --train-microbatches 8,16,32,64 \
+  --train-global-sequences 512 \
+  --train-require-fla \
+  --train-measured-peak-tflops 2239.4 \
   --output-dir /mnt/results/b300-training
 ```
+
+This is the primary fair training comparison: it keeps the canonical 378M/D1024 model and the
+original 524,288-token global batch fixed. Microbatches 8/16/32/64 therefore use gradient
+accumulation 64/32/16/8. Changing to D4096/L32 is a separate capacity/saturation experiment, not a
+replacement for the canonical MFU measurement.
 
 For a 9.2B/D4096 training saturation sweep, the default microbatches automatically become 1,2,4,8:
 
@@ -113,10 +121,11 @@ python -m scripts.bench_training_mfu --microbatch 16 --seq-length 1024 \
   --grad-accum 1 --warmup 2 --iterations 5 --measure-peak
 ```
 
-The compiled PyTorch causal-convolution fallback is allowed and explicitly recorded because the
-optional kernel is not available for B300. FLA's fused gated-delta kernel remains required. Use
-`--require-optimized-conv` only in a future environment that is expected to provide a compatible
-causal-conv kernel.
+The compiled PyTorch causal-convolution fallback and validated eager PyTorch Titans fallback are
+allowed and explicitly recorded because the optional kernels may be unavailable for B300. Use
+`--require-optimized-conv` and/or `--require-fla` only in a future environment expected to provide
+those compatible optimized kernels. MFU from a fallback run describes that deployed backend and
+must not be presented as fused-kernel performance.
 
 The primary `mfu_hybrid_*` fields use `6*N + 12*attention_layers*hidden*sequence` FLOPs per token.
 The `mfu_legacy_*` fields reproduce `train.py`'s historical convention, which charges quadratic

@@ -28,7 +28,10 @@ def command_plan(phase: str, decode_batches: list[int],
                  train_microbatches: list[int] | None = None,
                  prefill_batches: list[int] | None = None,
                  train_hidden_size: int = 1024,
-                 train_layers: int = 16) -> list[dict]:
+                 train_layers: int = 16,
+                 train_global_sequences: int | None = None,
+                 train_require_fla: bool = False,
+                 train_measured_peak_tflops: float | None = None) -> list[dict]:
     py = PYTHON
     train_microbatches = train_microbatches or ([1, 2, 4, 8] if train_hidden_size >= 4096
                                                  else [8, 16, 32, 64])
@@ -94,14 +97,27 @@ def command_plan(phase: str, decode_batches: list[int],
             "--export", "{output}", py, "-m", "scripts.bench_kernel_efficiency",
             "--only", "b", "--distribution", "mixed", "--cuda-profiler-range"]),
     ]
-    training = [
-        dict(name=f"training_mfu_d{train_hidden_size}_l{train_layers}_mb{microbatch}", argv=[
-            py, "-m", "scripts.bench_training_mfu", "--microbatch", str(microbatch),
-            "--hidden-size", str(train_hidden_size), "--layers", str(train_layers),
-            "--seq-length", "1024", "--grad-accum", "1", "--warmup", "2",
-            "--iterations", "5", "--measure-peak", "--allow-conv-fallback"])
-        for microbatch in train_microbatches
-    ]
+    training = []
+    for microbatch in train_microbatches:
+        if train_global_sequences is not None and train_global_sequences % microbatch:
+            raise ValueError("train global sequences must be divisible by every microbatch")
+        grad_accum = (train_global_sequences // microbatch
+                      if train_global_sequences is not None else 1)
+        argv = [py, "-m", "scripts.bench_training_mfu", "--microbatch", str(microbatch),
+                "--hidden-size", str(train_hidden_size), "--layers", str(train_layers),
+                "--seq-length", "1024", "--grad-accum", str(grad_accum), "--warmup", "2",
+                "--iterations", "5", "--allow-conv-fallback"]
+        if train_measured_peak_tflops is None:
+            argv.append("--measure-peak")
+        else:
+            argv += ["--measured-peak-tflops", str(train_measured_peak_tflops)]
+        if train_require_fla:
+            argv.append("--require-fla")
+        training.append(dict(
+            name=(f"training_mfu_d{train_hidden_size}_l{train_layers}_mb{microbatch}"
+                  f"_ga{grad_accum}"),
+            argv=argv
+        ))
     phases = {"smoke": smoke, "calibrate": calibration, "benchmark": benchmark,
               "trace": trace, "training": training}
     if phase == "all":
@@ -128,9 +144,11 @@ def metadata() -> dict:
     )
     dependency_probe = (
         "import importlib.metadata as m,importlib.util as u,json; "
-        "v=lambda n: m.version(n) if u.find_spec(n.replace('-','_')) else None; "
-        "print(json.dumps(dict(triton=v('triton'),pytest=v('pytest'),"
-        "fla_module=bool(u.find_spec('fla')),kernels_module=bool(u.find_spec('kernels')))))"
+        "vs={d.metadata['Name'].lower():d.version for d in m.distributions() if d.metadata['Name']}; "
+        "print(json.dumps(dict(triton=vs.get('triton'),pytest=vs.get('pytest'),"
+        "flash_linear_attention=vs.get('flash-linear-attention'),fla_core=vs.get('fla-core'),"
+        "fla_module=bool(u.find_spec('fla')),fla_ops_module=bool(u.find_spec('fla.ops')) if u.find_spec('fla') else False,"
+        "kernels_module=bool(u.find_spec('kernels')))))"
     )
     return {
         "captured_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -184,10 +202,17 @@ def select_polar_profile(output_dir: Path) -> dict:
         values = [float(value) for value in re.findall(
             r"^\s*grouped\s+p50=([0-9.]+)", path.read_text(encoding="utf-8"), re.MULTILINE)]
         if values:
-            scores[profile] = {"sum_grouped_p50_ms": sum(values), "samples": values}
+            # DISTRIBUTIONS is ordered short-heavy, mixed, long-tail, homogeneous.
+            # Homogeneous production prefill uses the dense route and must not tune
+            # the grouped heterogeneous kernel profile.
+            heterogeneous = values[:3]
+            scores[profile] = {"sum_grouped_p50_ms": sum(heterogeneous),
+                               "heterogeneous_samples": heterogeneous,
+                               "all_samples": values}
     selected = min(scores, key=lambda name: scores[name]["sum_grouped_p50_ms"]) if scores else "large"
     return {"selected": selected, "scores": scores,
-            "fallback": not bool(scores), "criterion": "minimum sum of grouped p50 latency"}
+            "fallback": not bool(scores),
+            "criterion": "minimum sum of short-heavy, mixed, and long-tail grouped p50 latency"}
 
 
 def build_summary(output_dir: Path, metadata_record: dict, results: list[dict]) -> dict:
@@ -249,6 +274,12 @@ def main() -> None:
                         help="default: 8,16,32,64 for D=1024; 1,2,4,8 for D>=4096")
     parser.add_argument("--train-hidden-size", type=int, default=1024)
     parser.add_argument("--train-layers", type=int, default=16)
+    parser.add_argument("--train-global-sequences", type=int,
+                        help="hold global batch fixed; e.g. 512 reproduces train.py at sequence 1024")
+    parser.add_argument("--train-require-fla", action="store_true",
+                        help="fail training if the fused FLA gated-delta kernel is unavailable")
+    parser.add_argument("--train-measured-peak-tflops", type=float,
+                        help="reuse a prior measured GEMM ceiling in every training process")
     parser.add_argument("--output-dir")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -259,7 +290,8 @@ def main() -> None:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir = Path(args.output_dir or ROOT / "profile_results" / stamp).resolve()
     plan = command_plan(args.phase, batches, train_microbatches, prefill_batches,
-                        args.train_hidden_size, args.train_layers)
+                        args.train_hidden_size, args.train_layers, args.train_global_sequences,
+                        args.train_require_fla, args.train_measured_peak_tflops)
     if args.dry_run:
         print(json.dumps({"output_dir": str(output_dir), "plan": plan}, indent=2))
         return

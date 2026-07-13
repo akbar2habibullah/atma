@@ -95,10 +95,16 @@ def main() -> None:
                         help=argparse.SUPPRESS)
     parser.add_argument("--require-optimized-conv", action="store_true",
                         help="fail instead of using the labeled compiled PyTorch fallback")
+    parser.add_argument("--require-fla", action="store_true",
+                        help="fail instead of using the validated eager PyTorch Titans fallback")
     parser.add_argument("--measure-peak", action="store_true")
+    parser.add_argument("--measured-peak-tflops", type=float,
+                        help="reuse a prior measured BF16 GEMM ceiling instead of recalibrating")
     parser.add_argument("--peak-tflops", type=float,
                         help="override nominal dense BF16 Tensor Core peak")
     args = parser.parse_args()
+    if args.measure_peak and args.measured_peak_tflops is not None:
+        raise SystemExit("choose either --measure-peak or --measured-peak-tflops")
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
     if min(args.microbatch, args.grad_accum, args.seq_length, args.iterations) < 1:
@@ -115,8 +121,10 @@ def main() -> None:
         raise SystemExit(
             "optimized causal-conv1d kernel unavailable; cache/install it before profiling "
             "or omit --require-optimized-conv to measure the compiled fallback")
-    if not model_blocks._HAS_FLA:
-        raise SystemExit("flash-linear-attention fused gated-delta kernel is required")
+    if not model_blocks._HAS_FLA and args.require_fla:
+        raise SystemExit(
+            "flash-linear-attention fused gated-delta kernel unavailable; "
+            "omit --require-fla to measure the validated PyTorch Titans fallback")
 
     torch.manual_seed(0)
     device_name = torch.cuda.get_device_name()
@@ -195,7 +203,7 @@ def main() -> None:
     nominal_peak = args.peak_tflops or nominal_bf16_tflops(device_name)
     peak_allocated_gib = torch.cuda.max_memory_allocated() / 2**30
     peak_reserved_gib = torch.cuda.max_memory_reserved() / 2**30
-    measured_peak = measure_bf16_peak() if args.measure_peak else None
+    measured_peak = (measure_bf16_peak() if args.measure_peak else args.measured_peak_tflops)
 
     result = {
         "status": "ok",
@@ -205,6 +213,8 @@ def main() -> None:
         "causal_conv_backend": causal_conv_backend,
         "causal_conv_fallback": using_conv_fallback,
         "fla_fused_gated_delta": model_blocks._HAS_FLA,
+        "titans_backend": ("fla_fused" if model_blocks._HAS_FLA else "torch_eager_chunked"),
+        "fla_import_error": model_blocks._FLA_IMPORT_ERROR,
         "polar_triton": train_model.HAS_TRITON,
         "compiled": not args.no_compile,
         "model": {

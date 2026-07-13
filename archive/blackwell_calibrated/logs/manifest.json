@@ -1,0 +1,142 @@
+[
+  {
+    "name": "cuda_tests",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 126.355,
+    "log": "/root/atma/logs/cuda_tests.log"
+  },
+  {
+    "name": "smoke_prefill",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 122.199,
+    "log": "/root/atma/logs/smoke_prefill.log"
+  },
+  {
+    "name": "smoke_decode",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 31.198,
+    "log": "/root/atma/logs/smoke_decode.log"
+  },
+  {
+    "name": "blackwell_tensor_calibration",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 9.968,
+    "log": "/root/atma/logs/blackwell_tensor_calibration.log"
+  },
+  {
+    "name": "stress_prefill_dense_b8",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 121.238,
+    "log": "/root/atma/logs/stress_prefill_dense_b8.log"
+  },
+  {
+    "name": "stress_prefill_dense_b16",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 55.908,
+    "log": "/root/atma/logs/stress_prefill_dense_b16.log"
+  },
+  {
+    "name": "stress_prefill_dense_b32",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 46.41,
+    "log": "/root/atma/logs/stress_prefill_dense_b32.log"
+  },
+  {
+    "name": "stress_prefill_dense_b64",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 52.009,
+    "log": "/root/atma/logs/stress_prefill_dense_b64.log"
+  },
+  {
+    "name": "stress_decode_b512",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 44.066,
+    "log": "/root/atma/logs/stress_decode_b512.log"
+  },
+  {
+    "name": "stress_decode_b1024",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 45.097,
+    "log": "/root/atma/logs/stress_decode_b1024.log"
+  },
+  {
+    "name": "stress_decode_b2048",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 41.497,
+    "log": "/root/atma/logs/stress_decode_b2048.log"
+  },
+  {
+    "name": "stress_decode_b4096",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 42.196,
+    "log": "/root/atma/logs/stress_decode_b4096.log"
+  },
+  {
+    "name": "stress_decode_b6144",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 42.832,
+    "log": "/root/atma/logs/stress_decode_b6144.log"
+  },
+  {
+    "name": "stress_decode_b7168",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 43.289,
+    "log": "/root/atma/logs/stress_decode_b7168.log"
+  },
+  {
+    "name": "polar_l4",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 39.102,
+    "log": "/root/atma/logs/polar_l4.log"
+  },
+  {
+    "name": "polar_small",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 45.238,
+    "log": "/root/atma/logs/polar_small.log"
+  },
+  {
+    "name": "polar_large",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 42.966,
+    "log": "/root/atma/logs/polar_large.log"
+  },
+  {
+    "name": "canonical_mixed",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 35.889,
+    "log": "/root/atma/logs/canonical_mixed.log"
+  },
+  {
+    "name": "stress_prefill_mixed",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 39.532,
+    "log": "/root/atma/logs/stress_prefill_mixed.log"
+  },
+  {
+    "name": "training_mfu_d4096_l32_mb1",
+    "status": "failed",
+    "returncode": 1,
+    "elapsed_seconds": 21.077,
+    "log": "/root/atma/logs/training_mfu_d4096_l32_mb1.log"
+  }
+]
