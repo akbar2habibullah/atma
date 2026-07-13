@@ -1,0 +1,9 @@
+$ /usr/local/bin/python -m scripts.bench_kernel_efficiency --full-model mixed --warmup 2 --iterations 10
+GPU=NVIDIA B300 SXM6 AC torch=2.13.0+cu130 CUDA=13.0
+Total parameters: 378.22M
+/usr/local/lib/python3.12/site-packages/triton/language/core.py:2284: UserWarning: tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.
+  warn("tl.make_block_ptr is deprecated. Use TensorDescriptor or tl.make_tensor_descriptor instead.")
+Full 16-layer model: mixed lengths=[64, 96, 128, 256, 512, 768, 1024, 1536] random_status=zero BF16 TP=1
+  oracle     p50=185.9656 ms p95=191.0567 ms mean=183.0728 ms peak=925.1 MiB tok/s=23,574
+  grouped    p50=142.3625 ms p95=149.0963 ms mean=142.9484 ms peak=925.2 MiB tok/s=30,795
+  speedup=1.31x PASS

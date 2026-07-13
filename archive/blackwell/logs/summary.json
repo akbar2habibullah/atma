@@ -1,0 +1,366 @@
+{
+  "cuda_probe": "{\"gpu\": \"NVIDIA B300 SXM6 AC\", \"capability\": [10, 3], \"memory_bytes\": 287428771840, \"smem_optin\": 232448, \"torch\": \"2.13.0+cu130\", \"torch_cuda\": \"13.0\", \"bf16_matmul_ok\": true}",
+  "tuning": {
+    "selected": "large",
+    "scores": {
+      "l4": {
+        "sum_grouped_p50_ms": 0.7323,
+        "samples": [
+          0.1406,
+          0.1403,
+          0.3094,
+          0.142
+        ]
+      },
+      "small": {
+        "sum_grouped_p50_ms": 0.7932,
+        "samples": [
+          0.1363,
+          0.1442,
+          0.4385,
+          0.0742
+        ]
+      },
+      "large": {
+        "sum_grouped_p50_ms": 0.7215,
+        "samples": [
+          0.1335,
+          0.141,
+          0.3048,
+          0.1422
+        ]
+      }
+    },
+    "fallback": false,
+    "criterion": "minimum sum of grouped p50 latency"
+  },
+  "measurements": {
+    "smoke_prefill": {
+      "batch": 2,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 1024,
+      "includes_sampler": false,
+      "iterations": 2,
+      "layers": 16,
+      "lengths": [
+        128,
+        128
+      ],
+      "mean_ms": 30.93195152282715,
+      "mode": "prefill",
+      "p50_ms": 31.316287994384766,
+      "p95_ms": 31.316287994384766,
+      "parameter_count": 378220864,
+      "parameter_gib": 0.7044912576675415,
+      "peak_allocated_gib": 0.7542858123779297,
+      "peak_reserved_gib": 1.015625,
+      "route": "dense",
+      "status": "ok",
+      "throughput_tok_s": 8174.659782344019,
+      "tokens": 256,
+      "warmup": 1
+    },
+    "smoke_decode": {
+      "batch": 32,
+      "context_length": 128,
+      "context_max": 128,
+      "context_mean": 128.0,
+      "context_min": 128,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 1024,
+      "includes_sampler": false,
+      "iterations": 2,
+      "layers": 16,
+      "mean_ms": 1.0497599840164185,
+      "mode": "decode",
+      "p50_ms": 1.0840959548950195,
+      "p95_ms": 1.0840959548950195,
+      "parameter_count": 378220864,
+      "parameter_gib": 0.7044912576675415,
+      "peak_allocated_gib": 0.869377613067627,
+      "peak_reserved_gib": 0.884765625,
+      "route": "cuda_graph",
+      "status": "ok",
+      "throughput_tok_s": 29517.682319088424,
+      "tokens": 32,
+      "warmup": 1
+    },
+    "stress_prefill_dense": {
+      "batch": 8,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 10,
+      "layers": 32,
+      "lengths": [
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512,
+        512
+      ],
+      "mean_ms": 65.29958724975586,
+      "mode": "prefill",
+      "p50_ms": 64.96800231933594,
+      "p95_ms": 68.3479995727539,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 18.21101999282837,
+      "peak_reserved_gib": 18.66796875,
+      "route": "dense",
+      "status": "ok",
+      "throughput_tok_s": 63046.42060359209,
+      "tokens": 4096,
+      "warmup": 1
+    },
+    "stress_prefill_mixed": {
+      "batch": 8,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 10,
+      "layers": 32,
+      "lengths": [
+        64,
+        96,
+        128,
+        256,
+        512,
+        768,
+        1024,
+        1536
+      ],
+      "mean_ms": 266.27264099121095,
+      "mode": "prefill",
+      "p50_ms": 270.8894348144531,
+      "p95_ms": 281.4992370605469,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 17.993544101715088,
+      "peak_reserved_gib": 18.228515625,
+      "route": "grouped",
+      "status": "ok",
+      "throughput_tok_s": 16183.724562764288,
+      "tokens": 4384,
+      "warmup": 1
+    },
+    "stress_decode_b512": {
+      "batch": 512,
+      "context_length": 512,
+      "context_max": 512,
+      "context_mean": 512.0,
+      "context_min": 512,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 20,
+      "layers": 32,
+      "mean_ms": 14.690820789337158,
+      "mode": "decode",
+      "p50_ms": 14.686911582946777,
+      "p95_ms": 14.777152061462402,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 33.80620765686035,
+      "peak_reserved_gib": 33.943359375,
+      "route": "cuda_graph",
+      "status": "ok",
+      "throughput_tok_s": 34860.971083566124,
+      "tokens": 512,
+      "warmup": 2
+    },
+    "stress_decode_b1024": {
+      "batch": 1024,
+      "context_length": 512,
+      "context_max": 512,
+      "context_mean": 512.0,
+      "context_min": 512,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 20,
+      "layers": 32,
+      "mean_ms": 25.38615674972534,
+      "mode": "decode",
+      "p50_ms": 25.384384155273438,
+      "p95_ms": 25.428768157958984,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 50.36164855957031,
+      "peak_reserved_gib": 50.845703125,
+      "route": "cuda_graph",
+      "status": "ok",
+      "throughput_tok_s": 40339.76139567959,
+      "tokens": 1024,
+      "warmup": 2
+    },
+    "stress_decode_b2048": {
+      "batch": 2048,
+      "context_length": 512,
+      "context_max": 512,
+      "context_mean": 512.0,
+      "context_min": 512,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 20,
+      "layers": 32,
+      "mean_ms": 48.495315361022946,
+      "mode": "decode",
+      "p50_ms": 48.49417495727539,
+      "p95_ms": 48.54185485839844,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 83.50744247436523,
+      "peak_reserved_gib": 84.064453125,
+      "route": "cuda_graph",
+      "status": "ok",
+      "throughput_tok_s": 42231.876339876704,
+      "tokens": 2048,
+      "warmup": 2
+    },
+    "stress_decode_b4096": {
+      "batch": 4096,
+      "context_length": 512,
+      "context_max": 512,
+      "context_mean": 512.0,
+      "context_min": 512,
+      "dtype": "bfloat16",
+      "gpu": "NVIDIA B300 SXM6 AC",
+      "hidden_size": 4096,
+      "includes_sampler": true,
+      "iterations": 20,
+      "layers": 32,
+      "mean_ms": 94.97606658935547,
+      "mode": "decode",
+      "p50_ms": 94.97785949707031,
+      "p95_ms": 95.0157470703125,
+      "parameter_count": 9209125504,
+      "parameter_gib": 17.153332948684692,
+      "peak_allocated_gib": 149.79414749145508,
+      "peak_reserved_gib": 150.87109375,
+      "route": "cuda_graph",
+      "status": "ok",
+      "throughput_tok_s": 43125.8402925615,
+      "tokens": 4096,
+      "warmup": 2
+    }
+  },
+  "runs": [
+    {
+      "name": "cuda_tests",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 125.997,
+      "log": "/root/atma/logs/cuda_tests.log"
+    },
+    {
+      "name": "smoke_prefill",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 112.465,
+      "log": "/root/atma/logs/smoke_prefill.log"
+    },
+    {
+      "name": "smoke_decode",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 30.836,
+      "log": "/root/atma/logs/smoke_decode.log"
+    },
+    {
+      "name": "roofline_calibration",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 6.514,
+      "log": "/root/atma/logs/roofline_calibration.log"
+    },
+    {
+      "name": "polar_l4",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 43.855,
+      "log": "/root/atma/logs/polar_l4.log"
+    },
+    {
+      "name": "polar_small",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 48.261,
+      "log": "/root/atma/logs/polar_small.log"
+    },
+    {
+      "name": "polar_large",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 44.628,
+      "log": "/root/atma/logs/polar_large.log"
+    },
+    {
+      "name": "canonical_mixed",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 43.885,
+      "log": "/root/atma/logs/canonical_mixed.log"
+    },
+    {
+      "name": "stress_prefill_dense",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 131.088,
+      "log": "/root/atma/logs/stress_prefill_dense.log"
+    },
+    {
+      "name": "stress_prefill_mixed",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 51.975,
+      "log": "/root/atma/logs/stress_prefill_mixed.log"
+    },
+    {
+      "name": "stress_decode_b512",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 55.757,
+      "log": "/root/atma/logs/stress_decode_b512.log"
+    },
+    {
+      "name": "stress_decode_b1024",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 51.914,
+      "log": "/root/atma/logs/stress_decode_b1024.log"
+    },
+    {
+      "name": "stress_decode_b2048",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 50.469,
+      "log": "/root/atma/logs/stress_decode_b2048.log"
+    },
+    {
+      "name": "stress_decode_b4096",
+      "status": "ok",
+      "returncode": 0,
+      "elapsed_seconds": 52.631,
+      "log": "/root/atma/logs/stress_decode_b4096.log"
+    },
+    {
+      "name": "training_mfu_mb8",
+      "status": "failed",
+      "returncode": 1,
+      "elapsed_seconds": 28.029,
+      "log": "/root/atma/logs/training_mfu_mb8.log"
+    }
+  ]
+}

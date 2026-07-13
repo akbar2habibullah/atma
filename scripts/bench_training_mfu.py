@@ -35,6 +35,11 @@ def nominal_bf16_tflops(name: str) -> float | None:
 
 
 def measure_bf16_peak() -> float:
+    device_name = torch.cuda.get_device_name().lower()
+    if "b200" in device_name or "b300" in device_name:
+        from scripts.calibrate_blackwell import PEAK_SHAPES, measure_gemm
+        return max(measure_gemm(shape, warmup=5, target_flops=100e12)["tflops"]
+                   for shape in PEAK_SHAPES)
     shapes = ((4096, 8192, 1024), (8192, 8192, 1024), (8192, 4096, 1024))
     values = []
     for m, n, k in shapes:
@@ -87,7 +92,9 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--no-compile", action="store_true")
     parser.add_argument("--allow-conv-fallback", action="store_true",
-                        help="permit the slower PyTorch causal-convolution fallback")
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--require-optimized-conv", action="store_true",
+                        help="fail instead of using the labeled compiled PyTorch fallback")
     parser.add_argument("--measure-peak", action="store_true")
     parser.add_argument("--peak-tflops", type=float,
                         help="override nominal dense BF16 Tensor Core peak")
@@ -104,10 +111,10 @@ def main() -> None:
     causal_conv_backend = (f"{train_model.causal_conv1d_fn.__module__}."
                            f"{train_model.causal_conv1d_fn.__name__}")
     using_conv_fallback = train_model.causal_conv1d_fn is train_model._causal_conv1d_fallback
-    if using_conv_fallback and not args.allow_conv_fallback:
+    if using_conv_fallback and args.require_optimized_conv:
         raise SystemExit(
             "optimized causal-conv1d kernel unavailable; cache/install it before profiling "
-            "or pass --allow-conv-fallback to measure the fallback explicitly")
+            "or omit --require-optimized-conv to measure the compiled fallback")
     if not model_blocks._HAS_FLA:
         raise SystemExit("flash-linear-attention fused gated-delta kernel is required")
 
@@ -186,6 +193,8 @@ def main() -> None:
     achieved_hybrid_tflops = hybrid_flops_per_token * tokens_per_step / wall_p50_s / 1e12
     achieved_legacy_tflops = legacy_flops_per_token * tokens_per_step / wall_p50_s / 1e12
     nominal_peak = args.peak_tflops or nominal_bf16_tflops(device_name)
+    peak_allocated_gib = torch.cuda.max_memory_allocated() / 2**30
+    peak_reserved_gib = torch.cuda.max_memory_reserved() / 2**30
     measured_peak = measure_bf16_peak() if args.measure_peak else None
 
     result = {
@@ -233,8 +242,8 @@ def main() -> None:
             "mean": statistics.fmean(gpu_ms),
         },
         "throughput_tokens_s": tokens_per_step / wall_p50_s,
-        "peak_allocated_gib": torch.cuda.max_memory_allocated() / 2**30,
-        "peak_reserved_gib": torch.cuda.max_memory_reserved() / 2**30,
+        "peak_allocated_gib": peak_allocated_gib,
+        "peak_reserved_gib": peak_reserved_gib,
         "loss_last_sum": losses[-1],
         "flop_convention": {
             "hybrid_primary": "6*N + 12*attention_layers*hidden_size*sequence_length",

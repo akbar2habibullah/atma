@@ -42,11 +42,11 @@ is not the paid SKU, or the driver/runtime combination cannot launch the BF16 te
 
 The correctness tests and two small-model smoke workloads are hard gates. The remaining order is:
 
-1. measured BF16 GEMM and HBM calibration;
+1. Blackwell peak-seeking, Atma 9.2B inference, and 378M/9.2B training GEMM calibration;
 2. Polar `l4`, `small`, and `large` launch-profile sweep;
 3. canonical 16-layer heterogeneous prefill;
-4. 9.2B dense and mixed prefill;
-5. 9.2B decode at batches 512, 1024, 2048, and 4096;
+4. 9.2B dense prefill at batches 8, 16, 32, and 64, plus mixed prefill;
+5. 9.2B decode at batches 512, 1024, 2048, 4096, 6144, and 7168;
 6. compact Nsight Systems traces and one bounded grouped-Polar Nsight Compute report, when the
    respective tools are installed.
 
@@ -61,6 +61,19 @@ For a shorter or lower-risk first rental:
 python -m scripts.profile_blackwell --phase all --budget-minutes 35 \
   --reserve-minutes 5 --decode-batches 512,1024,2048
 ```
+
+Run only the B300 tensor and end-to-end saturation calibration with:
+
+```bash
+python -m scripts.profile_blackwell --phase calibrate --budget-minutes 25 \
+  --reserve-minutes 3 --prefill-batches 8,16,32,64 \
+  --decode-batches 512,1024,2048,4096,6144,7168 \
+  --output-dir /mnt/results/b300-calibration
+```
+
+`blackwell_tensor_calibration.log` separates physical peak-seeking GEMMs from exact matrix
+families for 9.2B prefill/decode, canonical 378M training, and 9.2B training. Use the peak group for
+physical attainable MFU and the matching model group for shape efficiency.
 
 For B300 capacity exploration, add larger fresh-process points only after the standard run:
 
@@ -85,6 +98,14 @@ python -m scripts.profile_blackwell --phase training --budget-minutes 30 \
   --output-dir /mnt/results/b300-training
 ```
 
+For a 9.2B/D4096 training saturation sweep, the default microbatches automatically become 1,2,4,8:
+
+```bash
+python -m scripts.profile_blackwell --phase training --budget-minutes 35 \
+  --reserve-minutes 3 --train-hidden-size 4096 --train-layers 32 \
+  --output-dir /mnt/results/b300-training-9b
+```
+
 Or run one shape directly:
 
 ```bash
@@ -92,9 +113,10 @@ python -m scripts.bench_training_mfu --microbatch 16 --seq-length 1024 \
   --grad-accum 1 --warmup 2 --iterations 5 --measure-peak
 ```
 
-The benchmark refuses to silently use the PyTorch causal-convolution fallback and requires FLA's
-fused gated-delta kernel. Cache/install the optimized training kernel before paid profiling. Use
-`--allow-conv-fallback` only when fallback performance is deliberately being measured.
+The compiled PyTorch causal-convolution fallback is allowed and explicitly recorded because the
+optional kernel is not available for B300. FLA's fused gated-delta kernel remains required. Use
+`--require-optimized-conv` only in a future environment that is expected to provide a compatible
+causal-conv kernel.
 
 The primary `mfu_hybrid_*` fields use `6*N + 12*attention_layers*hidden*sequence` FLOPs per token.
 The `mfu_legacy_*` fields reproduce `train.py`'s historical convention, which charges quadratic

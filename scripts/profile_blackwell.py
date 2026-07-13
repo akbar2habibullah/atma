@@ -25,9 +25,14 @@ MIXED = "64,96,128,256,512,768,1024,1536"
 
 
 def command_plan(phase: str, decode_batches: list[int],
-                 train_microbatches: list[int] | None = None) -> list[dict]:
+                 train_microbatches: list[int] | None = None,
+                 prefill_batches: list[int] | None = None,
+                 train_hidden_size: int = 1024,
+                 train_layers: int = 16) -> list[dict]:
     py = PYTHON
-    train_microbatches = train_microbatches or [8, 16, 32]
+    train_microbatches = train_microbatches or ([1, 2, 4, 8] if train_hidden_size >= 4096
+                                                 else [8, 16, 32, 64])
+    prefill_batches = prefill_batches or [8, 16, 32, 64]
     smoke = [
         dict(name="cuda_tests", argv=[py, "-m", "pytest", "tests/test_decode_kernels.py",
                                       "tests/test_dense_prefill.py", "-q"]),
@@ -38,11 +43,24 @@ def command_plan(phase: str, decode_batches: list[int],
              "decode", "--hidden-size", "1024", "--layers", "16", "--batch", "32",
              "--context-length", "128", "--warmup", "1", "--iterations", "2"]),
     ]
-    benchmark = [
-        dict(name="roofline_calibration", argv=[py, "-m", "scripts.roofline_inference",
-             "--measure"]),
+    calibration = [
+        dict(name="blackwell_tensor_calibration", argv=[
+            py, "-m", "scripts.calibrate_blackwell"]),
     ]
-    benchmark += [
+    calibration += [
+        dict(name=f"stress_prefill_dense_b{batch}", argv=[
+            py, "-m", "scripts.stress_inference", "--mode", "prefill",
+            "--batch", str(batch), "--prompt-length", "512", "--warmup", "1",
+            "--iterations", "5", "--include-sampler"])
+        for batch in prefill_batches
+    ]
+    calibration += [
+        dict(name=f"stress_decode_b{batch}", argv=[py, "-m", "scripts.stress_inference",
+             "--mode", "decode", "--batch", str(batch), "--context-length", "512",
+             "--warmup", "2", "--iterations", "20", "--include-sampler"])
+        for batch in decode_batches
+    ]
+    benchmark = calibration + [
         dict(name=f"polar_{profile}", env={"ATMA_POLAR_TRITON_PROFILE": profile},
              argv=[py, "-m", "scripts.bench_kernel_efficiency", "--only", "b",
                    "--warmup", "10", "--iterations", "30"])
@@ -51,18 +69,9 @@ def command_plan(phase: str, decode_batches: list[int],
     benchmark += [
         dict(name="canonical_mixed", argv=[py, "-m", "scripts.bench_kernel_efficiency",
              "--full-model", "mixed", "--warmup", "2", "--iterations", "10"]),
-        dict(name="stress_prefill_dense", argv=[py, "-m", "scripts.stress_inference", "--mode",
-             "prefill", "--batch", "8", "--prompt-length", "512", "--warmup", "1",
-             "--iterations", "10", "--include-sampler"]),
         dict(name="stress_prefill_mixed", argv=[py, "-m", "scripts.stress_inference", "--mode",
              "prefill", "--lengths", MIXED, "--warmup", "1", "--iterations", "10",
              "--include-sampler"]),
-    ]
-    benchmark += [
-        dict(name=f"stress_decode_b{batch}", argv=[py, "-m", "scripts.stress_inference",
-             "--mode", "decode", "--batch", str(batch), "--context-length", "512",
-             "--warmup", "2", "--iterations", "20", "--include-sampler"])
-        for batch in decode_batches
     ]
     trace = [
         dict(name="nsys_prefill_mixed", optional_tool="nsys", argv=[
@@ -86,13 +95,15 @@ def command_plan(phase: str, decode_batches: list[int],
             "--only", "b", "--distribution", "mixed", "--cuda-profiler-range"]),
     ]
     training = [
-        dict(name=f"training_mfu_mb{microbatch}", argv=[
+        dict(name=f"training_mfu_d{train_hidden_size}_l{train_layers}_mb{microbatch}", argv=[
             py, "-m", "scripts.bench_training_mfu", "--microbatch", str(microbatch),
+            "--hidden-size", str(train_hidden_size), "--layers", str(train_layers),
             "--seq-length", "1024", "--grad-accum", "1", "--warmup", "2",
-            "--iterations", "5", "--measure-peak"])
+            "--iterations", "5", "--measure-peak", "--allow-conv-fallback"])
         for microbatch in train_microbatches
     ]
-    phases = {"smoke": smoke, "benchmark": benchmark, "trace": trace, "training": training}
+    phases = {"smoke": smoke, "calibrate": calibration, "benchmark": benchmark,
+              "trace": trace, "training": training}
     if phase == "all":
         return smoke + benchmark + training + trace
     return phases.get(phase, [])
@@ -193,36 +204,62 @@ def build_summary(output_dir: Path, metadata_record: dict, results: list[dict]) 
                 value = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(value, dict) and ("mode" in value or "mfu_hybrid_nominal_pct" in value):
+            if isinstance(value, dict) and ("mode" in value or "mfu_hybrid_nominal_pct" in value
+                                            or "calibration_kind" in value):
                 measurements[result["name"]] = value
                 break
     tuning_path = output_dir / "tuning.json"
+    saturation = {}
+    for label, prefix in (("prefill", "stress_prefill_dense_b"),
+                          ("decode", "stress_decode_b")):
+        points = []
+        for name, value in measurements.items():
+            if name.startswith(prefix) and value.get("status") == "ok":
+                points.append({"batch": int(name.removeprefix(prefix)),
+                               "throughput_tok_s": value["throughput_tok_s"],
+                               "p50_ms": value["p50_ms"],
+                               "peak_allocated_gib": value["peak_allocated_gib"]})
+        if points:
+            points.sort(key=lambda point: point["batch"])
+            maximum = max(point["throughput_tok_s"] for point in points)
+            knee = next(point for point in points
+                        if point["throughput_tok_s"] >= 0.95 * maximum)
+            saturation[label] = {"maximum_throughput_tok_s": maximum,
+                                 "knee_95pct": knee, "points": points}
     return {
         "cuda_probe": metadata_record["cuda_probe"],
         "tuning": json.loads(tuning_path.read_text(encoding="utf-8"))
                   if tuning_path.exists() else None,
         "measurements": measurements,
+        "saturation": saturation,
         "runs": results,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("preflight", "smoke", "benchmark", "training",
-                                            "trace", "all"),
+    parser.add_argument("--phase", choices=("preflight", "smoke", "calibrate", "benchmark",
+                                            "training", "trace", "all"),
                         default="all")
     parser.add_argument("--budget-minutes", type=float, default=50.0)
     parser.add_argument("--reserve-minutes", type=float, default=5.0)
-    parser.add_argument("--decode-batches", default="512,1024,2048,4096")
-    parser.add_argument("--train-microbatches", default="8,16,32")
+    parser.add_argument("--decode-batches", default="512,1024,2048,4096,6144,7168")
+    parser.add_argument("--prefill-batches", default="8,16,32,64")
+    parser.add_argument("--train-microbatches",
+                        help="default: 8,16,32,64 for D=1024; 1,2,4,8 for D>=4096")
+    parser.add_argument("--train-hidden-size", type=int, default=1024)
+    parser.add_argument("--train-layers", type=int, default=16)
     parser.add_argument("--output-dir")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     batches = [int(value) for value in args.decode_batches.split(",") if value]
-    train_microbatches = [int(value) for value in args.train_microbatches.split(",") if value]
+    train_microbatches = ([int(value) for value in args.train_microbatches.split(",") if value]
+                          if args.train_microbatches else None)
+    prefill_batches = [int(value) for value in args.prefill_batches.split(",") if value]
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir = Path(args.output_dir or ROOT / "profile_results" / stamp).resolve()
-    plan = command_plan(args.phase, batches, train_microbatches)
+    plan = command_plan(args.phase, batches, train_microbatches, prefill_batches,
+                        args.train_hidden_size, args.train_layers)
     if args.dry_run:
         print(json.dumps({"output_dir": str(output_dir), "plan": plan}, indent=2))
         return

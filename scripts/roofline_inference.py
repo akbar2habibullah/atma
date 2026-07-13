@@ -26,7 +26,10 @@ class Model:
         # 12 conv blocks * (projections 4D² + MLP 12D²)
         # 4 attention blocks * (QKVO 3.5D² + memory 2D² + MLP 12D²)
         # plus count and memory scalar projections.
-        return 262 * self.dim * self.dim + self.attn_layers * 3 * self.heads * self.dim
+        conv_layers = self.layers - self.attn_layers
+        block_weights = (16 * conv_layers * self.dim * self.dim
+                         + 35 * self.attn_layers * self.dim * self.dim // 2)
+        return block_weights + self.attn_layers * 3 * self.heads * self.dim
 
     @property
     def memory_state_bytes(self) -> int:
@@ -165,7 +168,10 @@ def main():
         if args.hbm_gbps is None and "b200" in name:
             peak_gb = 8000.0
         if args.hbm_gbps is None and "b300" in name:
-            peak_gb = 7100.0 if props.total_memory < 270 * 2**30 else 8000.0
+            # 252/288 GB are decimal marketing capacities (~234.7/~268.2 GiB).
+            # Prefer the explicit SXM product name when the provider exposes it.
+            peak_gb = (8000.0 if "sxm" in name or props.total_memory >= 250 * 2**30
+                       else 7100.0)
         tf, gb = measure_device()
         hw = Hardware(
             bf16_tflops=peak_tf,

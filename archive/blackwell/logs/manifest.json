@@ -1,0 +1,107 @@
+[
+  {
+    "name": "cuda_tests",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 125.997,
+    "log": "/root/atma/logs/cuda_tests.log"
+  },
+  {
+    "name": "smoke_prefill",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 112.465,
+    "log": "/root/atma/logs/smoke_prefill.log"
+  },
+  {
+    "name": "smoke_decode",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 30.836,
+    "log": "/root/atma/logs/smoke_decode.log"
+  },
+  {
+    "name": "roofline_calibration",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 6.514,
+    "log": "/root/atma/logs/roofline_calibration.log"
+  },
+  {
+    "name": "polar_l4",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 43.855,
+    "log": "/root/atma/logs/polar_l4.log"
+  },
+  {
+    "name": "polar_small",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 48.261,
+    "log": "/root/atma/logs/polar_small.log"
+  },
+  {
+    "name": "polar_large",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 44.628,
+    "log": "/root/atma/logs/polar_large.log"
+  },
+  {
+    "name": "canonical_mixed",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 43.885,
+    "log": "/root/atma/logs/canonical_mixed.log"
+  },
+  {
+    "name": "stress_prefill_dense",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 131.088,
+    "log": "/root/atma/logs/stress_prefill_dense.log"
+  },
+  {
+    "name": "stress_prefill_mixed",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 51.975,
+    "log": "/root/atma/logs/stress_prefill_mixed.log"
+  },
+  {
+    "name": "stress_decode_b512",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 55.757,
+    "log": "/root/atma/logs/stress_decode_b512.log"
+  },
+  {
+    "name": "stress_decode_b1024",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 51.914,
+    "log": "/root/atma/logs/stress_decode_b1024.log"
+  },
+  {
+    "name": "stress_decode_b2048",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 50.469,
+    "log": "/root/atma/logs/stress_decode_b2048.log"
+  },
+  {
+    "name": "stress_decode_b4096",
+    "status": "ok",
+    "returncode": 0,
+    "elapsed_seconds": 52.631,
+    "log": "/root/atma/logs/stress_decode_b4096.log"
+  },
+  {
+    "name": "training_mfu_mb8",
+    "status": "failed",
+    "returncode": 1,
+    "elapsed_seconds": 28.029,
+    "log": "/root/atma/logs/training_mfu_mb8.log"
+  }
+]

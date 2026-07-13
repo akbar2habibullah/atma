@@ -20,6 +20,9 @@ python -m scripts.bench_training_mfu --microbatch 16 --seq-length 1024 \
   --warmup 2 --iterations 5 --measure-peak
 ```
 
+The benchmark permits and labels the compiled PyTorch causal-convolution fallback. Pass
+`--require-optimized-conv` only when a compatible optional kernel is expected.
+
 See [blackwell_profiling.md](blackwell_profiling.md#training-mfu) for the B200/B300 sweep protocol
 and the MFU counting conventions.
 
