@@ -86,7 +86,7 @@ def tile_work(lengths, block_m=128, block_n=64, window=1024):
     return pairs
 
 
-def bench_b(warmup, iterations):
+def bench_b(warmup, iterations, distribution=None, cuda_profiler_range=False):
     torch.manual_seed(0)
     heads, dim, window = 8, 128, 1024
     params = dict(
@@ -98,6 +98,8 @@ def bench_b(warmup, iterations):
     )
     print("B1/B2 packed fresh heterogeneous Polar (BF16, H=8, D=128, window=1024)")
     for name, lengths in DISTRIBUTIONS.items():
+        if distribution and name != distribution:
+            continue
         total = sum(lengths)
         q = torch.randn(total, heads, dim, device="cuda", dtype=torch.bfloat16)
         k, v = torch.randn_like(q), torch.randn_like(q)
@@ -135,6 +137,14 @@ def bench_b(warmup, iterations):
         expected_mag = torch.cat([m[0].transpose(0, 1) for _, m in expected])
         max_error = max((grouped_c - expected_c).abs().max().item(),
                         (grouped_mag - expected_mag).abs().max().item())
+        if cuda_profiler_range:
+            torch.cuda.synchronize()
+            torch.cuda.profiler.start()
+            grouped()
+            torch.cuda.synchronize()
+            torch.cuda.profiler.stop()
+            print(f"Profiled one grouped launch: {name} max_err={max_error:.5f}")
+            return
         base = samples_ms(oracle, warmup, iterations)
         candidate = samples_ms(grouped, warmup, iterations)
         speedup = base["p50"] / candidate["p50"]
@@ -239,6 +249,10 @@ def main():
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--only", choices=("a1", "b"))
+    parser.add_argument("--distribution", choices=tuple(DISTRIBUTIONS),
+                        help="limit the grouped Polar benchmark to one distribution")
+    parser.add_argument("--cuda-profiler-range", action="store_true",
+                        help="profile exactly one grouped launch via cudaProfilerStart/Stop")
     parser.add_argument("--full-model", choices=tuple(DISTRIBUTIONS))
     args = parser.parse_args()
     if not torch.cuda.is_available():
@@ -250,7 +264,7 @@ def main():
     if args.only in (None, "a1"):
         bench_a1(args.warmup, args.iterations)
     if args.only in (None, "b"):
-        bench_b(args.warmup, args.iterations)
+        bench_b(args.warmup, args.iterations, args.distribution, args.cuda_profiler_range)
 
 
 if __name__ == "__main__":

@@ -19,18 +19,22 @@ def _percentile(values, fraction):
     return values[min(len(values) - 1, int(len(values) * fraction))]
 
 
-def _measure(fn, warmup, iterations):
+def _measure(fn, warmup, iterations, cuda_profiler_range=False):
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     starts = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
     ends = [torch.cuda.Event(enable_timing=True) for _ in range(iterations)]
+    if cuda_profiler_range:
+        torch.cuda.profiler.start()
     for start, end in zip(starts, ends):
         start.record()
         fn()
         end.record()
     torch.cuda.synchronize()
+    if cuda_profiler_range:
+        torch.cuda.profiler.stop()
     values = [start.elapsed_time(end) for start, end in zip(starts, ends)]
     return {
         "p50_ms": _percentile(values, 0.50),
@@ -175,7 +179,7 @@ def _run_prefill(args, model, config):
         logits = model.compute_logits(model(ids))
         return sampler(logits, temperatures) if sampler is not None else logits
 
-    result = _measure(step, args.warmup, args.iterations)
+    result = _measure(step, args.warmup, args.iterations, args.cuda_profiler_range)
     result.update(
         mode="prefill", route=route, batch=len(lengths), lengths=lengths,
         tokens=total, throughput_tok_s=total / (result["p50_ms"] / 1000.0),
@@ -245,7 +249,7 @@ def _run_decode(args, model, config):
         logits = model.compute_logits(static_hidden)
         return sampler(logits, temperatures) if sampler is not None else logits
 
-    result = _measure(step, args.warmup, args.iterations)
+    result = _measure(step, args.warmup, args.iterations, args.cuda_profiler_range)
     result.update(
         mode="decode", route="cuda_graph", batch=batch,
         context_length=(context_lengths[0] if len(set(context_lengths)) == 1 else None),
@@ -275,6 +279,8 @@ def main():
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--include-sampler", action="store_true")
+    parser.add_argument("--cuda-profiler-range", action="store_true",
+                        help="bracket measured iterations with cudaProfilerStart/Stop")
     args = parser.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")

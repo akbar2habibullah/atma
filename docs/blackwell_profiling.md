@@ -1,0 +1,91 @@
+# B200/B300 profiling runbook
+
+This run is designed for a single rented GPU with less than one hour of paid time. The default
+session spends at most 45 minutes on work and preserves the final 5 minutes for copying artifacts.
+It profiles deterministic BF16 Atma inference, not model quality: the 9.2B stress model uses zero
+weights but executes the production GEMM and kernel shapes.
+
+## Before starting the rental
+
+Build an image or persistent volume with the repository and its Python environment already
+installed. At minimum, verify imports for `torch`, `triton`, `fla` (flash-linear-attention), and
+`pytest`. Install Nsight Systems
+if a timeline is required. Do not plan to install packages, compile a custom PyTorch build, or
+download a checkpoint during the paid session.
+
+Validate the command plan on any machine (CUDA is not needed):
+
+```bash
+python -m scripts.profile_blackwell --dry-run
+```
+
+Copy the repository or persistent Triton cache to the rental host before the clock starts when the
+provider permits it. A cache compiled for another GPU architecture is not a substitute for the
+Blackwell warmups; the runner deliberately compiles before timing.
+
+## Paid session
+
+From the repository root:
+
+```bash
+python -m scripts.profile_blackwell --phase preflight --output-dir /mnt/results/preflight
+python -m scripts.profile_blackwell --phase all --budget-minutes 50 \
+  --reserve-minutes 5 --output-dir /mnt/results/blackwell
+```
+
+The preflight captures the exact GPU SKU, clocks/power information, driver, PyTorch CUDA build,
+Triton version, compute capability, optional shared memory, git commit and dirty state, and
+Nsight versions. Inspect `metadata.json` immediately. Stop the rental if CUDA is unavailable, the
+GPU is not the paid SKU, or the driver/runtime combination cannot launch a tensor operation.
+
+The correctness tests and two small-model smoke workloads are hard gates. The remaining order is:
+
+1. measured BF16 GEMM and HBM calibration;
+2. Polar `l4`, `small`, and `large` launch-profile sweep;
+3. canonical 16-layer heterogeneous prefill;
+4. 9.2B dense and mixed prefill;
+5. 9.2B decode at batches 512, 1024, 2048, and 4096;
+6. compact Nsight Systems traces and one bounded grouped-Polar Nsight Compute report, when the
+   respective tools are installed.
+
+Each workload runs in a new process so graph pools, Triton/FLA shape state, and peak-memory
+statistics do not leak between measurements. Every command gets its own log and `manifest.json`
+records status and elapsed time. `summary.json` gathers the structured stress measurements and
+selected tuning profile for quick copying. When the time reserve is reached, no new workload starts.
+
+For a shorter or lower-risk first rental:
+
+```bash
+python -m scripts.profile_blackwell --phase all --budget-minutes 35 \
+  --reserve-minutes 5 --decode-batches 512,1024,2048
+```
+
+For B300 capacity exploration, add larger fresh-process points only after the standard run:
+
+```bash
+python -m scripts.profile_blackwell --phase benchmark --budget-minutes 15 \
+  --reserve-minutes 2 --decode-batches 4096,6144,8192 \
+  --output-dir /mnt/results/b300-capacity
+```
+
+An OOM is a capacity observation, not a deployment recommendation. The stress harness allocates
+only live state and one exact-batch CUDA graph; it does not retain every production graph bucket or
+reserve unused serving cache.
+
+## Decisions to make from the artifacts
+
+- The runner selects the profile with the lowest summed grouped-kernel p50 and applies it to later
+  workloads; inspect `tuning.json` and require the canonical full-model result to confirm the gain.
+  `auto` currently maps Blackwell to `large` when no explicit profile is selected.
+- Compare prefill against measured BF16 throughput and decode against measured HBM throughput;
+  nominal peak percentages alone are sensitive to provider power and clock limits.
+- Use the Nsight timeline to decide whether the next experiment targets dispatch gaps, GEMMs,
+  Polar/Titans kernels, or memory traffic. The automated Compute report collects only one grouped
+  Polar launch. Do not run broad Nsight Compute section sets over the full model under a one-hour
+  budget; select any additional hot kernel from the Systems trace for a follow-up command.
+- Report SKU and memory size explicitly. B300 SXM (288 GB) and the 252 GB DGX Station B300 have
+  different published memory bandwidth, and provider power limits can change attainable results.
+
+The roofline helper auto-labels B200/B300 and uses published dense BF16 peaks. It distinguishes the
+252 GB B300 memory SKU from 288 GB B300 for the nominal bandwidth; override uncertain provider
+SKUs explicitly with `--bf16-tflops` and `--hbm-gbps`.

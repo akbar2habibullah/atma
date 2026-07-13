@@ -2,6 +2,7 @@
 .claude
 *.zip
 /logs
+/profile_results
 **/.ipynb_checkpoints
 ablation/shards
 paper/arxiv

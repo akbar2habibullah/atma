@@ -84,6 +84,7 @@ Full per-length tables and the `eval.py` guide: **[docs/evaluation.md](docs/eval
 | [docs/evaluation.md](docs/evaluation.md) | Length extrapolation, long-range retrieval, `eval.py` reference |
 | [docs/inference.md](docs/inference.md) | Paged inference engine: usage, routing, cache/state behavior |
 | [docs/kernel.md](docs/kernel.md) | Inference kernel routes, grouped heterogeneous prefill, L40S results |
+| [docs/blackwell_profiling.md](docs/blackwell_profiling.md) | Budgeted B200/B300 profiling harness and runbook |
 | [kernel/README.md](kernel/README.md) | FlashAttention-style Triton polar kernels |
 
 ## Project structure

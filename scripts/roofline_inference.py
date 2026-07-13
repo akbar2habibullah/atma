@@ -1,8 +1,8 @@
 """Roofline model for Atma prefill and decode inference.
 
-The default attainable ceilings are measured on the repository's NVIDIA L40S:
-representative BF16 GEMMs and a 1 GiB device-to-device copy. Pass --measure to
-re-run those calibration microbenchmarks on the current CUDA device.
+The default peak and attainable ceilings are the repository's NVIDIA L40S
+measurements.  Pass ``--measure`` on another GPU and provide that GPU's dense
+BF16 and HBM peaks so efficiency is not accidentally reported against L40S.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def decode_cost(m: Model, batch: int, context: int) -> tuple[float, float]:
     return flops, weights + states + kv + activations
 
 
-def measure_l40s() -> tuple[float, float]:
+def measure_device() -> tuple[float, float]:
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError("--measure requires CUDA")
@@ -143,13 +143,40 @@ def main():
     p.add_argument("--prefill-tok-s", type=float, default=0)
     p.add_argument("--decode-tok-s", type=float, default=0)
     p.add_argument("--measure", action="store_true")
+    p.add_argument("--bf16-tflops", type=float,
+                   help="dense BF16 Tensor Core peak (not sparse)")
+    p.add_argument("--hbm-gbps", type=float,
+                   help="peak device-memory bandwidth")
+    p.add_argument("--label", help="GPU/SKU label shown in output")
     args = p.parse_args()
 
-    hw = Hardware()
+    label = args.label or "L40S"
+    peak_tf = args.bf16_tflops or Hardware.bf16_tflops
+    peak_gb = args.hbm_gbps or Hardware.hbm_gbps
     if args.measure:
-        tf, gb = measure_l40s()
-        hw = Hardware(attainable_tflops=tf, attainable_gbps=gb)
-    print(f"L40S ceilings: {hw.bf16_tflops:.2f} TFLOP/s BF16, {hw.hbm_gbps:.1f} GB/s HBM")
+        import torch
+        props = torch.cuda.get_device_properties(0)
+        label = args.label or props.name
+        name = props.name.lower()
+        # HGX/DGX B200 and B300 publish 2.25 PFLOP/s dense BF16 per GPU and
+        # 8 TB/s HBM. DGX Station's 252 GB B300 has a 7.1 TB/s memory SKU.
+        if args.bf16_tflops is None and ("b200" in name or "b300" in name):
+            peak_tf = 2250.0
+        if args.hbm_gbps is None and "b200" in name:
+            peak_gb = 8000.0
+        if args.hbm_gbps is None and "b300" in name:
+            peak_gb = 7100.0 if props.total_memory < 270 * 2**30 else 8000.0
+        tf, gb = measure_device()
+        hw = Hardware(
+            bf16_tflops=peak_tf,
+            hbm_gbps=peak_gb,
+            attainable_tflops=tf,
+            attainable_gbps=gb,
+        )
+    else:
+        hw = Hardware(bf16_tflops=peak_tf, hbm_gbps=peak_gb)
+    print(f"{label} ceilings: {hw.bf16_tflops:.2f} TFLOP/s BF16, "
+          f"{hw.hbm_gbps:.1f} GB/s HBM")
     print(f"Calibrated:     {hw.attainable_tflops:.1f} TFLOP/s "
           f"({100*hw.attainable_tflops/hw.bf16_tflops:.1f}% MFU), "
           f"{hw.attainable_gbps:.1f} GB/s ({100*hw.attainable_gbps/hw.hbm_gbps:.1f}% MBU)")
