@@ -98,25 +98,28 @@ def command_plan(phase: str, decode_batches: list[int],
     return phases.get(phase, [])
 
 
-def capture(cmd: list[str]) -> str:
+def capture(cmd: list[str], timeout: float = 30) -> str:
     try:
         return subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, timeout=30).stdout.strip()
+                              stderr=subprocess.STDOUT, timeout=timeout).stdout.strip()
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"unavailable: {error}"
 
 
 def metadata() -> dict:
-    probe = (
+    cuda_probe = (
         "import json,torch; assert torch.cuda.is_available(), 'CUDA unavailable'; "
         "p=torch.cuda.get_device_properties(0); x=torch.ones((128,128),device='cuda',dtype=torch.bfloat16); "
-        "y=x@x; torch.cuda.synchronize(); import triton,fla,importlib.util; "
-        "from inference.models.atma import _HAS_FLA; assert _HAS_FLA, 'FLA fused kernel unavailable'; "
-        "pytest_spec=importlib.util.find_spec('pytest'); "
+        "y=x@x; torch.cuda.synchronize(); "
         "print(json.dumps(dict(gpu=p.name, capability=[p.major,p.minor], memory_bytes=p.total_memory, "
         "smem_optin=getattr(p,'shared_memory_per_block_optin',None), torch=torch.__version__, "
-        "torch_cuda=torch.version.cuda, triton=triton.__version__, pytest_installed=bool(pytest_spec), "
-        "fla=getattr(fla,'__version__','unknown'))))"
+        "torch_cuda=torch.version.cuda, bf16_matmul_ok=bool(torch.isfinite(y).all()))))"
+    )
+    dependency_probe = (
+        "import importlib.metadata as m,importlib.util as u,json; "
+        "v=lambda n: m.version(n) if u.find_spec(n.replace('-','_')) else None; "
+        "print(json.dumps(dict(triton=v('triton'),pytest=v('pytest'),"
+        "fla_module=bool(u.find_spec('fla')),kernels_module=bool(u.find_spec('kernels')))))"
     )
     return {
         "captured_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -126,7 +129,8 @@ def metadata() -> dict:
         "git_head": capture(["git", "rev-parse", "HEAD"]),
         "git_status": capture(["git", "status", "--short"]),
         "nvidia_smi": capture(["nvidia-smi", "-q"]),
-        "cuda_probe": capture([PYTHON, "-c", probe]),
+        "cuda_probe": capture([PYTHON, "-c", cuda_probe], timeout=60),
+        "dependency_probe": capture([PYTHON, "-c", dependency_probe]),
         "nsys_version": capture(["nsys", "--version"]),
         "ncu_version": capture(["ncu", "--version"]),
     }

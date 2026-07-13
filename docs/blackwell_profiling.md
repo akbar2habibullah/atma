@@ -34,9 +34,11 @@ python -m scripts.profile_blackwell --phase all --budget-minutes 50 \
 ```
 
 The preflight captures the exact GPU SKU, clocks/power information, driver, PyTorch CUDA build,
-Triton version, compute capability, optional shared memory, git commit and dirty state, and
-Nsight versions. Inspect `metadata.json` immediately. Stop the rental if CUDA is unavailable, the
-GPU is not the paid SKU, or the driver/runtime combination cannot launch a tensor operation.
+compute capability, optional shared memory, installed-package discovery, git commit and dirty
+state, and Nsight versions. Inspect `metadata.json` immediately. CUDA availability plus a BF16
+matmul is the only hard preflight gate; heavyweight FLA/Triton kernel imports and execution are
+gated immediately before the relevant benchmark. Stop the rental if CUDA is unavailable, the GPU
+is not the paid SKU, or the driver/runtime combination cannot launch the BF16 tensor operation.
 
 The correctness tests and two small-model smoke workloads are hard gates. The remaining order is:
 
