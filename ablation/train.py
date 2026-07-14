@@ -142,9 +142,9 @@ def main():
         peak_flops = 65e12
         if device.type == "cuda":
             name = torch.cuda.get_device_name()
-            peak_flops = {"A100": 312e12, "V100": 125e12, "T4": 65e12, "L4": 121e12,
-                          "L40S": 362e12, "H100": 989e12, "H200": 989e12}.get(next((k for k in
-                          ["A100", "V100", "T4", "L4", "L40S", "H100", "H200"] if k in name), "T4"), 65e12)
+            peak_flops = {"A100": 312e12, "V100": 125e12, "T4": 65e12, "L40S": 362e12, "L4": 121e12,
+                          "H100": 989e12, "H200": 989e12}.get(next((k for k in
+                          ["A100", "V100", "T4", "L40S", "L4", "H100", "H200"] if k in name), "T4"), 65e12)
 
         sigr_alpha = cfg["sigr_alpha"]
         dist_w = cfg["dist_align_loss_weight"]
