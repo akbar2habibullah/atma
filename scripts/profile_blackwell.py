@@ -142,14 +142,35 @@ def metadata() -> dict:
         "smem_optin=getattr(p,'shared_memory_per_block_optin',None), torch=torch.__version__, "
         "torch_cuda=torch.version.cuda, bf16_matmul_ok=bool(torch.isfinite(y).all()))))"
     )
-    dependency_probe = (
-        "import importlib.metadata as m,importlib.util as u,json; "
-        "vs={d.metadata['Name'].lower():d.version for d in m.distributions() if d.metadata['Name']}; "
-        "print(json.dumps(dict(triton=vs.get('triton'),pytest=vs.get('pytest'),"
-        "flash_linear_attention=vs.get('flash-linear-attention'),fla_core=vs.get('fla-core'),"
-        "fla_module=bool(u.find_spec('fla')),fla_ops_module=bool(u.find_spec('fla.ops')) if u.find_spec('fla') else False,"
-        "kernels_module=bool(u.find_spec('kernels')))))"
-    )
+    dependency_probe = """
+import importlib.metadata as m
+import importlib.util as u
+import json
+versions = {d.metadata['Name'].lower(): d.version for d in m.distributions()
+            if d.metadata['Name']}
+print(json.dumps({
+    "triton": versions.get("triton"),
+    "pytest": versions.get("pytest"),
+    "flash_linear_attention": versions.get("flash-linear-attention"),
+    "fla_core": versions.get("fla-core"),
+    "torchaudio": versions.get("torchaudio"),
+    "torchvision": versions.get("torchvision"),
+    "fla_module": bool(u.find_spec("fla")),
+    "kernels_module": bool(u.find_spec("kernels")),
+}))
+"""
+    fla_probe = """
+import json
+import traceback
+try:
+    import fla
+    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+    print(json.dumps({"status": "ok", "fla_path": fla.__file__,
+                      "kernel": "chunk_gated_delta_rule"}))
+except BaseException as error:
+    print(json.dumps({"status": "error", "type": type(error).__name__,
+                      "message": str(error), "traceback": traceback.format_exc()}))
+"""
     return {
         "captured_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "host": platform.node(),
@@ -160,6 +181,7 @@ def metadata() -> dict:
         "nvidia_smi": capture(["nvidia-smi", "-q"]),
         "cuda_probe": capture([PYTHON, "-c", cuda_probe], timeout=60),
         "dependency_probe": capture([PYTHON, "-c", dependency_probe]),
+        "fla_probe": capture([PYTHON, "-c", fla_probe], timeout=30),
         "nsys_version": capture(["nsys", "--version"]),
         "ncu_version": capture(["ncu", "--version"]),
     }
@@ -300,6 +322,13 @@ def main() -> None:
     (output_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     if "unavailable:" in meta["cuda_probe"] or "Traceback" in meta["cuda_probe"]:
         raise SystemExit(f"CUDA preflight failed; see {output_dir / 'metadata.json'}")
+    if args.train_require_fla:
+        try:
+            fla_ok = json.loads(meta["fla_probe"]).get("status") == "ok"
+        except (json.JSONDecodeError, AttributeError):
+            fla_ok = False
+        if not fla_ok:
+            raise SystemExit(f"FLA preflight failed; see {output_dir / 'metadata.json'}")
     if args.phase == "preflight":
         print(output_dir)
         return

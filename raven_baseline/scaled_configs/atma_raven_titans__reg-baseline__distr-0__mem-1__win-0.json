@@ -52,7 +52,8 @@
     16384,
     32768,
     65536,
-    131072
+    131072,
+    262144
   ],
   "needle_distances": [
     2048,
@@ -61,7 +62,8 @@
     16384,
     32768,
     65536,
-    131072
+    131072,
+    262144
   ],
   "clean_dataset": "codelion/finepdfs-1B",
   "val_data": "finewebedu10B/finewebedu_val_*.bin",

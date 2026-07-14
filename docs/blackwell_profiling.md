@@ -127,6 +127,11 @@ allowed and explicitly recorded because the optional kernels may be unavailable 
 those compatible optimized kernels. MFU from a fallback run describes that deployed backend and
 must not be presented as fused-kernel performance.
 
+FLA 0.5.x imports its optional model package before `fla.ops`. A binary-incompatible optional
+`torchaudio` installation can therefore make the kernel import fail inside Transformers. Atma does
+not use audio; remove that package (`python -m pip uninstall -y torchaudio`) or install the exact
+TorchAudio build matching the installed PyTorch build before using `--train-require-fla`.
+
 The primary `mfu_hybrid_*` fields use `6*N + 12*attention_layers*hidden*sequence` FLOPs per token.
 The `mfu_legacy_*` fields reproduce `train.py`'s historical convention, which charges quadratic
 attention to all layers even though Atma has four attention layers out of sixteen. Both formulas
