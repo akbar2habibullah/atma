@@ -105,6 +105,8 @@ if device.type == "cuda":
         peak_flops = 65e12
     elif "L4" in gpu_name:
         peak_flops = 121e12
+    elif "L40S" in gpu_name:
+        peak_flops = 362e12
     elif "H100" in gpu_name:
         peak_flops = 989e12
     elif "H200" in gpu_name:
