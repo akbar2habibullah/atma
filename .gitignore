@@ -6,4 +6,6 @@
 /.torchinductor
 **/.ipynb_checkpoints
 ablation/shards
+scaled_ablation/eval_manifests
+scaled_ablation/cross_eval_*.json
 paper/arxiv

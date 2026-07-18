@@ -110,6 +110,34 @@ your-org/atma-10b-polar__reg-baseline__distr-0__mem-1__win-0
 
 `HF_TOKEN` must be available in the environment for upload.
 
+## Cross-evaluate Hugging Face checkpoints
+
+Use the checkpoint evaluator to compare saved Atma models under one fixed GPU/PyTorch runtime.
+It downloads each repository, persists one shared FinePDF document manifest, and records successful
+and OOM evaluation counts.
+
+The quickest test of the L4/PyTorch 2.12 anomaly uses the shared FineWeb-Edu stream only:
+
+```bash
+FLA_CUSTOM_OP=1 python -m scaled_ablation.eval_hf_checkpoints \
+  --metrics junk \
+  --sdpa-backend flash \
+  --output scaled_ablation/cross_eval_l4_torch212_junk.json
+```
+
+Run all original metrics through 131K with:
+
+```bash
+FLA_CUSTOM_OP=1 python -m scaled_ablation.eval_hf_checkpoints \
+  --metrics junk clean needle \
+  --sdpa-backend flash \
+  --output scaled_ablation/cross_eval_l4_torch212.json
+```
+
+The default model list contains the L4 NoPE, L40S NoPE, and L40S Polar checkpoints. Override it
+with `--models <repo-id> ...`. Use the same `--doc-manifest` when repeating the comparison on a
+different runtime.
+
 ## Parse And Dashboard
 
 ```bash

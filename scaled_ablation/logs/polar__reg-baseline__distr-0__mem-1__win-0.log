@@ -1,0 +1,178 @@
+====================================================================================================
+[scaled_ablation] run_id=polar__reg-baseline__distr-0__mem-1__win-0 host=default device=cuda torch=2.13.0+cu130 fla_custom_op=1 wall_custom_op=1
+====================================================================================================
+[scaled_ablation] train_steps=18722 (num_chunks=99, batch_size=524288, seq_len=2048)
+[scaled_ablation] params=378.22M
+
+===ABLATION_CONFIG_JSON===
+{"attn_type": "polar", "reg_mode": "baseline", "distractor": false, "memory": true, "window": false, "vocab_size": 50304, "num_hidden_layers": 16, "hidden_size": 1024, "head_dim": 128, "window_size": 1024, "seq_len": 2048, "num_chunks": 99, "batch_size": 524288, "val_tokens": 2097152, "mbs": 16, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha_on": 0.01, "dist_align_weight_on": 0.01, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "fla_custom_op": true, "wall_gate_bias": null, "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "clean_dataset": "codelion/finepdfs-1B", "val_data": "finewebedu10B/finewebedu_val_*.bin", "num_eval_docs": 64, "num_needle_trials": 64, "needle_val_len": 5, "run_id": "polar__reg-baseline__distr-0__mem-1__win-0", "num_random_keys": 0, "dist_align_loss_weight": 0.0, "sigr_alpha": 0.0, "attn_window": null, "mem_enabled": true, "num_params": 378220864, "host": "default", "device": "cuda"}
+===END===
+step:0/18722 val_loss:10.82584 wall:0.0s step_avg:0.0ms MFU:0.0%
+step:125/18722 val_loss:4.48167 wall:1243.4s step_avg:9947.2ms MFU:38.9%
+step:250/18722 val_loss:3.96073 wall:2429.4s step_avg:9487.7ms MFU:40.8%
+step:375/18722 val_loss:3.75894 wall:3619.3s step_avg:9519.1ms MFU:40.7%
+step:500/18722 val_loss:3.63941 wall:4814.9s step_avg:9564.9ms MFU:40.5%
+step:625/18722 val_loss:3.55334 wall:6010.5s step_avg:9565.2ms MFU:40.5%
+step:750/18722 val_loss:3.49477 wall:7208.5s step_avg:9584.2ms MFU:40.4%
+step:875/18722 val_loss:3.46005 wall:8401.6s step_avg:9544.2ms MFU:40.5%
+step:1000/18722 val_loss:3.41818 wall:9592.6s step_avg:9528.5ms MFU:40.6%
+step:1125/18722 val_loss:3.38270 wall:10786.8s step_avg:9553.6ms MFU:40.5%
+step:1250/18722 val_loss:3.36408 wall:11979.8s step_avg:9543.4ms MFU:40.5%
+step:1375/18722 val_loss:3.33860 wall:13168.5s step_avg:9510.2ms MFU:40.7%
+step:1500/18722 val_loss:3.31495 wall:14351.4s step_avg:9462.7ms MFU:40.9%
+step:1625/18722 val_loss:3.30410 wall:15541.5s step_avg:9521.3ms MFU:40.6%
+step:1750/18722 val_loss:3.28545 wall:16737.6s step_avg:9568.4ms MFU:40.4%
+step:1875/18722 val_loss:3.26739 wall:17935.3s step_avg:9581.6ms MFU:40.4%
+step:2000/18722 val_loss:3.25600 wall:19131.7s step_avg:9571.6ms MFU:40.4%
+step:2125/18722 val_loss:3.24906 wall:20331.5s step_avg:9598.6ms MFU:40.3%
+step:2250/18722 val_loss:3.23445 wall:21522.6s step_avg:9528.2ms MFU:40.6%
+step:2375/18722 val_loss:3.22518 wall:22719.3s step_avg:9574.2ms MFU:40.4%
+step:2500/18722 val_loss:3.22358 wall:23916.8s step_avg:9579.4ms MFU:40.4%
+step:2625/18722 val_loss:3.20779 wall:25114.0s step_avg:9577.5ms MFU:40.4%
+step:2750/18722 val_loss:3.19795 wall:26309.3s step_avg:9562.7ms MFU:40.5%
+step:2875/18722 val_loss:3.19863 wall:27506.2s step_avg:9575.6ms MFU:40.4%
+step:3000/18722 val_loss:3.18886 wall:28700.5s step_avg:9554.0ms MFU:40.5%
+step:3125/18722 val_loss:3.17716 wall:29899.6s step_avg:9592.8ms MFU:40.3%
+step:3250/18722 val_loss:3.17361 wall:31093.8s step_avg:9553.4ms MFU:40.5%
+step:3375/18722 val_loss:3.16583 wall:32289.1s step_avg:9562.6ms MFU:40.5%
+step:3500/18722 val_loss:3.15827 wall:33479.5s step_avg:9523.7ms MFU:40.6%
+step:3625/18722 val_loss:3.16329 wall:34671.1s step_avg:9532.3ms MFU:40.6%
+step:3750/18722 val_loss:3.15192 wall:35864.5s step_avg:9547.7ms MFU:40.5%
+step:3875/18722 val_loss:3.14415 wall:37058.9s step_avg:9555.0ms MFU:40.5%
+step:4000/18722 val_loss:3.14748 wall:38251.1s step_avg:9537.7ms MFU:40.6%
+step:4125/18722 val_loss:3.14101 wall:39447.2s step_avg:9568.5ms MFU:40.4%
+step:4250/18722 val_loss:3.13518 wall:40643.8s step_avg:9572.8ms MFU:40.4%
+step:4375/18722 val_loss:3.13683 wall:41836.8s step_avg:9543.6ms MFU:40.5%
+step:4500/18722 val_loss:3.13255 wall:43030.9s step_avg:9553.4ms MFU:40.5%
+step:4625/18722 val_loss:3.12219 wall:44226.8s step_avg:9566.7ms MFU:40.5%
+step:4750/18722 val_loss:3.12263 wall:45424.1s step_avg:9578.3ms MFU:40.4%
+step:4875/18722 val_loss:3.12476 wall:46621.3s step_avg:9577.6ms MFU:40.4%
+step:5000/18722 val_loss:3.11309 wall:47821.2s step_avg:9599.3ms MFU:40.3%
+step:5125/18722 val_loss:3.11275 wall:49017.9s step_avg:9573.6ms MFU:40.4%
+step:5250/18722 val_loss:3.11873 wall:50210.7s step_avg:9542.5ms MFU:40.6%
+step:5375/18722 val_loss:3.10875 wall:51408.8s step_avg:9584.6ms MFU:40.4%
+step:5500/18722 val_loss:3.10727 wall:52604.9s step_avg:9569.4ms MFU:40.4%
+step:5625/18722 val_loss:3.10971 wall:53796.8s step_avg:9534.6ms MFU:40.6%
+step:5750/18722 val_loss:3.10980 wall:54988.8s step_avg:9536.1ms MFU:40.6%
+step:5875/18722 val_loss:3.10061 wall:56183.2s step_avg:9555.6ms MFU:40.5%
+step:6000/18722 val_loss:3.08787 wall:57373.7s step_avg:9523.6ms MFU:40.6%
+step:6125/18722 val_loss:3.08714 wall:58561.5s step_avg:9502.9ms MFU:40.7%
+step:6250/18722 val_loss:3.08424 wall:59752.7s step_avg:9529.1ms MFU:40.6%
+step:6375/18722 val_loss:3.08033 wall:60946.8s step_avg:9553.0ms MFU:40.5%
+step:6500/18722 val_loss:3.07647 wall:62138.1s step_avg:9530.2ms MFU:40.6%
+step:6625/18722 val_loss:3.07365 wall:63320.3s step_avg:9457.4ms MFU:40.9%
+step:6750/18722 val_loss:3.06988 wall:64515.2s step_avg:9559.9ms MFU:40.5%
+step:6875/18722 val_loss:3.06661 wall:65706.0s step_avg:9525.8ms MFU:40.6%
+step:7000/18722 val_loss:3.06191 wall:66898.4s step_avg:9539.9ms MFU:40.6%
+step:7125/18722 val_loss:3.06028 wall:68086.8s step_avg:9507.2ms MFU:40.7%
+step:7250/18722 val_loss:3.06181 wall:69277.4s step_avg:9524.6ms MFU:40.6%
+step:7375/18722 val_loss:3.05390 wall:70466.5s step_avg:9512.5ms MFU:40.7%
+step:7500/18722 val_loss:3.05162 wall:71660.5s step_avg:9552.2ms MFU:40.5%
+step:7625/18722 val_loss:3.05293 wall:72859.5s step_avg:9591.7ms MFU:40.3%
+step:7750/18722 val_loss:3.04575 wall:74052.6s step_avg:9544.8ms MFU:40.5%
+step:7875/18722 val_loss:3.04554 wall:75245.7s step_avg:9545.5ms MFU:40.5%
+step:8000/18722 val_loss:3.04174 wall:76437.5s step_avg:9534.0ms MFU:40.6%
+step:8125/18722 val_loss:3.03772 wall:77622.1s step_avg:9477.2ms MFU:40.8%
+step:8250/18722 val_loss:3.04099 wall:78811.6s step_avg:9515.7ms MFU:40.7%
+step:8375/18722 val_loss:3.03583 wall:80003.8s step_avg:9537.5ms MFU:40.6%
+step:8500/18722 val_loss:3.03555 wall:81189.1s step_avg:9482.3ms MFU:40.8%
+step:8625/18722 val_loss:3.03004 wall:82380.6s step_avg:9532.3ms MFU:40.6%
+step:8750/18722 val_loss:3.02603 wall:83571.5s step_avg:9527.3ms MFU:40.6%
+step:8875/18722 val_loss:3.02488 wall:84759.1s step_avg:9500.5ms MFU:40.7%
+step:9000/18722 val_loss:3.02027 wall:85953.4s step_avg:9554.1ms MFU:40.5%
+step:9125/18722 val_loss:3.02062 wall:87152.5s step_avg:9593.3ms MFU:40.3%
+step:9250/18722 val_loss:3.01534 wall:88348.0s step_avg:9563.9ms MFU:40.5%
+step:9375/18722 val_loss:3.01799 wall:89544.1s step_avg:9569.0ms MFU:40.4%
+step:9500/18722 val_loss:3.00929 wall:90744.9s step_avg:9606.2ms MFU:40.3%
+step:9625/18722 val_loss:3.00922 wall:91935.7s step_avg:9526.5ms MFU:40.6%
+step:9750/18722 val_loss:3.00578 wall:93127.1s step_avg:9531.0ms MFU:40.6%
+step:9875/18722 val_loss:3.00140 wall:94315.7s step_avg:9508.5ms MFU:40.7%
+step:10000/18722 val_loss:3.00417 wall:95508.8s step_avg:9545.0ms MFU:40.5%
+step:10125/18722 val_loss:2.99775 wall:96707.2s step_avg:9587.5ms MFU:40.4%
+step:10250/18722 val_loss:2.99726 wall:97900.1s step_avg:9543.3ms MFU:40.6%
+step:10375/18722 val_loss:2.99215 wall:99091.9s step_avg:9534.3ms MFU:40.6%
+step:10500/18722 val_loss:2.98903 wall:100281.8s step_avg:9519.0ms MFU:40.7%
+step:10625/18722 val_loss:2.99077 wall:101476.4s step_avg:9557.0ms MFU:40.5%
+step:10750/18722 val_loss:2.98528 wall:102662.0s step_avg:9484.2ms MFU:40.8%
+step:10875/18722 val_loss:2.98515 wall:103853.5s step_avg:9532.2ms MFU:40.6%
+step:11000/18722 val_loss:2.98053 wall:105049.8s step_avg:9570.6ms MFU:40.4%
+step:11125/18722 val_loss:2.98029 wall:106246.1s step_avg:9570.6ms MFU:40.4%
+step:11250/18722 val_loss:2.97805 wall:107444.9s step_avg:9589.8ms MFU:40.4%
+step:11375/18722 val_loss:2.97799 wall:108637.9s step_avg:9544.1ms MFU:40.5%
+step:11500/18722 val_loss:2.97286 wall:109829.1s step_avg:9529.5ms MFU:40.6%
+step:11625/18722 val_loss:2.96801 wall:111027.6s step_avg:9588.1ms MFU:40.4%
+step:11750/18722 val_loss:2.96906 wall:112217.5s step_avg:9519.3ms MFU:40.7%
+step:11875/18722 val_loss:2.96474 wall:113411.6s step_avg:9552.6ms MFU:40.5%
+step:12000/18722 val_loss:2.96524 wall:114608.5s step_avg:9575.2ms MFU:40.4%
+step:12125/18722 val_loss:2.96230 wall:115807.4s step_avg:9591.8ms MFU:40.3%
+step:12250/18722 val_loss:2.95800 wall:117005.6s step_avg:9585.2ms MFU:40.4%
+step:12375/18722 val_loss:2.95838 wall:118203.9s step_avg:9586.5ms MFU:40.4%
+step:12500/18722 val_loss:2.95459 wall:119394.1s step_avg:9521.7ms MFU:40.6%
+step:12625/18722 val_loss:2.95115 wall:120589.5s step_avg:9562.6ms MFU:40.5%
+step:12750/18722 val_loss:2.94771 wall:121780.4s step_avg:9527.2ms MFU:40.6%
+step:12875/18722 val_loss:2.94743 wall:122973.7s step_avg:9546.8ms MFU:40.5%
+step:13000/18722 val_loss:2.94418 wall:124171.1s step_avg:9579.4ms MFU:40.4%
+step:13125/18722 val_loss:2.94139 wall:125369.3s step_avg:9585.6ms MFU:40.4%
+step:13250/18722 val_loss:2.94014 wall:126555.2s step_avg:9487.2ms MFU:40.8%
+step:13375/18722 val_loss:2.93725 wall:127746.8s step_avg:9532.9ms MFU:40.6%
+step:13500/18722 val_loss:2.93617 wall:128950.0s step_avg:9624.8ms MFU:40.2%
+step:13625/18722 val_loss:2.93212 wall:130147.9s step_avg:9583.4ms MFU:40.4%
+step:13750/18722 val_loss:2.93290 wall:131352.7s step_avg:9638.3ms MFU:40.2%
+step:13875/18722 val_loss:2.92787 wall:132546.7s step_avg:9552.0ms MFU:40.5%
+step:14000/18722 val_loss:2.92891 wall:133737.3s step_avg:9525.3ms MFU:40.6%
+step:14125/18722 val_loss:2.92524 wall:134932.2s step_avg:9558.9ms MFU:40.5%
+step:14250/18722 val_loss:2.92446 wall:136120.4s step_avg:9505.7ms MFU:40.7%
+step:14375/18722 val_loss:2.92082 wall:137314.0s step_avg:9548.9ms MFU:40.5%
+step:14500/18722 val_loss:2.91992 wall:138509.8s step_avg:9566.5ms MFU:40.5%
+step:14625/18722 val_loss:2.91871 wall:139703.4s step_avg:9548.5ms MFU:40.5%
+step:14750/18722 val_loss:2.91404 wall:140898.5s step_avg:9560.6ms MFU:40.5%
+step:14875/18722 val_loss:2.91354 wall:142089.7s step_avg:9529.5ms MFU:40.6%
+step:15000/18722 val_loss:2.90980 wall:143280.1s step_avg:9523.8ms MFU:40.6%
+step:15125/18722 val_loss:2.90762 wall:144473.0s step_avg:9543.2ms MFU:40.6%
+step:15250/18722 val_loss:2.90562 wall:145670.1s step_avg:9576.2ms MFU:40.4%
+step:15375/18722 val_loss:2.90185 wall:146863.5s step_avg:9547.6ms MFU:40.5%
+step:15500/18722 val_loss:2.90106 wall:148060.8s step_avg:9578.6ms MFU:40.4%
+step:15625/18722 val_loss:2.89718 wall:149251.1s step_avg:9522.2ms MFU:40.6%
+step:15750/18722 val_loss:2.89607 wall:150454.4s step_avg:9625.9ms MFU:40.2%
+step:15875/18722 val_loss:2.89332 wall:151651.6s step_avg:9578.0ms MFU:40.4%
+step:16000/18722 val_loss:2.89026 wall:152845.0s step_avg:9546.8ms MFU:40.5%
+step:16125/18722 val_loss:2.88966 wall:154045.6s step_avg:9605.2ms MFU:40.3%
+step:16250/18722 val_loss:2.88677 wall:155239.5s step_avg:9551.0ms MFU:40.5%
+step:16375/18722 val_loss:2.88622 wall:156435.6s step_avg:9569.1ms MFU:40.4%
+step:16500/18722 val_loss:2.88362 wall:157631.3s step_avg:9565.3ms MFU:40.5%
+step:16625/18722 val_loss:2.87943 wall:158827.1s step_avg:9566.2ms MFU:40.5%
+step:16750/18722 val_loss:2.87877 wall:160018.5s step_avg:9531.4ms MFU:40.6%
+step:16875/18722 val_loss:2.87580 wall:161217.0s step_avg:9588.5ms MFU:40.4%
+step:17000/18722 val_loss:2.87320 wall:162412.8s step_avg:9566.0ms MFU:40.5%
+step:17125/18722 val_loss:2.87013 wall:163609.7s step_avg:9575.2ms MFU:40.4%
+step:17250/18722 val_loss:2.86741 wall:164806.2s step_avg:9571.8ms MFU:40.4%
+step:17375/18722 val_loss:2.86577 wall:166004.2s step_avg:9583.9ms MFU:40.4%
+step:17500/18722 val_loss:2.86296 wall:167203.1s step_avg:9591.2ms MFU:40.3%
+step:17625/18722 val_loss:2.86180 wall:168400.4s step_avg:9578.5ms MFU:40.4%
+step:17750/18722 val_loss:2.85922 wall:169593.3s step_avg:9543.6ms MFU:40.5%
+step:17875/18722 val_loss:2.85766 wall:170791.4s step_avg:9584.8ms MFU:40.4%
+step:18000/18722 val_loss:2.85537 wall:171987.1s step_avg:9565.1ms MFU:40.5%
+step:18125/18722 val_loss:2.85341 wall:173184.0s step_avg:9575.3ms MFU:40.4%
+step:18250/18722 val_loss:2.85121 wall:174381.4s step_avg:9579.8ms MFU:40.4%
+step:18375/18722 val_loss:2.84992 wall:175576.7s step_avg:9562.4ms MFU:40.5%
+step:18500/18722 val_loss:2.84853 wall:176773.8s step_avg:9576.8ms MFU:40.4%
+step:18625/18722 val_loss:2.84736 wall:177971.6s step_avg:9582.4ms MFU:40.4%
+step:18722/18722 val_loss:2.84684 wall:178899.9s step_avg:9569.9ms MFU:40.4%
+
+===ABLATION_CURVE_JSON===
+[{"step": 0, "wall_s": 0.0, "val_loss": 10.82583999633789, "mfu": 0.0, "step_ms": 0.0, "tok_s": 0.0}, {"step": 125, "wall_s": 1243.405, "val_loss": 4.481670178472996, "mfu": 38.9, "step_ms": 9947.24, "tok_s": 52706.9}, {"step": 250, "wall_s": 2429.364, "val_loss": 3.960729766637087, "mfu": 40.79, "step_ms": 9487.67, "tok_s": 55259.9}, {"step": 375, "wall_s": 3619.252, "val_loss": 3.758938033133745, "mfu": 40.65, "step_ms": 9519.11, "tok_s": 55077.4}, {"step": 500, "wall_s": 4814.87, "val_loss": 3.6394147500395775, "mfu": 40.46, "step_ms": 9564.94, "tok_s": 54813.5}, {"step": 625, "wall_s": 6010.515, "val_loss": 3.5533435083925724, "mfu": 40.46, "step_ms": 9565.16, "tok_s": 54812.3}, {"step": 750, "wall_s": 7208.544, "val_loss": 3.494772795587778, "mfu": 40.38, "step_ms": 9584.23, "tok_s": 54703.2}, {"step": 875, "wall_s": 8401.563, "val_loss": 3.460048958659172, "mfu": 40.55, "step_ms": 9544.16, "tok_s": 54932.9}, {"step": 1000, "wall_s": 9592.627, "val_loss": 3.4181813560426235, "mfu": 40.61, "step_ms": 9528.51, "tok_s": 55023.1}, {"step": 1125, "wall_s": 10786.832, "val_loss": 3.382698427885771, "mfu": 40.51, "step_ms": 9553.64, "tok_s": 54878.4}, {"step": 1250, "wall_s": 11979.759, "val_loss": 3.3640825748443604, "mfu": 40.55, "step_ms": 9543.41, "tok_s": 54937.2}, {"step": 1375, "wall_s": 13168.54, "val_loss": 3.338599991053343, "mfu": 40.69, "step_ms": 9510.25, "tok_s": 55128.7}, {"step": 1500, "wall_s": 14351.377, "val_loss": 3.3149476163089275, "mfu": 40.9, "step_ms": 9462.69, "tok_s": 55405.8}, {"step": 1625, "wall_s": 15541.536, "val_loss": 3.3041007705032825, "mfu": 40.64, "step_ms": 9521.28, "tok_s": 55064.9}, {"step": 1750, "wall_s": 16737.581, "val_loss": 3.285446409136057, "mfu": 40.44, "step_ms": 9568.36, "tok_s": 54793.9}, {"step": 1875, "wall_s": 17935.28, "val_loss": 3.267390836030245, "mfu": 40.39, "step_ms": 9581.59, "tok_s": 54718.3}, {"step": 2000, "wall_s": 19131.724, "val_loss": 3.2559959404170513, "mfu": 40.43, "step_ms": 9571.55, "tok_s": 54775.6}, {"step": 2125, "wall_s": 20331.544, "val_loss": 3.2490643709897995, "mfu": 40.32, "step_ms": 9598.56, "tok_s": 54621.5}, {"step": 2250, "wall_s": 21522.57, "val_loss": 3.234447579830885, "mfu": 40.61, "step_ms": 9528.21, "tok_s": 55024.8}, {"step": 2375, "wall_s": 22719.345, "val_loss": 3.225179336965084, "mfu": 40.42, "step_ms": 9574.2, "tok_s": 54760.5}, {"step": 2500, "wall_s": 23916.772, "val_loss": 3.2235753126442432, "mfu": 40.4, "step_ms": 9579.42, "tok_s": 54730.7}, {"step": 2625, "wall_s": 25113.954, "val_loss": 3.2077871337532997, "mfu": 40.41, "step_ms": 9577.46, "tok_s": 54741.9}, {"step": 2750, "wall_s": 26309.287, "val_loss": 3.197952374815941, "mfu": 40.47, "step_ms": 9562.66, "tok_s": 54826.6}, {"step": 2875, "wall_s": 27506.238, "val_loss": 3.1986291855573654, "mfu": 40.41, "step_ms": 9575.61, "tok_s": 54752.4}, {"step": 3000, "wall_s": 28700.486, "val_loss": 3.1888586543500423, "mfu": 40.51, "step_ms": 9553.98, "tok_s": 54876.4}, {"step": 3125, "wall_s": 29899.581, "val_loss": 3.1771597675979137, "mfu": 40.34, "step_ms": 9592.77, "tok_s": 54654.5}, {"step": 3250, "wall_s": 31093.755, "val_loss": 3.1736111752688885, "mfu": 40.51, "step_ms": 9553.39, "tok_s": 54879.8}, {"step": 3375, "wall_s": 32289.077, "val_loss": 3.1658252477645874, "mfu": 40.47, "step_ms": 9562.58, "tok_s": 54827.1}, {"step": 3500, "wall_s": 33479.543, "val_loss": 3.158265821635723, "mfu": 40.63, "step_ms": 9523.73, "tok_s": 55050.7}, {"step": 3625, "wall_s": 34671.08, "val_loss": 3.163291972130537, "mfu": 40.6, "step_ms": 9532.3, "tok_s": 55001.2}, {"step": 3750, "wall_s": 35864.539, "val_loss": 3.1519214026629925, "mfu": 40.53, "step_ms": 9547.67, "tok_s": 54912.6}, {"step": 3875, "wall_s": 37058.919, "val_loss": 3.1441503204405308, "mfu": 40.5, "step_ms": 9555.04, "tok_s": 54870.3}, {"step": 4000, "wall_s": 38251.136, "val_loss": 3.1474751606583595, "mfu": 40.57, "step_ms": 9537.74, "tok_s": 54969.9}, {"step": 4125, "wall_s": 39447.199, "val_loss": 3.14101130515337, "mfu": 40.44, "step_ms": 9568.5, "tok_s": 54793.1}, {"step": 4250, "wall_s": 40643.797, "val_loss": 3.135175470262766, "mfu": 40.43, "step_ms": 9572.79, "tok_s": 54768.6}, {"step": 4375, "wall_s": 41836.751, "val_loss": 3.136825803667307, "mfu": 40.55, "step_ms": 9543.63, "tok_s": 54935.9}, {"step": 4500, "wall_s": 43030.93, "val_loss": 3.1325485296547413, "mfu": 40.51, "step_ms": 9553.43, "tok_s": 54879.5}, {"step": 4625, "wall_s": 44226.773, "val_loss": 3.1221912316977978, "mfu": 40.45, "step_ms": 9566.74, "tok_s": 54803.2}, {"step": 4750, "wall_s": 45424.059, "val_loss": 3.1226255036890507, "mfu": 40.4, "step_ms": 9578.28, "tok_s": 54737.2}, {"step": 4875, "wall_s": 46621.263, "val_loss": 3.124762024730444, "mfu": 40.41, "step_ms": 9577.64, "tok_s": 54740.8}, {"step": 5000, "wall_s": 47821.179, "val_loss": 3.113085638731718, "mfu": 40.31, "step_ms": 9599.33, "tok_s": 54617.2}, {"step": 5125, "wall_s": 49017.885, "val_loss": 3.1127453222870827, "mfu": 40.42, "step_ms": 9573.65, "tok_s": 54763.7}, {"step": 5250, "wall_s": 50210.695, "val_loss": 3.118730254471302, "mfu": 40.55, "step_ms": 9542.48, "tok_s": 54942.5}, {"step": 5375, "wall_s": 51408.771, "val_loss": 3.1087537929415703, "mfu": 40.38, "step_ms": 9584.61, "tok_s": 54701.0}, {"step": 5500, "wall_s": 52604.944, "val_loss": 3.1072721742093563, "mfu": 40.44, "step_ms": 9569.38, "tok_s": 54788.1}, {"step": 5625, "wall_s": 53796.764, "val_loss": 3.1097109839320183, "mfu": 40.59, "step_ms": 9534.56, "tok_s": 54988.2}, {"step": 5750, "wall_s": 54988.78, "val_loss": 3.109800636768341, "mfu": 40.58, "step_ms": 9536.13, "tok_s": 54979.1}, {"step": 5875, "wall_s": 56183.236, "val_loss": 3.1006057783961296, "mfu": 40.5, "step_ms": 9555.65, "tok_s": 54866.8}, {"step": 6000, "wall_s": 57373.68, "val_loss": 3.087865248322487, "mfu": 40.63, "step_ms": 9523.55, "tok_s": 55051.7}, {"step": 6125, "wall_s": 58561.542, "val_loss": 3.087137285619974, "mfu": 40.72, "step_ms": 9502.89, "tok_s": 55171.4}, {"step": 6250, "wall_s": 59752.68, "val_loss": 3.084238637238741, "mfu": 40.61, "step_ms": 9529.11, "tok_s": 55019.6}, {"step": 6375, "wall_s": 60946.804, "val_loss": 3.0803255289793015, "mfu": 40.51, "step_ms": 9552.99, "tok_s": 54882.1}, {"step": 6500, "wall_s": 62138.082, "val_loss": 3.0764736011624336, "mfu": 40.61, "step_ms": 9530.22, "tok_s": 55013.2}, {"step": 6625, "wall_s": 63320.251, "val_loss": 3.073654070496559, "mfu": 40.92, "step_ms": 9457.36, "tok_s": 55437.1}, {"step": 6750, "wall_s": 64515.235, "val_loss": 3.0698785930871964, "mfu": 40.48, "step_ms": 9559.87, "tok_s": 54842.6}, {"step": 6875, "wall_s": 65705.957, "val_loss": 3.06661119684577, "mfu": 40.63, "step_ms": 9525.77, "tok_s": 55038.9}, {"step": 7000, "wall_s": 66898.443, "val_loss": 3.061911355704069, "mfu": 40.56, "step_ms": 9539.89, "tok_s": 54957.5}, {"step": 7125, "wall_s": 68086.838, "val_loss": 3.060276970267296, "mfu": 40.7, "step_ms": 9507.17, "tok_s": 55146.6}, {"step": 7250, "wall_s": 69277.41, "val_loss": 3.0618123300373554, "mfu": 40.63, "step_ms": 9524.57, "tok_s": 55045.8}, {"step": 7375, "wall_s": 70466.476, "val_loss": 3.0539046488702297, "mfu": 40.68, "step_ms": 9512.53, "tok_s": 55115.5}, {"step": 7500, "wall_s": 71660.496, "val_loss": 3.05161852017045, "mfu": 40.51, "step_ms": 9552.16, "tok_s": 54886.9}, {"step": 7625, "wall_s": 72859.46, "val_loss": 3.052930563688278, "mfu": 40.35, "step_ms": 9591.72, "tok_s": 54660.5}, {"step": 7750, "wall_s": 74052.555, "val_loss": 3.04574953019619, "mfu": 40.54, "step_ms": 9544.75, "tok_s": 54929.4}, {"step": 7875, "wall_s": 75245.741, "val_loss": 3.0455360785126686, "mfu": 40.54, "step_ms": 9545.49, "tok_s": 54925.2}, {"step": 8000, "wall_s": 76437.493, "val_loss": 3.0417414493858814, "mfu": 40.59, "step_ms": 9534.02, "tok_s": 54991.3}, {"step": 8125, "wall_s": 77622.144, "val_loss": 3.0377172864973545, "mfu": 40.83, "step_ms": 9477.21, "tok_s": 55320.9}, {"step": 8250, "wall_s": 78811.613, "val_loss": 3.0409936159849167, "mfu": 40.67, "step_ms": 9515.75, "tok_s": 55096.9}, {"step": 8375, "wall_s": 80003.806, "val_loss": 3.0358301550149918, "mfu": 40.57, "step_ms": 9537.54, "tok_s": 54971.0}, {"step": 8500, "wall_s": 81189.091, "val_loss": 3.0355520881712437, "mfu": 40.81, "step_ms": 9482.28, "tok_s": 55291.3}, {"step": 8625, "wall_s": 82380.629, "val_loss": 3.030035078525543, "mfu": 40.6, "step_ms": 9532.3, "tok_s": 55001.2}, {"step": 8750, "wall_s": 83571.547, "val_loss": 3.0260285027325153, "mfu": 40.62, "step_ms": 9527.35, "tok_s": 55029.8}, {"step": 8875, "wall_s": 84759.112, "val_loss": 3.0248835533857346, "mfu": 40.73, "step_ms": 9500.52, "tok_s": 55185.2}, {"step": 9000, "wall_s": 85953.372, "val_loss": 3.0202694945037365, "mfu": 40.5, "step_ms": 9554.07, "tok_s": 54875.9}, {"step": 9125, "wall_s": 87152.537, "val_loss": 3.020622242242098, "mfu": 40.34, "step_ms": 9593.33, "tok_s": 54651.3}, {"step": 9250, "wall_s": 88348.021, "val_loss": 3.015339508652687, "mfu": 40.46, "step_ms": 9563.87, "tok_s": 54819.7}, {"step": 9375, "wall_s": 89544.148, "val_loss": 3.0179919563233852, "mfu": 40.44, "step_ms": 9569.02, "tok_s": 54790.2}, {"step": 9500, "wall_s": 90744.92, "val_loss": 3.009290985763073, "mfu": 40.29, "step_ms": 9606.18, "tok_s": 54578.2}, {"step": 9625, "wall_s": 91935.733, "val_loss": 3.0092160403728485, "mfu": 40.62, "step_ms": 9526.51, "tok_s": 55034.7}, {"step": 9750, "wall_s": 93127.105, "val_loss": 3.005777321755886, "mfu": 40.6, "step_ms": 9530.97, "tok_s": 55008.9}, {"step": 9875, "wall_s": 94315.666, "val_loss": 3.0014033280313015, "mfu": 40.7, "step_ms": 9508.49, "tok_s": 55138.9}, {"step": 10000, "wall_s": 95508.789, "val_loss": 3.0041710138320923, "mfu": 40.54, "step_ms": 9544.98, "tok_s": 54928.1}, {"step": 10125, "wall_s": 96707.231, "val_loss": 2.9977527111768723, "mfu": 40.36, "step_ms": 9587.53, "tok_s": 54684.3}, {"step": 10250, "wall_s": 97900.148, "val_loss": 2.997264575213194, "mfu": 40.55, "step_ms": 9543.34, "tok_s": 54937.6}, {"step": 10375, "wall_s": 99091.933, "val_loss": 2.9921473748981953, "mfu": 40.59, "step_ms": 9534.28, "tok_s": 54989.8}, {"step": 10500, "wall_s": 100281.808, "val_loss": 2.9890338331460953, "mfu": 40.65, "step_ms": 9519.0, "tok_s": 55078.0}, {"step": 10625, "wall_s": 101476.43, "val_loss": 2.9907653592526913, "mfu": 40.49, "step_ms": 9556.97, "tok_s": 54859.2}, {"step": 10750, "wall_s": 102661.958, "val_loss": 2.9852814935147762, "mfu": 40.8, "step_ms": 9484.23, "tok_s": 55280.0}, {"step": 10875, "wall_s": 103853.485, "val_loss": 2.9851452708244324, "mfu": 40.6, "step_ms": 9532.22, "tok_s": 55001.7}, {"step": 11000, "wall_s": 105049.809, "val_loss": 2.9805304035544395, "mfu": 40.43, "step_ms": 9570.59, "tok_s": 54781.2}, {"step": 11125, "wall_s": 106246.139, "val_loss": 2.9802916795015335, "mfu": 40.43, "step_ms": 9570.64, "tok_s": 54780.9}, {"step": 11250, "wall_s": 107444.864, "val_loss": 2.978047903627157, "mfu": 40.35, "step_ms": 9589.81, "tok_s": 54671.4}, {"step": 11375, "wall_s": 108637.879, "val_loss": 2.97798578068614, "mfu": 40.55, "step_ms": 9544.12, "tok_s": 54933.1}, {"step": 11500, "wall_s": 109829.067, "val_loss": 2.9728599190711975, "mfu": 40.61, "step_ms": 9529.51, "tok_s": 55017.3}, {"step": 11625, "wall_s": 111027.583, "val_loss": 2.968010615557432, "mfu": 40.36, "step_ms": 9588.12, "tok_s": 54681.0}, {"step": 11750, "wall_s": 112217.495, "val_loss": 2.969062566757202, "mfu": 40.65, "step_ms": 9519.3, "tok_s": 55076.3}, {"step": 11875, "wall_s": 113411.571, "val_loss": 2.964735198765993, "mfu": 40.51, "step_ms": 9552.61, "tok_s": 54884.3}, {"step": 12000, "wall_s": 114608.474, "val_loss": 2.96524004265666, "mfu": 40.42, "step_ms": 9575.22, "tok_s": 54754.7}, {"step": 12125, "wall_s": 115807.446, "val_loss": 2.9622951224446297, "mfu": 40.35, "step_ms": 9591.78, "tok_s": 54660.2}, {"step": 12250, "wall_s": 117005.597, "val_loss": 2.958000384271145, "mfu": 40.37, "step_ms": 9585.21, "tok_s": 54697.6}, {"step": 12375, "wall_s": 118203.914, "val_loss": 2.9583781994879246, "mfu": 40.37, "step_ms": 9586.53, "tok_s": 54690.1}, {"step": 12500, "wall_s": 119394.129, "val_loss": 2.954591028392315, "mfu": 40.64, "step_ms": 9521.72, "tok_s": 55062.3}, {"step": 12625, "wall_s": 120589.454, "val_loss": 2.9511502534151077, "mfu": 40.47, "step_ms": 9562.6, "tok_s": 54826.9}, {"step": 12750, "wall_s": 121780.354, "val_loss": 2.947714477777481, "mfu": 40.62, "step_ms": 9527.19, "tok_s": 55030.7}, {"step": 12875, "wall_s": 122973.71, "val_loss": 2.9474282041192055, "mfu": 40.54, "step_ms": 9546.85, "tok_s": 54917.4}, {"step": 13000, "wall_s": 124171.131, "val_loss": 2.9441764764487743, "mfu": 40.4, "step_ms": 9579.37, "tok_s": 54731.0}, {"step": 13125, "wall_s": 125369.332, "val_loss": 2.941390823572874, "mfu": 40.37, "step_ms": 9585.61, "tok_s": 54695.3}, {"step": 13250, "wall_s": 126555.233, "val_loss": 2.9401353783905506, "mfu": 40.79, "step_ms": 9487.2, "tok_s": 55262.7}, {"step": 13375, "wall_s": 127746.846, "val_loss": 2.937246896326542, "mfu": 40.59, "step_ms": 9532.91, "tok_s": 54997.7}, {"step": 13500, "wall_s": 128949.951, "val_loss": 2.936167147010565, "mfu": 40.21, "step_ms": 9624.84, "tok_s": 54472.4}, {"step": 13625, "wall_s": 130147.877, "val_loss": 2.932123064994812, "mfu": 40.38, "step_ms": 9583.41, "tok_s": 54707.9}, {"step": 13750, "wall_s": 131352.663, "val_loss": 2.932897262275219, "mfu": 40.15, "step_ms": 9638.28, "tok_s": 54396.4}, {"step": 13875, "wall_s": 132546.663, "val_loss": 2.927868116647005, "mfu": 40.51, "step_ms": 9552.0, "tok_s": 54887.8}, {"step": 14000, "wall_s": 133737.33, "val_loss": 2.928909480571747, "mfu": 40.63, "step_ms": 9525.34, "tok_s": 55041.4}, {"step": 14125, "wall_s": 134932.196, "val_loss": 2.9252361580729485, "mfu": 40.48, "step_ms": 9558.93, "tok_s": 54848.0}, {"step": 14250, "wall_s": 136120.407, "val_loss": 2.9244606532156467, "mfu": 40.71, "step_ms": 9505.68, "tok_s": 55155.2}, {"step": 14375, "wall_s": 137314.02, "val_loss": 2.9208195731043816, "mfu": 40.53, "step_ms": 9548.91, "tok_s": 54905.5}, {"step": 14500, "wall_s": 138509.835, "val_loss": 2.919923935085535, "mfu": 40.45, "step_ms": 9566.51, "tok_s": 54804.5}, {"step": 14625, "wall_s": 139703.397, "val_loss": 2.9187055453658104, "mfu": 40.53, "step_ms": 9548.5, "tok_s": 54907.9}, {"step": 14750, "wall_s": 140898.475, "val_loss": 2.9140390157699585, "mfu": 40.48, "step_ms": 9560.62, "tok_s": 54838.3}, {"step": 14875, "wall_s": 142089.661, "val_loss": 2.913539554923773, "mfu": 40.61, "step_ms": 9529.49, "tok_s": 55017.4}, {"step": 15000, "wall_s": 143280.141, "val_loss": 2.90979590266943, "mfu": 40.63, "step_ms": 9523.83, "tok_s": 55050.1}, {"step": 15125, "wall_s": 144473.034, "val_loss": 2.907621309161186, "mfu": 40.55, "step_ms": 9543.15, "tok_s": 54938.7}, {"step": 15250, "wall_s": 145670.06, "val_loss": 2.905624743551016, "mfu": 40.41, "step_ms": 9576.21, "tok_s": 54749.0}, {"step": 15375, "wall_s": 146863.513, "val_loss": 2.9018548019230366, "mfu": 40.53, "step_ms": 9547.62, "tok_s": 54912.9}, {"step": 15500, "wall_s": 148060.835, "val_loss": 2.9010616056621075, "mfu": 40.4, "step_ms": 9578.58, "tok_s": 54735.5}, {"step": 15625, "wall_s": 149251.115, "val_loss": 2.8971843272447586, "mfu": 40.64, "step_ms": 9522.24, "tok_s": 55059.3}, {"step": 15750, "wall_s": 150454.352, "val_loss": 2.896067187190056, "mfu": 40.2, "step_ms": 9625.9, "tok_s": 54466.4}, {"step": 15875, "wall_s": 151651.607, "val_loss": 2.8933226875960827, "mfu": 40.4, "step_ms": 9578.04, "tok_s": 54738.6}, {"step": 16000, "wall_s": 152844.952, "val_loss": 2.8902595192193985, "mfu": 40.54, "step_ms": 9546.76, "tok_s": 54917.9}, {"step": 16125, "wall_s": 154045.601, "val_loss": 2.88966004550457, "mfu": 40.29, "step_ms": 9605.19, "tok_s": 54583.8}, {"step": 16250, "wall_s": 155239.471, "val_loss": 2.8867738358676434, "mfu": 40.52, "step_ms": 9550.96, "tok_s": 54893.7}, {"step": 16375, "wall_s": 156435.612, "val_loss": 2.8862214125692844, "mfu": 40.44, "step_ms": 9569.13, "tok_s": 54789.5}, {"step": 16500, "wall_s": 157631.275, "val_loss": 2.883619010448456, "mfu": 40.46, "step_ms": 9565.3, "tok_s": 54811.4}, {"step": 16625, "wall_s": 158827.051, "val_loss": 2.8794305361807346, "mfu": 40.45, "step_ms": 9566.2, "tok_s": 54806.3}, {"step": 16750, "wall_s": 160018.473, "val_loss": 2.8787702172994614, "mfu": 40.6, "step_ms": 9531.38, "tok_s": 55006.5}, {"step": 16875, "wall_s": 161217.041, "val_loss": 2.875804677605629, "mfu": 40.36, "step_ms": 9588.55, "tok_s": 54678.6}, {"step": 17000, "wall_s": 162412.794, "val_loss": 2.873204194009304, "mfu": 40.45, "step_ms": 9566.02, "tok_s": 54807.3}, {"step": 17125, "wall_s": 163609.695, "val_loss": 2.870132725685835, "mfu": 40.42, "step_ms": 9575.21, "tok_s": 54754.7}, {"step": 17250, "wall_s": 164806.174, "val_loss": 2.867413330823183, "mfu": 40.43, "step_ms": 9571.83, "tok_s": 54774.1}, {"step": 17375, "wall_s": 166004.16, "val_loss": 2.865770798176527, "mfu": 40.38, "step_ms": 9583.89, "tok_s": 54705.1}, {"step": 17500, "wall_s": 167203.064, "val_loss": 2.8629587441682816, "mfu": 40.35, "step_ms": 9591.23, "tok_s": 54663.3}, {"step": 17625, "wall_s": 168400.375, "val_loss": 2.861797858029604, "mfu": 40.4, "step_ms": 9578.49, "tok_s": 54736.0}, {"step": 17750, "wall_s": 169593.32, "val_loss": 2.859224747866392, "mfu": 40.55, "step_ms": 9543.56, "tok_s": 54936.3}, {"step": 17875, "wall_s": 170791.421, "val_loss": 2.857664167881012, "mfu": 40.37, "step_ms": 9584.8, "tok_s": 54699.9}, {"step": 18000, "wall_s": 171987.054, "val_loss": 2.855373051017523, "mfu": 40.46, "step_ms": 9565.07, "tok_s": 54812.8}, {"step": 18125, "wall_s": 173183.967, "val_loss": 2.853412628173828, "mfu": 40.41, "step_ms": 9575.3, "tok_s": 54754.2}, {"step": 18250, "wall_s": 174381.44, "val_loss": 2.8512080907821655, "mfu": 40.4, "step_ms": 9579.79, "tok_s": 54728.6}, {"step": 18375, "wall_s": 175576.736, "val_loss": 2.849921613931656, "mfu": 40.47, "step_ms": 9562.37, "tok_s": 54828.3}, {"step": 18500, "wall_s": 176773.835, "val_loss": 2.8485260121524334, "mfu": 40.41, "step_ms": 9576.79, "tok_s": 54745.7}, {"step": 18625, "wall_s": 177971.639, "val_loss": 2.8473616801202297, "mfu": 40.38, "step_ms": 9582.43, "tok_s": 54713.5}, {"step": 18722, "wall_s": 178899.922, "val_loss": 2.8468433283269405, "mfu": 40.44, "step_ms": 9569.92, "tok_s": 54785.0}]
+===END===
+[scaled_ablation] training done: 178899.9s, final MFU 40.4%
+[scaled_ablation] checkpoint -> checkpoints/polar__reg-baseline__distr-0__mem-1__win-0
+[scaled_ablation] uploaded checkpoint -> https://huggingface.co/ChavyvAkvar/atma-10b-polar__reg-baseline__distr-0__mem-1__win-0
+[scaled_ablation] evaluating (clean_ppl / junk_ppl / needle at full context)...
+
+===ABLATION_EVAL_JSON===
+{"clean_ppl": {"2048": 1.9256439376622438, "4096": 1.7846594080328941, "8192": 1.6981367357075214, "16384": 1.5583420905750245, "32768": 1.4083139898721129, "65536": 1.3410566837410443, "131072": 1.2747891124745365, "262144": 1.2918059528892627}, "junk_ppl": {"2048": 2.7987118177115917, "4096": 2.798280969262123, "8192": 2.799388501793146, "16384": 2.8915148973464966, "32768": 3.06839547958225, "65536": 3.2805433864705265, "131072": 3.5128993075340986, "262144": 3.718548426841153}, "needle": {"2048": {"ce": 0.1548688446637243, "acc": 99.68750001862645}, "4096": {"ce": 0.1787160628591664, "acc": 100.0}, "8192": {"ce": 0.3715793755254708, "acc": 97.50000014901161}, "16384": {"ce": 0.8384240872692317, "acc": 86.87500059604645}, "32768": {"ce": 1.3319536808994599, "acc": 73.75000095926225}, "65536": {"ce": 1.6714036589255556, "acc": 61.87500092200935}, "131072": {"ce": 2.3013244760222733, "acc": 44.06250088941306}, "262144": {"ce": 2.571647976990789, "acc": 40.93750077299774}}, "needle_baseline": 5.231564626097679, "num_clean_docs": 64, "mfu_final": 40.44, "train_elapsed_s": 178899.922, "num_params": 378220864, "train_steps": 18722}
+===END===
+[scaled_ablation] eval:
+  clean_ppl(nats): {2048: 1.9256439376622438, 4096: 1.7846594080328941, 8192: 1.6981367357075214, 16384: 1.5583420905750245, 32768: 1.4083139898721129, 65536: 1.3410566837410443, 131072: 1.2747891124745365, 262144: 1.2918059528892627}
+  junk_ppl(nats):  {2048: 2.7987118177115917, 4096: 2.798280969262123, 8192: 2.799388501793146, 16384: 2.8915148973464966, 32768: 3.06839547958225, 65536: 3.2805433864705265, 131072: 3.5128993075340986, 262144: 3.718548426841153}
+  needle:          {2048: 99.7, 4096: 100.0, 8192: 97.5, 16384: 86.9, 32768: 73.8, 65536: 61.9, 131072: 44.1, 262144: 40.9}
+  needle_baseline CE: 5.231564626097679
+[scaled_ablation] DONE
