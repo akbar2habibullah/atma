@@ -13,7 +13,7 @@
   "num_chunks": 99,
   "batch_size": 524288,
   "val_tokens": 2097152,
-  "mbs": 8,
+  "mbs": 16,
   "cooldown_frac": 0.7,
   "sketch_dim": 64,
   "sigr_alpha_on": 0.01,
