@@ -138,6 +138,38 @@ The default model list contains the L4 NoPE, L40S NoPE, and L40S Polar checkpoin
 with `--models <repo-id> ...`. Use the same `--doc-manifest` when repeating the comparison on a
 different runtime.
 
+### Checkpoint stress analysis
+
+The `stress` metric performs a post-training load-to-failure sweep on the same nested document
+prefixes. It records streaming moments for every block's residual input/output, mixer, MLP,
+projected attention, Polar count channel, and Titans memory contribution. Polar checkpoints also
+report per-head `n_eff`, magnitude, and null-sink mass; memory checkpoints report per-head
+retention (`gamma`), write strength (`beta`), and attention/memory output-gate saturation. All
+activation summaries include non-finite rates. The JSON summary ranks the first length where a
+component leaves the configured operating envelope relative to the shortest evaluated length.
+
+```bash
+FLA_CUSTOM_OP=1 python -m scaled_ablation.eval_hf_checkpoints \
+  --metrics stress \
+  --lengths 2048 4096 8192 16384 32768 65536 131072 \
+  --stress-num-docs 8 \
+  --output scaled_ablation/checkpoint_stress.json
+```
+
+Randomized finite-difference modal analysis is opt-in because it repeats every block for each
+perturbation direction. Its local secant gain is a sampled lower bound, not an exact maximum
+Jacobian singular value:
+
+```bash
+FLA_CUSTOM_OP=1 python -m scaled_ablation.eval_hf_checkpoints \
+  --metrics stress \
+  --lengths 2048 4096 8192 16384 32768 65536 131072 \
+  --stress-modal-lengths 2048 8192 \
+  --stress-modal-docs 1 \
+  --stress-modal-samples 2 \
+  --output scaled_ablation/checkpoint_stress_modal.json
+```
+
 ## Parse And Dashboard
 
 ```bash

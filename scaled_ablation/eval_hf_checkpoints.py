@@ -20,6 +20,12 @@ Full reproduction through 131K:
         --metrics junk clean needle \
         --output scaled_ablation/cross_eval_l4_torch212.json
 
+Post-training component stress sweep (modal lengths are optional):
+
+    FLA_CUSTOM_OP=1 python -m scaled_ablation.eval_hf_checkpoints \
+        --metrics stress --stress-modal-lengths 2048 8192 \
+        --output scaled_ablation/checkpoint_stress.json
+
 Run from the repository root. CUDA is required because train.data.data_generator places its
 batches directly on CUDA.
 """
@@ -43,6 +49,7 @@ from huggingface_hub import snapshot_download
 
 from eval import _blocks_forward, _chunked_loss, load_from_checkpoint, select_long_docs
 from scaled_ablation.evaluate import LOGIT_SOFTCAP, _set_full_context
+from scaled_ablation.stress import eval_stress
 from train.data import data_generator, get_data
 
 
@@ -312,7 +319,7 @@ def _parse_args():
     parser.add_argument(
         "--metrics",
         nargs="+",
-        choices=("junk", "clean", "needle"),
+        choices=("junk", "clean", "needle", "stress"),
         default=("junk", "clean", "needle"),
     )
     parser.add_argument("--num-eval-docs", type=int, default=64)
@@ -328,6 +335,18 @@ def _parse_args():
     parser.add_argument("--rebuild-doc-manifest", action="store_true")
     parser.add_argument("--hf-cache", default=None)
     parser.add_argument("--output", default="scaled_ablation/cross_eval_l4_torch212.json")
+    parser.add_argument("--stress-num-docs", type=int, default=8,
+                        help="Coherent documents per length for the streaming stress probe (default: 8).")
+    parser.add_argument("--stress-yield-ratio", type=float, default=1.25,
+                        help="RMS/mean ratio vs the shortest length that marks first yield (default: 1.25).")
+    parser.add_argument("--stress-modal-lengths", type=int, nargs="*", default=(),
+                        help="Lengths for opt-in randomized finite-difference block-gain analysis.")
+    parser.add_argument("--stress-modal-docs", type=int, default=1,
+                        help="Documents per modal length (default: 1).")
+    parser.add_argument("--stress-modal-samples", type=int, default=2,
+                        help="Random perturbation directions per block and document (default: 2).")
+    parser.add_argument("--stress-perturbation", type=float, default=0.02,
+                        help="Perturbation RMS relative to block-input RMS (default: 0.02).")
     return parser.parse_args()
 
 
@@ -337,6 +356,17 @@ def main():
         raise SystemExit("CUDA is required")
     if not args.lengths or any(length <= 0 for length in args.lengths):
         raise SystemExit("--lengths must contain positive integers")
+    if args.stress_num_docs <= 0 or args.stress_modal_docs <= 0 or args.stress_modal_samples <= 0:
+        raise SystemExit("stress document/sample counts must be positive")
+    if "stress" in args.metrics and max(args.stress_num_docs, args.stress_modal_docs) > args.num_eval_docs:
+        raise SystemExit("stress document counts cannot exceed --num-eval-docs")
+    if args.stress_yield_ratio <= 1.0:
+        raise SystemExit("--stress-yield-ratio must be greater than 1")
+    if args.stress_perturbation <= 0:
+        raise SystemExit("--stress-perturbation must be positive")
+    unknown_modal_lengths = sorted(set(args.stress_modal_lengths) - set(args.lengths))
+    if unknown_modal_lengths:
+        raise SystemExit(f"--stress-modal-lengths must be included in --lengths: {unknown_modal_lengths}")
     if args.sdpa_backend == "math" and max(args.lengths) > 16384:
         print("WARNING: math SDPA is quadratic and will probably OOM at the requested lengths.")
 
@@ -356,6 +386,12 @@ def main():
             "val_data": args.val_data,
             "clean_dataset": args.clean_dataset,
             "doc_manifest": args.doc_manifest,
+            "stress_num_docs": args.stress_num_docs,
+            "stress_yield_ratio": args.stress_yield_ratio,
+            "stress_modal_lengths": sorted(set(args.stress_modal_lengths)),
+            "stress_modal_docs": args.stress_modal_docs,
+            "stress_modal_samples": args.stress_modal_samples,
+            "stress_perturbation": args.stress_perturbation,
         },
         "checkpoints": {},
     }
@@ -363,7 +399,7 @@ def main():
     print(json.dumps(output["runtime"], indent=2), flush=True)
 
     docs = None
-    if "clean" in args.metrics or "needle" in args.metrics:
+    if "clean" in args.metrics or "needle" in args.metrics or "stress" in args.metrics:
         # Needle construction adds a small scaffold beyond the requested gap.
         need = max(lengths) + (64 if "needle" in args.metrics else 0)
         docs = _load_or_create_docs(args, need)
@@ -373,8 +409,9 @@ def main():
     for repo_id in args.models:
         print(f"\n{'=' * 100}\nEvaluating {repo_id}\n{'=' * 100}", flush=True)
         checkpoint_dir = _download_checkpoint(repo_id, args.hf_cache)
-        model, _config = load_from_checkpoint(
-            str(checkpoint_dir), device, compile_model=False, force_probe_path=False
+        model, model_config = load_from_checkpoint(
+            str(checkpoint_dir), device, compile_model=False,
+            force_probe_path="stress" in args.metrics,
         )
         model = getattr(model, "_orig_mod", model)
         model.eval()
@@ -404,6 +441,22 @@ def main():
             if "needle" in args.metrics:
                 entry["metrics"]["needle"] = eval_needle(
                     model, docs, lengths, args.num_needle_trials, args.needle_value_len, device
+                )
+                _atomic_json_dump(output_path, output)
+            if "stress" in args.metrics:
+                entry["metrics"]["stress"] = eval_stress(
+                    model,
+                    docs,
+                    lengths,
+                    device,
+                    args.loss_chunk,
+                    train_length=int(model_config.max_position_embeddings),
+                    num_docs=args.stress_num_docs,
+                    yield_ratio=args.stress_yield_ratio,
+                    modal_lengths=args.stress_modal_lengths,
+                    modal_docs=args.stress_modal_docs,
+                    modal_samples=args.stress_modal_samples,
+                    perturbation=args.stress_perturbation,
                 )
                 _atomic_json_dump(output_path, output)
 
