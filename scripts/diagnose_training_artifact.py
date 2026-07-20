@@ -153,7 +153,9 @@ def prepare(args) -> None:
             args.steps, args.total_sequences, args.sequence_length, args.vocab_size, args.seed + 1000
         ),
         "models": states,
-        "created_with_torch": torch.__version__,
+        # torch.__version__ is a TorchVersion object in some releases. Persist a primitive so
+        # fixtures remain loadable by weights_only=True across PyTorch versions.
+        "created_with_torch": str(torch.__version__),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(fixture, path)
@@ -289,7 +291,12 @@ def run(args) -> None:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required for run mode")
     fixture_path = Path(args.fixture)
-    fixture = torch.load(fixture_path, map_location="cpu", weights_only=True)
+    # Fixtures created before created_with_torch was normalized to str contain the benign
+    # torch.torch_version.TorchVersion metadata class. Explicitly allow just that class while
+    # retaining weights_only=True; do not fall back to unrestricted pickle loading.
+    torch_version_class = torch.torch_version.TorchVersion
+    with torch.serialization.safe_globals([torch_version_class]):
+        fixture = torch.load(fixture_path, map_location="cpu", weights_only=True)
     if fixture.get("format_version") != 1:
         raise SystemExit(f"unsupported fixture format: {fixture.get('format_version')}")
     total_sequences = int(fixture["total_sequences"])
