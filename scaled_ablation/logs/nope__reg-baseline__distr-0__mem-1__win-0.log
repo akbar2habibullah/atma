@@ -164,7 +164,7 @@ step:18722/18722 val_loss:2.81260 wall:170141.4s step_avg:9048.1ms MFU:42.8%
 ===END===
 [scaled_ablation] training done: 170141.4s, final MFU 42.8%
 [scaled_ablation] checkpoint -> checkpoints/nope__reg-baseline__distr-0__mem-1__win-0
-[scaled_ablation] uploaded checkpoint -> https://huggingface.co/ChavyvAkvar/atma-10b-nope__reg-baseline__distr-0__mem-1__win-0
+[scaled_ablation] uploaded checkpoint -> https://huggingface.co/ChavyvAkvar/atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0
 [scaled_ablation] evaluating (clean_ppl / junk_ppl / needle at full context)...
 
 ===ABLATION_EVAL_JSON===

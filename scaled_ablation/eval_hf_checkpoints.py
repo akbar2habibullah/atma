@@ -54,9 +54,11 @@ from train.data import data_generator, get_data
 
 
 DEFAULT_MODELS = [
-    "ChavyvAkvar/atma-10b-L4-nope__reg-baseline__distr-0__mem-1__win-0",
-    "ChavyvAkvar/atma-10b-L40S-nope__reg-baseline__distr-0__mem-1__win-0",
-    "ChavyvAkvar/atma-10b-L40S-polar__reg-baseline__distr-0__mem-1__win-0",
+    "ChavyvAkvar/atma-10b-L4-mbs4-nope__reg-baseline__distr-0__mem-1__win-0",
+    "ChavyvAkvar/atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0",
+    "ChavyvAkvar/atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0",
+    "ChavyvAkvar/atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0",
+    "ChavyvAkvar/atma-10b-L40S-mbs4-nope__reg-baseline__distr-0__mem-1__win-0",
 ]
 DEFAULT_LENGTHS = [2048, 4096, 8192, 16384, 32768, 65536, 131072]
 
