@@ -125,6 +125,7 @@ class EvalModel:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._llm = None
+        self._last_call_metrics = None
         self._serving_totals = {
             "prefill_tokens": 0,
             "decode_tokens": 0,
@@ -132,6 +133,7 @@ class EvalModel:
             "decode_time": 0.0,
         }
         self._llm_kwargs = llm_kwargs
+        self._llm_kwargs.setdefault("strict_weights", strict)
         if self.hf_config is not None:
             self._llm_kwargs.setdefault("hf_config", self.hf_config)
         self.wip = unsupported_features(self.cfg)
@@ -196,6 +198,20 @@ class EvalModel:
         )
         return totals
 
+    @property
+    def last_call_metrics(self):
+        return self._last_call_metrics
+
+    def close(self):
+        """Release serving resources; safe for repeated benchmark subprocess jobs."""
+        if self._llm is None:
+            return
+        if hasattr(self._llm, "exit"):
+            self._llm.exit()
+        elif hasattr(self._llm, "engine") and hasattr(self._llm.engine, "exit"):
+            self._llm.engine.exit()
+        self._llm = None
+
     def generate(self, prompts, max_tokens=None, temperature=None, use_tqdm=False):
         """Generate continuations for a list of string or token-id prompts."""
         self.load()
@@ -207,6 +223,7 @@ class EvalModel:
         )
         outs = self._llm.generate(list(prompts), sp, use_tqdm=use_tqdm)
         metrics = getattr(self._llm, "last_metrics", None) or {}
+        self._last_call_metrics = dict(metrics)
         for key in self._serving_totals:
             self._serving_totals[key] += metrics.get(key, 0)
         return [o["text"] for o in outs]

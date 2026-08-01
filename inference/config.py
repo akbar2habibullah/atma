@@ -13,6 +13,7 @@ class Config:
     max_num_batched_tokens: int = 16384 * 8
     max_model_len: int = 4096
     enforce_eager: bool = False
+    strict_weights: bool = False
     eos: int = 50256
     num_kvcache_blocks: int = -1
     hf_config: AtmaConfig = field(default_factory=AtmaConfig)

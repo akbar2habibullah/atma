@@ -101,7 +101,8 @@ def _columns(row):
 
 
 def run_babilong(model, tasks, lengths, num_samples=100,
-                 dataset_id="RMT-team/babilong-1k-samples", max_tokens=16, log_fn=print):
+                 dataset_id="RMT-team/babilong-1k-samples", dataset_revision=None,
+                 max_tokens=16, log_fn=print):
     """Evaluate `model` (benchmarks.EvalModel) on BABILong. Returns a results dict
     {task: {length: accuracy}} plus metadata."""
     from datasets import load_dataset
@@ -115,7 +116,10 @@ def run_babilong(model, tasks, lengths, num_samples=100,
     for length in lengths:
         for task in tasks:
             try:
-                ds = load_dataset(dataset_id, length, split=task)
+                kwargs = {"split": task}
+                if dataset_revision:
+                    kwargs["revision"] = dataset_revision
+                ds = load_dataset(dataset_id, length, **kwargs)
             except Exception as e:
                 log_fn(f"[babilong] skip {task}@{length}: {e}")
                 continue
@@ -136,6 +140,7 @@ def run_babilong(model, tasks, lengths, num_samples=100,
     return {
         "benchmark": "babilong",
         "dataset_id": dataset_id,
+        "dataset_revision": dataset_revision,
         "tasks": tasks,
         "lengths": lengths,
         "num_samples": num_samples,

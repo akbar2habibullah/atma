@@ -31,8 +31,10 @@ class ModelRunner:
         self.model = Atma(hf_config)
 
         try:
-            load_model(self.model, config.model)
+            load_model(self.model, config.model, strict=config.strict_weights)
         except Exception as e:
+            if config.strict_weights:
+                raise RuntimeError(f"strict checkpoint loading failed: {e}") from e
             print(f"Weight loading failed ({e}). Using random weights.")
 
         self.sampler = Sampler()

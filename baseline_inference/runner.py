@@ -26,8 +26,10 @@ class SoftmaxModelRunner(ModelRunner):
             torch.set_default_device("cuda")
         self.model = SoftmaxLM(hf)
         try:
-            load_model(self.model, config.model)
+            load_model(self.model, config.model, strict=config.strict_weights)
         except Exception as e:
+            if config.strict_weights:
+                raise RuntimeError(f"strict baseline checkpoint loading failed: {e}") from e
             print(f"Baseline weight loading failed ({e}); using initialized weights")
         self.sampler = Sampler()
         self.model.eval()
@@ -85,8 +87,10 @@ class RavenModelRunner(ModelRunner):
             torch.set_default_device("cuda")
         self.model = RavenLM(self.raven_cfg)
         try:
-            load_model(self.model, config.model)
+            load_model(self.model, config.model, strict=config.strict_weights)
         except Exception as e:
+            if config.strict_weights:
+                raise RuntimeError(f"strict Raven checkpoint loading failed: {e}") from e
             print(f"Raven weight loading failed ({e}); using initialized weights")
         self.sampler = Sampler()
         self.model.eval()
