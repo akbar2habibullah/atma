@@ -140,14 +140,35 @@ def _flatten(benchmark, result, source):
                 value=result["max_successful_context_tokens"], samples=None,
             ))
     elif benchmark == "babilong":
+        if result.get("protocol") != "heldout-short-finetune-v1":
+            return rows
         for task, lengths in result.get("results", {}).items():
             for length, value in lengths.items():
+                if value is None:
+                    continue
                 rows.append(_row(
                     model, benchmark, source, suite="adapted_reasoning", task=task,
                     dataset=result.get("dataset_id"), length=length, depth=None,
                     metric="accuracy", value=value,
                     samples=result.get("counts", {}).get(task, {}).get(length),
                 ))
+        for length, value in result.get("macro_average", {}).items():
+            if value is not None:
+                rows.append(_row(
+                    model, benchmark, source, suite="adapted_reasoning", task=None,
+                    dataset=result.get("dataset_id"), length=length, depth=None,
+                    metric="macro_accuracy", value=value,
+                    samples=result.get("macro_task_counts", {}).get(length),
+                ))
+        for cell in result.get("oom_cells", []):
+            task = cell.get("task")
+            length = cell.get("length")
+            rows.append(_row(
+                model, benchmark, source, suite="adapted_reasoning", task=task,
+                dataset=result.get("dataset_id"), length=length, depth=None,
+                metric="oom", value=True,
+                samples=result.get("counts", {}).get(task, {}).get(length),
+            ))
     return rows
 
 

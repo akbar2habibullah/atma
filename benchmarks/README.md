@@ -86,22 +86,17 @@ Every completed long-context example releases cached CUDA allocations before the
 ## BABILong
 
 [BABILong](https://arxiv.org/abs/2406.10149) embeds the 20 bAbI reasoning tasks inside PG-19
-background text. Treat it as a fine-tuned adaptation probe for each 10B attention type, not a
-zero-shot base-model quality benchmark.
+background text. Treat it as a controlled fine-tuned adaptation probe for each 10B attention
+type, not a zero-shot base-model quality benchmark.
 
 In the scaled run, `memory=true` is part of the fixed recipe inherited from the first ablation
 sweep. Keep it fixed within the matched NoPE/Polar/RoPE comparison and use the same fine-tune
 protocol for every promoted checkpoint. Raven results must remain a separate model-family/AdamW
 comparison rather than being presented as a pure attention ablation.
 
-Keep the fine-tune protocol simple: fine-tune on the 0K, 1K, and 2K subsets only, then
-evaluate at longer lengths. This tests task-format learning at short/normal context lengths
-plus length generalization from the pretrained attention type.
-
-The public BABILong length configs are small. The 2K config is 1000 rows total across QA
-types, not 1000 rows per QA type. In the Hugging Face layout used by this harness, each
-task split has about 100 rows for a given length. The row split must therefore be per QA
-type. Do not report results on rows used for fine-tuning.
+Use `RMT-team/babilong`, which exposes 100 rows per task and length and includes the `256k`
+configuration. The smaller `RMT-team/babilong-1k-samples` dataset stops at `128k` and cannot
+support this sweep. Here, `256k` is the dataset name for an exact 262,144-token budget.
 
 This is an internal controlled probe, not leaderboard replication. Because it uses a custom
 train/validation/test row split and a 2K-only fine-tuning protocol, the BABILong results are
@@ -111,30 +106,101 @@ generation, prompts, fine-tuning curriculum, task set, and evaluation settings.
 
 Protocol:
 
-1. Use BABILong `qa1..qa10` on `0k`, `1k`, and `2k` so the fine-tune has about 2400 train
-   examples total while preserving per-task reporting.
-2. Create a deterministic row split per QA type, for example rows `0..79` train, `80..89` val,
-   and `90..99` test, applied independently for each train length.
+1. Use `qa1..qa10` and split each task/length independently: rows `0..79` train, `80..89`
+   validation, and `90..99` test. This yields 2,400 training and 300 validation examples.
+2. Fine-tune only on `0k`, `1k`, and `2k`, with `seq_len=2048`. The trainer hard-fails
+   instead of truncating task evidence; the current built-in prompt protocol's largest checked
+   short-context example is 1,782 GPT-2 tokens.
 3. Fine-tune each selected scaled checkpoint on only the `0k`/`1k`/`2k` train rows.
-4. Pad shorter sequences to the fine-tune sequence length, but mask padding out of both loss
-   and attention. Padding tokens must not contribute labels or usable context.
-5. Select checkpoints and stopping rules using only the `0k`/`1k`/`2k` val rows.
-6. Report results only on the held-out test row IDs. Use the same test row IDs at
-   0k, 1k, 2k, 4k, 8k, 16k, 32k, 64k, and 128k.
+4. Apply next-token loss only to the answer and EOS. Right padding is label-masked and occurs
+   after every scored position, so causal tokens cannot attend to it.
+5. Select checkpoints and stopping rules using only the `0k`/`1k`/`2k` validation rows.
+6. Report results only on the held-out test row IDs. Use the same IDs at `0k`, `1k`, `2k`,
+   `4k`, `8k`, `16k`, `32k`, `64k`, `128k`, and `256k`.
 7. Use the same task set, optimizer, token budget, batch-token budget, seed, and stopping rule
    for every attention type.
 8. Report both macro-average across tasks and the per-task matrix.
 9. Keep non-fine-tuned open-source models out of the main BABILong comparison table.
+10. Keep the same prompt implementation installed for fine-tuning and evaluation. The saved
+    manifest pins the dataset commit, prompt protocol, and reserved rows; evaluation rejects
+    mismatches and inherits the pinned dataset revision automatically.
+
+Fine-tune one promoted checkpoint:
 
 ```bash
-python -m benchmarks.run --benchmark babilong --model checkpoints/<fine_tuned_run_id> \
+python -m benchmarks.finetune_babilong \
+    --model checkpoints/<base_run_id> \
+    --output_dir checkpoints/<babilong_run_id> \
     --tasks qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8 qa9 qa10 \
-    --lengths 0k 1k 2k 4k 8k 16k 32k 64k 128k --samples 10 \
-    --max_num_seqs 16 --out benchmarks/logs/babilong_<run_id>.log --strict
+    --train_lengths 0k 1k 2k --seq_len 2048 \
+    --train_start 0 --train_end 80 --val_start 80 --val_end 90 \
+    --epochs 3 --micro_batch_size 1 --grad_accum_steps 8 --seed 1234
 ```
 
-For leaderboard-parity prompts, install `babilong`; otherwise the harness uses built-in
-minimal prompts and logs that choice.
+Before the full matrix, run one 256K held-out example as a correctness and memory gate:
+
+```bash
+python -m benchmarks.run --benchmark babilong \
+    --model checkpoints/<babilong_run_id> \
+    --tasks qa1 --lengths 256k --row_start 90 --row_end 100 --samples 1 \
+    --babilong_backend direct --max_tokens 16 \
+    --out benchmarks/logs/babilong_256k_pilot_<run_id>.log
+```
+
+Then run the full held-out sweep:
+
+```bash
+python -m benchmarks.run --benchmark babilong \
+    --model checkpoints/<babilong_run_id> \
+    --tasks qa1 qa2 qa3 qa4 qa5 qa6 qa7 qa8 qa9 qa10 \
+    --lengths 0k 1k 2k 4k 8k 16k 32k 64k 128k 256k \
+    --row_start 90 --row_end 100 --samples 10 \
+    --babilong_backend direct --max_tokens 16 \
+    --out benchmarks/logs/babilong_<run_id>.log
+```
+
+The default `direct` backend uses the checkpoint-exact training forward, performs no silent
+context truncation, clears completed examples between cells, and records an OOM for only the
+affected task/length. It avoids the paged serving KV-cache ceiling at 256K, but greedy decoding
+recomputes the full prefix for each generated token and is therefore deliberately slower.
+Installing the `babilong` package switches both trainer and evaluator to its official prompts;
+do that before fine-tuning, not between fine-tuning and evaluation.
+
+### All checkpoints and Hugging Face upload
+
+Authenticate once before starting the multi-hour run. The pipeline also accepts `HF_TOKEN`
+through the normal Hugging Face Hub environment.
+
+```bash
+hf auth login
+hf auth whoami
+```
+
+Then fine-tune all five promoted checkpoints sequentially on GPU 0, run the 256K gate and full
+held-out evaluation for each, and upload every resulting checkpoint:
+
+```bash
+python -m benchmarks.run_babilong_pipeline \
+    --gpu 0 \
+    --upload \
+    --hf_namespace ChavyvAkvar
+```
+
+The default public destination names are
+`ChavyvAkvar/atma-10b-babilong-2k-ft-{nope,polar,rope,atma-raven-titans,raven-native}`.
+Add `--private` to create private repositories, or change `--hf_repo_prefix` to use another
+naming scheme. Upload authentication is checked before checkpoint downloads or GPU work begin.
+
+The runner pins one BABILong dataset commit for every model, launches training and each
+evaluation in fresh processes, preserves the 256K pilot as a gate for the full sweep, and
+continues to the next model after a failure. Fine-tuned checkpoints are uploaded even when their
+long-context evaluation fails, with that status recorded in the model card. Repeating the same
+command resumes valid checkpoints, completed evaluations, and unchanged uploads.
+
+Local checkpoints are stored under `checkpoints/babilong_2k_ft/`; logs, the resumable summary,
+and the aggregated matrix are written under `benchmarks/logs/babilong_2k_ft/`. Use
+`--dry_run --upload` to print the five source and destination repositories without accessing
+the network. Budget roughly 5–8 hours on one L40S, plus Hugging Face upload time.
 
 ## Base LM quality controls
 
@@ -193,8 +259,10 @@ different GPU or software stack is not an architecture-only comparison.
 |---|---|
 | `model.py` | `EvalModel` architecture router; loads `config.json` and checkpoint weights |
 | `babilong.py` | BABILong prompt formatting, generation, and answer scoring |
+| `finetune_babilong.py` | Controlled answer-only fine-tuning on 0K/1K/2K held-in rows |
+| `run_babilong_pipeline.py` | Resumable all-checkpoint fine-tune/eval/Hub upload runner |
 | `retrieval.py` | Synthetic passkey + NIAH over length x depth grids |
-| `scoring.py` | Checkpoint-exact conditional loglikelihood scorer |
+| `scoring.py` | Checkpoint-exact likelihood and full-recompute greedy generation |
 | `base_tasks.py` | LAMBADA and zero-shot multiple-choice scorers |
 | `longdoc.py` | Fixed-target long-document NLL/PPL/BPB |
 | `serving.py` | Throughput, memory, and maximum-context sweep |
@@ -296,6 +364,7 @@ Metric units are not uniform:
 | Retrieval | `exact_match` | Whole-value percentage in `[0, 100]`; higher and stricter than token accuracy |
 | Retrieval | `nll_nats_per_token` | Nats/token; lower is better and retains signal when accuracy is zero |
 | Base tasks | `accuracy`, `accuracy_norm` | Fraction in `[0, 1]`; higher is better |
+| BABILong | `accuracy`, `macro_accuracy` | Held-out exact-match percentage in `[0, 100]`; higher is better |
 | Long document | `bits_per_byte` | Bits/byte; lower is better and comparable across context lengths |
 | Serving | `*_tokens_per_s` | Tokens/second; higher is better |
 | Serving | `peak_*_bytes` | Bytes; lower is better at the same length, batch, and backend |
@@ -322,6 +391,12 @@ jq -r '
 The other result families do not have smoke duplicates. Extract their reporting rows with:
 
 ```bash
+# BABILong per-task and complete-task macro accuracy, plus any OOM cells.
+jq -r '.rows[]
+  | select(.benchmark == "babilong")
+  | [.model, .task, .length, .metric, .value, .samples] | @tsv' \
+  benchmarks/logs/babilong_2k_ft/benchmark_matrix.json
+
 # Base-task metrics (multiply values by 100 when displaying percentages).
 jq -r '.rows[]
   | select(.benchmark == "base"
@@ -349,9 +424,11 @@ accuracy is teacher-forced next-token accuracy, not free-generation task success
 
 ## L40S Benchmark Results (2026-08-02)
 
-These tables were parsed from `benchmarks/logs/atma_10b/benchmark_matrix.json`, generated at
-2026-08-02 04:20:29 UTC. Reported precision is intentionally limited because the retrieval cells
-have 50 trials and the serving cells have only one timing sample.
+The no-fine-tune tables were parsed from `benchmarks/logs/atma_10b/benchmark_matrix.json`,
+generated at 2026-08-02 04:20:29 UTC. BABILong was parsed separately from
+`benchmarks/logs/babilong_2k_ft/benchmark_matrix.json`, generated at 2026-08-02 15:49:31 UTC.
+Reported precision is intentionally limited because retrieval cells have 50 trials, BABILong
+task/length cells have 10 examples, and serving cells have one timing sample.
 
 ### Run integrity
 
@@ -364,6 +441,68 @@ have 50 trials and the serving cells have only one timing sample.
 | Long-document coverage | 2K through 256K; 8 FinePDFs, 5 PG-19, and 5 Proof-Pile documents per model |
 | Serving coverage | 2K through 128K; one sequence and one timing sample per cell |
 | Failures | No failed, OOM, illegal-memory-access, or null-result cells |
+
+### BABILong adaptation
+
+All five models used the same controlled protocol: answer-only fine-tuning on `qa1..qa10`
+at `0k`/`1k`/`2k`, rows 0–79 for training and 80–89 for validation, followed by greedy
+evaluation on held-out rows 90–99. The dataset was pinned to
+`RMT-team/babilong@ee0d588794c7ac098062ee0d247c733d62e94fe2`; both training and evaluation
+used the logged `builtin-v1` prompts.
+
+| Check | Result |
+|---|---|
+| Fine-tuning / 256K pilot / full evaluation | 5/5 complete for every stage |
+| Evaluation coverage | 5,000 held-out responses; 10 tasks x 10 lengths x 10 rows x 5 models |
+| GPU-stage time | 7h11m: fine-tuning 1h10m, 256K pilots 5m, full evaluation 5h56m |
+| Checkpoint selection | Best validation epoch was 1 for four models and 2 for RoPE |
+| Integrity | Direct checkpoint-exact backend; all row IDs 90–99; no OOM, unsupported, missing, or null cells |
+| Hugging Face uploads | 5/5 complete and public; commit IDs verified against the Hub |
+
+The table reports macro exact-match accuracy (%), averaging the ten task accuracies. Because
+every task contributes ten held-out rows, each entry also equals accuracy over 100 responses.
+`Delta` is the change in percentage points from 2K to 256K; it is not normalized by the 2K
+score. The first three rows are the matched Atma+Muon attention comparison.
+
+| Comparison | Fine-tuned model | 0K | 1K | 2K | 4K | 8K | 16K | 32K | 64K | 128K | 256K | Delta |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Matched Atma+Muon | [NoPE](https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope) | 63 | 57 | 55 | 56 | 39 | 21 | 6 | 0 | 0 | 0 | -55 |
+| Matched Atma+Muon | [Polar](https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar) | 55 | 54 | 52 | 54 | 56 | 50 | 46 | 45 | 35 | 28 | -24 |
+| Matched Atma+Muon | [RoPE](https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope) | 59 | 67 | 64 | 43 | 28 | 19 | 15 | 16 | 14 | 14 | -50 |
+| Raven/AdamW | [Atma Raven Titans](https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans) | 59 | 50 | 56 | 56 | 51 | 49 | 46 | 44 | 45 | 38 | -18 |
+| Raven/AdamW | [Raven Native](https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native) | 52 | 56 | 58 | 52 | 52 | 51 | 53 | 50 | 48 | 46 | -12 |
+
+This compact endpoint table preserves per-task behavior. Each cell is `2K -> 256K` accuracy
+(%) over the same ten held-out row IDs, so task-level values move in 10-point increments.
+
+| Comparison | Model | qa1 | qa2 | qa3 | qa4 | qa5 | qa6 | qa7 | qa8 | qa9 | qa10 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Matched Atma+Muon | NoPE | 80->0 | 60->0 | 20->0 | 80->0 | 60->0 | 40->0 | 90->0 | 20->0 | 60->0 | 40->0 |
+| Matched Atma+Muon | Polar | 50->20 | 50->40 | 30->10 | 70->10 | 50->0 | 60->40 | 90->40 | 10->20 | 80->70 | 30->30 |
+| Matched Atma+Muon | RoPE | 70->0 | 60->0 | 20->0 | 90->0 | 70->0 | 90->30 | 70->0 | 30->30 | 80->50 | 60->30 |
+| Raven/AdamW | Atma Raven Titans | 60->40 | 70->30 | 30->10 | 70->40 | 60->10 | 60->60 | 90->90 | 20->30 | 70->40 | 30->30 |
+| Raven/AdamW | Raven Native | 60->50 | 80->30 | 40->20 | 80->50 | 40->30 | 50->40 | 90->90 | 20->40 | 80->70 | 40->40 |
+
+Within the matched comparison, Polar is the clear long-context winner. It stays near its 2K
+score through 64K and retains 28% at 256K. NoPE falls from 55% at 2K to 6% at 32K and zero on
+all ten tasks from 64K onward. RoPE drops immediately beyond its trained range and reaches 14%
+at 256K; that residual is not broad task retention, because `qa1..qa5` and `qa7` are all zero
+there, with the remaining score coming from `qa6`, `qa8`, `qa9`, and `qa10`.
+Several of these later tasks have small answer spaces, so residual exact-match scores do not by
+themselves establish successful evidence retrieval.
+
+Raven Native has the strongest overall endpoint (46%) and smallest 2K-to-256K drop (12 points);
+Atma Raven Titans reaches 38% with an 18-point drop. These are useful model-family results, but
+their Raven architecture and AdamW training group mean they must not be interpreted as a pure
+attention comparison against NoPE/Polar/RoPE.
+
+The long-context ordering is not explained by adaptation loss or short-context task accuracy:
+NoPE had the lowest validation NLL (0.490) yet collapsed completely, while RoPE had the highest
+2K macro score (64%) but retained only 14%. This reinforces the retrieval and long-document
+finding that Polar has the strongest length extrapolation among the matched variants. Absolute
+scores remain internal-protocol results, not BABILong leaderboard numbers: prompts are custom,
+the split is custom, and individual task cells are small. Do not over-interpret close differences
+without a larger held-out set or a paired significance analysis.
 
 ### Retrieval
 
@@ -446,13 +585,15 @@ feasibility and approximate cost rather than statistically stable throughput ran
 
 Across the matched Atma+Muon models, Polar provides the strongest long-context behavior: it
 retains much more controlled retrieval accuracy and degrades much less on fixed-target document
-likelihood. That benefit comes with a small base-task macro-average deficit and no measured
-128K memory advantage over NoPE or RoPE. Raven Native and Atma Raven Titans are useful separate
-family baselines, but should not be mixed into the attention ablation conclusion.
+likelihood. The adapted BABILong endpoint independently points the same way: Polar reaches 28%
+at 256K versus 14% for RoPE and 0% for NoPE. That benefit comes with a small base-task
+macro-average deficit and no measured 128K memory advantage over NoPE or RoPE. Raven Native and
+Atma Raven Titans are useful separate family baselines, but should not be mixed into the
+attention ablation conclusion.
 
-This result bundle covers retrieval, all eight base LM controls, long-document likelihood, and
-serving. It does not contain BABILong because the required matched fine-tuning has not been run.
-It also does not duplicate the intrinsic FinePDFs/FineWeb-Edu/induction evaluations owned by
+The combined result bundles now cover retrieval, all eight base LM controls, long-document
+likelihood, serving, and the matched BABILong adaptation probe through 256K. They do not
+duplicate the intrinsic FinePDFs/FineWeb-Edu/induction evaluations owned by
 `scaled_ablation.evaluate`; cite those artifacts separately when completing the full benchmark
-matrix. Free-generation instruction benchmarks remain intentionally excluded for these base
-checkpoints.
+matrix. Free-generation instruction benchmarks remain intentionally excluded for the original
+base checkpoints.

@@ -1,7 +1,8 @@
 """Run generation, likelihood, long-document, or serving benchmarks.
 
     python -m benchmarks.run --benchmark babilong --model checkpoints/<run_id> \
-        --tasks qa1 qa2 --lengths 0k 1k 2k 4k 8k 16k 32k --samples 100 \
+        --tasks qa1 qa2 --lengths 0k 1k 2k 4k 8k 16k 32k 64k 128k 256k \
+        --row_start 90 --row_end 100 --samples 10 --babilong_backend direct \
         --out benchmarks/logs/babilong_<run_id>.log
 
 BABILong needs a *fine-tuned* checkpoint to be meaningful (see benchmarks/babilong.py).
@@ -62,8 +63,15 @@ def main():
     ap.add_argument("--serving_samples", type=int, default=1)
     ap.add_argument("--seed", type=int, default=1234,
                     help="retrieval sample seed (same seed yields paired items across models)")
-    ap.add_argument("--dataset", default="RMT-team/babilong-1k-samples")
+    ap.add_argument("--dataset", default="RMT-team/babilong")
     ap.add_argument("--dataset_revision", default=None)
+    ap.add_argument("--row_start", type=int, default=90,
+                    help="BABILong only: first held-out row ID (inclusive)")
+    ap.add_argument("--row_end", type=int, default=100,
+                    help="BABILong only: final held-out row ID (exclusive)")
+    ap.add_argument("--babilong_backend", choices=("direct", "paged"), default="direct",
+                    help="direct uses the checkpoint-exact training forward and scales to 256K; "
+                         "paged is faster but may hit the serving KV-cache memory ceiling")
     ap.add_argument("--datasets", nargs="+", default=None,
                     help="longdoc dataset aliases: pg19 proof_pile finepdfs")
     ap.add_argument("--dataset_revisions", default=None,
@@ -84,8 +92,8 @@ def main():
     ap.add_argument("--max_scan", type=int, default=100000)
     ap.add_argument("--max_model_len", type=int, default=None,
                     help="inference context budget; default inferred from --lengths")
-    ap.add_argument("--max_num_seqs", type=int, default=16,
-                    help="max concurrent sequences; lower values reduce Titans memory-state allocation")
+    ap.add_argument("--max_num_seqs", type=int, default=1,
+                    help="max concurrent paged sequences; one is safest at long context")
     ap.add_argument("--max_num_batched_tokens", type=int, default=None,
                     help="prefill token budget; default is at least max_model_len")
     ap.add_argument("--out", default=None)
@@ -95,7 +103,7 @@ def main():
 
     if args.tasks is None:
         if args.benchmark == "babilong":
-            args.tasks = ["qa1"]
+            args.tasks = [f"qa{i}" for i in range(1, 11)]
         elif args.benchmark == "retrieval":
             args.tasks = ["passkey", "niah"]
         elif args.benchmark == "base":
@@ -105,13 +113,16 @@ def main():
             args.tasks = []
     if args.lengths is None:
         if args.benchmark == "babilong":
-            args.lengths = ["0k", "1k", "2k", "4k", "8k", "16k", "32k"]
+            from benchmarks.babilong import EVAL_LENGTHS
+            args.lengths = list(EVAL_LENGTHS)
         elif args.benchmark == "serving":
             args.lengths = ["2k", "4k", "8k", "16k", "32k", "64k", "128k"]
         else:
             args.lengths = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
     if args.retrieval_value_tokens <= 0:
         ap.error("--retrieval_value_tokens must be positive")
+    if args.row_start < 0 or args.row_end <= args.row_start:
+        ap.error("--row range must satisfy 0 <= row_start < row_end")
     if args.datasets is None:
         args.datasets = ["pg19", "proof_pile", "finepdfs"]
 
@@ -130,22 +141,27 @@ def main():
     scorer = None
     try:
         if args.benchmark == "babilong":
-            from benchmarks.model import EvalModel
-
             max_model_len = args.max_model_len or _infer_max_model_len(
                 args.lengths, args.max_tokens
             )
-            max_num_batched_tokens = args.max_num_batched_tokens or max(
-                max_model_len, 16384
-            )
-            model = EvalModel(
-                args.model,
-                max_tokens=args.max_tokens,
-                strict=args.strict,
-                max_model_len=max_model_len,
-                max_num_seqs=args.max_num_seqs,
-                max_num_batched_tokens=max_num_batched_tokens,
-            )
+            if args.babilong_backend == "direct":
+                from benchmarks.scoring import DirectScorer
+                model = DirectScorer(
+                    args.model, max_length=max_model_len, batch_size=1
+                )
+            else:
+                from benchmarks.model import EvalModel
+                max_num_batched_tokens = args.max_num_batched_tokens or max(
+                    max_model_len, 16384
+                )
+                model = EvalModel(
+                    args.model,
+                    max_tokens=args.max_tokens,
+                    strict=args.strict,
+                    max_model_len=max_model_len,
+                    max_num_seqs=args.max_num_seqs,
+                    max_num_batched_tokens=max_num_batched_tokens,
+                )
 
         if args.benchmark == "babilong":
             from benchmarks.babilong import emit_log, run_babilong
@@ -153,7 +169,8 @@ def main():
             res = run_babilong(
                 model, args.tasks, args.lengths, num_samples=args.samples,
                 dataset_id=args.dataset, dataset_revision=args.dataset_revision,
-                max_tokens=args.max_tokens, log_fn=log,
+                max_tokens=args.max_tokens, row_start=args.row_start,
+                row_end=args.row_end, log_fn=log,
             )
             emit_log(fh, model, res)
         elif args.benchmark == "retrieval":

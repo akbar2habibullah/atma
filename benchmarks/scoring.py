@@ -224,3 +224,64 @@ class DirectScorer:
     def score_token_ids(self, context_ids, continuation_ids):
         request = TokenRequest(tuple(context_ids), tuple(continuation_ids))
         return self._score_batch([request])[0]
+
+    def generate(
+        self,
+        prompts,
+        max_tokens: int = 16,
+        temperature: float | None = 0.0,
+        use_tqdm: bool = False,
+    ):
+        """Greedy full-recompute generation through the training model.
+
+        This is intentionally slower than the paged serving engine. It uses the same model
+        forward as training and the 262K intrinsic/retrieval evaluators, avoids a full-length
+        KV cache, and releases completed-example tensors before the next prompt. That makes it
+        the correctness-first path for BABILong contexts that exceed the serving memory limit.
+        """
+        del use_tqdm
+        import torch
+
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        if temperature not in (None, 0, 0.0):
+            raise ValueError("DirectScorer.generate supports greedy decoding only")
+
+        eos = self.tokenizer.eos_token_id
+        outputs = []
+        for prompt in prompts:
+            if isinstance(prompt, str):
+                token_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+            else:
+                token_ids = list(prompt)
+            if not token_ids:
+                token_ids = [eos]
+            if self.max_length is not None and len(token_ids) + max_tokens > self.max_length:
+                raise ValueError(
+                    f"prompt has {len(token_ids)} tokens and requests {max_tokens} new tokens, "
+                    f"exceeding max_length={self.max_length}; BABILong contexts must not be "
+                    "silently truncated"
+                )
+
+            generated = []
+            try:
+                for _ in range(max_tokens):
+                    inputs = torch.tensor(
+                        [token_ids], dtype=torch.int32, device=self.device
+                    )
+                    with torch.inference_mode():
+                        hidden = self._forward_hidden(inputs)
+                        last = self.model.norm(hidden[:, -1:])
+                        logits = self.model.proj(last).float()
+                        next_token = int(logits[0, 0].argmax().item())
+                    generated.append(next_token)
+                    token_ids.append(next_token)
+                    del inputs, hidden, last, logits
+                    if next_token == eos:
+                        break
+            finally:
+                self.clear_cache()
+            outputs.append(
+                self.tokenizer.decode(generated, skip_special_tokens=True)
+            )
+        return outputs
