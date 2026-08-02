@@ -270,3 +270,189 @@ python -m benchmarks.aggregate --log_dir benchmarks/logs/atma_10b
 
 These checkpoints are base models. BABILong is intentionally excluded from `--stage full`; run
 it only after applying the same task-fine-tuning protocol to every comparison model.
+
+## Parsing Results
+
+Use `pipeline_summary.json` to audit execution and `benchmark_matrix.json` (or the equivalent
+CSV) for analysis. The matrix has one row per model, benchmark, suite, task/dataset, length,
+depth, and metric. Always rerun aggregation after adding or replacing a structured log.
+
+First check that every scheduled process completed:
+
+```bash
+jq '{
+  records: (.records | length),
+  statuses: (.records | group_by(.status) |
+             map({status: .[0].status, count: length})),
+  elapsed_hours: (([.records[].elapsed_s] | add) / 3600)
+}' benchmarks/logs/atma_10b/pipeline_summary.json
+```
+
+Metric units are not uniform:
+
+| Benchmark | Preferred metric | Unit and direction |
+|---|---|---|
+| Retrieval | `token_accuracy` | Percentage in `[0, 100]`; higher is better |
+| Retrieval | `exact_match` | Whole-value percentage in `[0, 100]`; higher and stricter than token accuracy |
+| Retrieval | `nll_nats_per_token` | Nats/token; lower is better and retains signal when accuracy is zero |
+| Base tasks | `accuracy`, `accuracy_norm` | Fraction in `[0, 1]`; higher is better |
+| Long document | `bits_per_byte` | Bits/byte; lower is better and comparable across context lengths |
+| Serving | `*_tokens_per_s` | Tokens/second; higher is better |
+| Serving | `peak_*_bytes` | Bytes; lower is better at the same length, batch, and backend |
+
+When an `all` run contains smoke and full retrieval logs, filter to filenames beginning with
+`retrieval_retrieval_`. Otherwise the 2K and 8K smoke cells are counted a second time. This
+command emits the full-run mean for each suite and length, averaging the two retrieval tasks and
+three depths:
+
+```bash
+jq -r '
+  ["model", "suite", "length", "token_accuracy_pct"],
+  (.rows
+   | map(select(.benchmark == "retrieval"
+                and .metric == "token_accuracy"
+                and (.source_log | contains("/retrieval_retrieval_"))))
+   | group_by([.model, .suite, .length])[]
+   | [.[0].model, .[0].suite, .[0].length,
+      (map(.value) | add / length)])
+  | @tsv
+' benchmarks/logs/atma_10b/benchmark_matrix.json
+```
+
+The other result families do not have smoke duplicates. Extract their reporting rows with:
+
+```bash
+# Base-task metrics (multiply values by 100 when displaying percentages).
+jq -r '.rows[]
+  | select(.benchmark == "base"
+           and (.metric == "accuracy" or .metric == "accuracy_norm"))
+  | [.model, .task, .metric, .value, .samples] | @tsv' \
+  benchmarks/logs/atma_10b/benchmark_matrix.json
+
+# Long-document BPB at every tested length.
+jq -r '.rows[]
+  | select(.benchmark == "longdoc" and .metric == "bits_per_byte")
+  | [.model, .dataset, .length, .value, .samples] | @tsv' \
+  benchmarks/logs/atma_10b/benchmark_matrix.json
+
+# Serving throughput, memory, OOM state, and maximum successful context.
+jq -r '.rows[]
+  | select(.benchmark == "serving")
+  | [.model, .length, .metric, .value] | @tsv' \
+  benchmarks/logs/atma_10b/benchmark_matrix.json
+```
+
+For the base-task summary below, the primary metric is raw accuracy for LAMBADA, WinoGrande,
+and BoolQ, and length-normalized accuracy for HellaSwag, PIQA, ARC, and OpenBookQA. Do not average
+both raw and normalized accuracy as if they were independent tasks. Likewise, retrieval token
+accuracy is teacher-forced next-token accuracy, not free-generation task success.
+
+## L40S Benchmark Results (2026-08-02)
+
+These tables were parsed from `benchmarks/logs/atma_10b/benchmark_matrix.json`, generated at
+2026-08-02 04:20:29 UTC. Reported precision is intentionally limited because the retrieval cells
+have 50 trials and the serving cells have only one timing sample.
+
+### Run integrity
+
+| Check | Result |
+|---|---|
+| Pipeline processes | 30/30 complete, return code 0 |
+| Summed process time | 8h03m: retrieval 7h13m, base 20m, long document 24m, serving 4m, smoke 2m |
+| Full retrieval coverage | 24,000 trials; 2K through 256K; 50 trials per task/suite/length/depth cell |
+| Base-task coverage | Full validation splits; 22,939 examples per model |
+| Long-document coverage | 2K through 256K; 8 FinePDFs, 5 PG-19, and 5 Proof-Pile documents per model |
+| Serving coverage | 2K through 128K; one sequence and one timing sample per cell |
+| Failures | No failed, OOM, illegal-memory-access, or null-result cells |
+
+### Retrieval
+
+The table reports mean teacher-forced token accuracy (%) across synthetic and real-text suites,
+passkey and NIAH tasks, and the 10%, 50%, and 90% needle depths. The first three rows are the
+matched Atma+Muon comparison; the Raven rows change model family and optimizer.
+
+| Comparison | Model | 2K | 4K | 8K | 16K | 32K | 64K | 128K | 256K |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Matched Atma+Muon | NoPE | 99.2 | 75.8 | 48.9 | 47.5 | 35.2 | 13.2 | 5.1 | 0.6 |
+| Matched Atma+Muon | Polar | 98.9 | 92.4 | 87.5 | 73.1 | 67.8 | 54.3 | 41.8 | 34.4 |
+| Matched Atma+Muon | RoPE | 88.2 | 24.8 | 17.4 | 0.4 | 3.4 | 0.1 | 0.0 | 0.0 |
+| Raven/AdamW | Atma Raven Titans | 43.1 | 31.6 | 27.3 | 23.6 | 21.5 | 18.2 | 13.8 | 10.0 |
+| Raven/AdamW | Raven Native | 41.1 | 36.6 | 30.5 | 25.8 | 24.8 | 21.9 | 21.3 | 20.3 |
+
+Polar is the clear matched-comparison winner on length retention. NoPE begins at the same level
+but falls to 0.6% at 256K, while RoPE loses nearly all retrieval signal by 16K. The aggregate
+still needs a suite split: at 256K, Polar scores 68.4% on synthetic retrieval but only 0.3% on
+real-text retrieval. It therefore demonstrates strong controlled length extrapolation, not
+general 256K document understanding. Raven Native has lower short-context accuracy but the
+flattest retrieval curve; that result cannot be attributed to attention alone.
+
+### Base LM quality controls
+
+Values are percentages. `Mean` is an unweighted macro-average of the eight displayed primary
+metrics.
+
+| Comparison | Model | LAMBADA | HellaSwag | PIQA | WinoGrande | ARC-E | ARC-C | OBQA | BoolQ | Mean |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Matched Atma+Muon | NoPE | 30.2 | 37.9 | 66.3 | 51.9 | 50.5 | 32.4 | 31.6 | 60.4 | 45.1 |
+| Matched Atma+Muon | Polar | 28.5 | 36.2 | 66.9 | 51.6 | 49.1 | 26.1 | 31.8 | 56.2 | 43.3 |
+| Matched Atma+Muon | RoPE | 30.3 | 37.2 | 66.8 | 50.7 | 49.1 | 29.4 | 32.4 | 60.9 | 44.6 |
+| Raven/AdamW | Atma Raven Titans | 26.0 | 34.1 | 65.6 | 52.5 | 48.1 | 27.8 | 29.0 | 61.4 | 43.1 |
+| Raven/AdamW | Raven Native | 27.5 | 33.6 | 64.7 | 51.7 | 49.1 | 27.1 | 28.8 | 61.9 | 43.0 |
+
+NoPE has the best matched macro-average, with RoPE 0.5 points behind and Polar 1.8 points
+behind. The gaps are modest compared with the long-context retrieval gaps, so Polar's retrieval
+advantage is not evidence of a uniformly stronger base LM. None of these likelihood-scored
+tasks measures instruction following.
+
+### Long-document likelihood
+
+Lower BPB is better. Each value is the unweighted mean of the three dataset-level means; the
+ratio shows degradation from 2K to 256K on the same fixed target spans.
+
+| Comparison | Model | 2K BPB | 256K BPB | 256K / 2K |
+|---|---|---:|---:|---:|
+| Matched Atma+Muon | NoPE | 1.432 | 8.097 | 5.65x |
+| Matched Atma+Muon | Polar | 1.451 | 1.825 | 1.26x |
+| Matched Atma+Muon | RoPE | 1.439 | 2.512 | 1.75x |
+| Raven/AdamW | Atma Raven Titans | 1.525 | 1.551 | 1.02x |
+| Raven/AdamW | Raven Native | 1.581 | 1.597 | 1.01x |
+
+Polar again has the best length stability in the matched comparison. NoPE's 5.65x BPB increase
+is a severe long-context failure; RoPE degrades less but remains materially worse than Polar.
+Both Raven variants are almost flat, but their different architecture/training group prevents an
+attention-only conclusion. PG-19 and Proof-Pile have five qualifying 256K documents rather than
+the requested eight, so treat their endpoint estimates as small-sample controls.
+
+### Serving at 128K
+
+Memory is GiB (2^30 bytes). These are single-sample measurements on the same L40S.
+
+| Comparison | Model | Prefill tok/s | Decode tok/s | Peak allocated GiB | Peak reserved GiB |
+|---|---|---:|---:|---:|---:|
+| Matched Atma+Muon | NoPE | 89,013 | 61.0 | 39.40 | 39.54 |
+| Matched Atma+Muon | Polar | 80,959 | 61.3 | 39.41 | 39.66 |
+| Matched Atma+Muon | RoPE | 89,015 | 60.6 | 39.41 | 39.60 |
+| Raven/AdamW | Atma Raven Titans | 131,195 | 440.3 | 8.62 | 9.27 |
+| Raven/AdamW | Raven Native | 96,559 | 306.1 | 6.46 | 8.74 |
+
+The matched Atma variants have essentially identical 128K memory use and decode throughput;
+Polar's prefill result is about 9% lower. The Raven implementations use much less memory and
+decode faster, but serving measures the deployed architecture and backend together. Training
+optimizer does not explain inference throughput, and the different model/backend prevents an
+attention-only attribution. With one timing sample, these numbers establish
+feasibility and approximate cost rather than statistically stable throughput rankings.
+
+### Overall interpretation and remaining coverage
+
+Across the matched Atma+Muon models, Polar provides the strongest long-context behavior: it
+retains much more controlled retrieval accuracy and degrades much less on fixed-target document
+likelihood. That benefit comes with a small base-task macro-average deficit and no measured
+128K memory advantage over NoPE or RoPE. Raven Native and Atma Raven Titans are useful separate
+family baselines, but should not be mixed into the attention ablation conclusion.
+
+This result bundle covers retrieval, all eight base LM controls, long-document likelihood, and
+serving. It does not contain BABILong because the required matched fine-tuning has not been run.
+It also does not duplicate the intrinsic FinePDFs/FineWeb-Edu/induction evaluations owned by
+`scaled_ablation.evaluate`; cite those artifacts separately when completing the full benchmark
+matrix. Free-generation instruction benchmarks remain intentionally excluded for these base
+checkpoints.

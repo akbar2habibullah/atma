@@ -1,0 +1,28 @@
+[run] benchmark=retrieval model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0/snapshots/875d1c6ab0603a8302a168736c2d9cab179b01c3 tasks=['passkey', 'niah'] lengths=['2k', '8k'] samples=2
+[retrieval] passkey len=  2k depth= 0.1: token_acc=40.0% exact=0.0% nll=1.6800
+[retrieval] passkey len=  2k depth= 0.5: token_acc=40.0% exact=0.0% nll=1.7288
+[retrieval] passkey len=  2k depth= 0.9: token_acc=40.0% exact=0.0% nll=1.5933
+[retrieval] passkey len=  8k depth= 0.1: token_acc=40.0% exact=0.0% nll=1.9074
+[retrieval] passkey len=  8k depth= 0.5: token_acc=30.0% exact=0.0% nll=1.9705
+[retrieval] passkey len=  8k depth= 0.9: token_acc=40.0% exact=0.0% nll=1.9908
+[retrieval]    niah len=  2k depth= 0.1: token_acc=60.0% exact=0.0% nll=1.3911
+[retrieval]    niah len=  2k depth= 0.5: token_acc=70.0% exact=0.0% nll=1.4874
+[retrieval]    niah len=  2k depth= 0.9: token_acc=60.0% exact=0.0% nll=1.3574
+[retrieval]    niah len=  8k depth= 0.1: token_acc=70.0% exact=0.0% nll=1.5904
+[retrieval]    niah len=  8k depth= 0.5: token_acc=60.0% exact=0.0% nll=1.6065
+[retrieval]    niah len=  8k depth= 0.9: token_acc=60.0% exact=0.0% nll=1.5611
+
+[retrieval] teacher-forced token accuracy %, per kind (rows=length, cols=depth):
+  passkey:
+    len     0.1    0.5    0.9
+      2k   40.0   40.0   40.0
+      8k   40.0   30.0   40.0
+  niah:
+    len     0.1    0.5    0.9
+      2k   60.0   70.0   60.0
+      8k   70.0   60.0   60.0
+
+===RETRIEVAL_RESULTS_JSON===
+{"benchmark": "retrieval", "protocol": "teacher-forced-needle-v2", "kinds": ["passkey", "niah"], "lengths": ["2k", "8k"], "depths": [0.1, 0.5, 0.9], "num_samples": 2, "value_tokens": 5, "seed": 1234, "paired_across_lengths_and_depths": true, "haystack": "synthetic-filler", "haystack_revision": null, "results": {"passkey": {"2k": {"0.1": 40.0, "0.5": 40.0, "0.9": 40.0}, "8k": {"0.1": 40.0, "0.5": 30.0, "0.9": 40.0}}, "niah": {"2k": {"0.1": 60.0, "0.5": 70.0, "0.9": 60.0}, "8k": {"0.1": 70.0, "0.5": 60.0, "0.9": 60.0}}}, "exact_results": {"passkey": {"2k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "8k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}, "niah": {"2k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "8k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}}, "nll_results": {"passkey": {"2k": {"0.1": 1.6800381660461425, "0.5": 1.728781509399414, "0.9": 1.59328351020813}, "8k": {"0.1": 1.9074385643005372, "0.5": 1.9705211639404296, "0.9": 1.9907634735107422}}, "niah": {"2k": {"0.1": 1.3911402225494385, "0.5": 1.4873907566070557, "0.9": 1.35741868019104}, "8k": {"0.1": 1.5903563499450684, "0.5": 1.6064509868621826, "0.9": 1.5611097812652588}}}, "oom_cells": [], "elapsed_s": 7.0, "unsupported_checkpoint": false, "model_config": {"arch_type": "raven_native", "attn_type": "raven_native", "reg_mode": "baseline", "distractor": false, "memory": false, "window": false, "vocab_size": 50304, "hidden_size": 1024, "num_hidden_layers": 16, "num_heads": 4, "num_kv_heads": 4, "atma_head_match": true, "num_slots": 256, "topk": 32, "feature_map": "swish", "router_score": "sigmoid", "router_type": "lin", "decay_type": "Mamba2", "add_gumbel_noise": true, "bias_rmm": false, "gate_logit_normalizer": 8, "conv_kernel_size": 3, "seq_len": 2048, "num_chunks": 99, "batch_size": 524288, "val_tokens": 2097152, "mbs": 16, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha_on": 0.01, "dist_align_weight_on": 0.01, "optimizer": "adamw_raven", "adamw_lr": 0.0003, "adamw_lr_min_frac": 0.1, "adamw_warmup_frac": 0.05, "adamw_beta1": 0.9, "adamw_beta2": 0.95, "adamw_eps": 1e-15, "adamw_weight_decay": 0.1, "skip_nan_inf": true, "compile_model": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "fla_custom_op": true, "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "clean_dataset": "codelion/finepdfs-1B", "val_data": "finewebedu10B/finewebedu_val_*.bin", "num_eval_docs": 64, "num_needle_trials": 64, "needle_val_len": 5, "run_id": "raven_native__reg-baseline__distr-0__mem-0__win-0", "comparison_group": "raven_scaled_promotion", "mixer_ratio": "16_raven", "num_random_keys": 0, "dist_align_loss_weight": 0.0, "sigr_alpha": 0.0, "attn_window": null, "mem_enabled": false}, "model_unsupported": [], "serving_metrics": null}
+===END===
+[run] done in 7.0s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/smoke_retrieval_synthetic_raven_native_283efd1aab.log

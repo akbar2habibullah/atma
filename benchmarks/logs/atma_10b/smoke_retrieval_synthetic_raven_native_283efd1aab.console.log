@@ -1,0 +1,16 @@
+[run] benchmark=retrieval model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0/snapshots/875d1c6ab0603a8302a168736c2d9cab179b01c3 tasks=['passkey', 'niah'] lengths=['2k', '8k'] samples=2
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+causal-conv1d kernel not available, using PyTorch fallback
+[retrieval] passkey len=  2k depth= 0.1: token_acc=40.0% exact=0.0% nll=1.6800
+[retrieval] passkey len=  2k depth= 0.5: token_acc=40.0% exact=0.0% nll=1.7288
+[retrieval] passkey len=  2k depth= 0.9: token_acc=40.0% exact=0.0% nll=1.5933
+[retrieval] passkey len=  8k depth= 0.1: token_acc=40.0% exact=0.0% nll=1.9074
+[retrieval] passkey len=  8k depth= 0.5: token_acc=30.0% exact=0.0% nll=1.9705
+[retrieval] passkey len=  8k depth= 0.9: token_acc=40.0% exact=0.0% nll=1.9908
+[retrieval]    niah len=  2k depth= 0.1: token_acc=60.0% exact=0.0% nll=1.3911
+[retrieval]    niah len=  2k depth= 0.5: token_acc=70.0% exact=0.0% nll=1.4874
+[retrieval]    niah len=  2k depth= 0.9: token_acc=60.0% exact=0.0% nll=1.3574
+[retrieval]    niah len=  8k depth= 0.1: token_acc=70.0% exact=0.0% nll=1.5904
+[retrieval]    niah len=  8k depth= 0.5: token_acc=60.0% exact=0.0% nll=1.6065
+[retrieval]    niah len=  8k depth= 0.9: token_acc=60.0% exact=0.0% nll=1.5611
+[run] done in 7.0s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/smoke_retrieval_synthetic_raven_native_283efd1aab.log

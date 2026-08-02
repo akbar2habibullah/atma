@@ -1,0 +1,92 @@
+[run] benchmark=base model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0/snapshots/875d1c6ab0603a8302a168736c2d9cab179b01c3 tasks=['lambada', 'hellaswag', 'piqa', 'winogrande', 'arc_easy', 'arc_challenge', 'openbookqa', 'boolq'] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=100
+[base] task=lambada dataset=EleutherAI/lambada_openai@900124bf3b8235c6daf21033af9948b3f07346c4 samples=5153
+[base] lambada samples=5153 acc=27.48% target_ppl=27.537
+[base] task=hellaswag dataset=Rowan/hellaswag@218ec52e09a7e7462a5400043bb9a69a41d06b76 samples=10042
+[base] hellaswag: 250/10042
+[base] hellaswag: 500/10042
+[base] hellaswag: 750/10042
+[base] hellaswag: 1000/10042
+[base] hellaswag: 1250/10042
+[base] hellaswag: 1500/10042
+[base] hellaswag: 1750/10042
+[base] hellaswag: 2000/10042
+[base] hellaswag: 2250/10042
+[base] hellaswag: 2500/10042
+[base] hellaswag: 2750/10042
+[base] hellaswag: 3000/10042
+[base] hellaswag: 3250/10042
+[base] hellaswag: 3500/10042
+[base] hellaswag: 3750/10042
+[base] hellaswag: 4000/10042
+[base] hellaswag: 4250/10042
+[base] hellaswag: 4500/10042
+[base] hellaswag: 4750/10042
+[base] hellaswag: 5000/10042
+[base] hellaswag: 5250/10042
+[base] hellaswag: 5500/10042
+[base] hellaswag: 5750/10042
+[base] hellaswag: 6000/10042
+[base] hellaswag: 6250/10042
+[base] hellaswag: 6500/10042
+[base] hellaswag: 6750/10042
+[base] hellaswag: 7000/10042
+[base] hellaswag: 7250/10042
+[base] hellaswag: 7500/10042
+[base] hellaswag: 7750/10042
+[base] hellaswag: 8000/10042
+[base] hellaswag: 8250/10042
+[base] hellaswag: 8500/10042
+[base] hellaswag: 8750/10042
+[base] hellaswag: 9000/10042
+[base] hellaswag: 9250/10042
+[base] hellaswag: 9500/10042
+[base] hellaswag: 9750/10042
+[base] hellaswag: 10000/10042
+[base] hellaswag samples=10042 acc=30.83% acc_norm=33.56% primary=accuracy_norm
+[base] task=piqa dataset=lighteval/piqa@41782e6bf0ef7de82a2ca8a9feb1dca042837fae samples=1838
+[base] piqa: 250/1838
+[base] piqa: 500/1838
+[base] piqa: 750/1838
+[base] piqa: 1000/1838
+[base] piqa: 1250/1838
+[base] piqa: 1500/1838
+[base] piqa: 1750/1838
+[base] piqa samples=1838 acc=64.20% acc_norm=64.69% primary=accuracy_norm
+[base] task=winogrande dataset=allenai/winogrande@01e74176c63542e6b0bcb004dcdea22d94fb67b5 samples=1267
+[base] winogrande: 250/1267
+[base] winogrande: 500/1267
+[base] winogrande: 750/1267
+[base] winogrande: 1000/1267
+[base] winogrande: 1250/1267
+[base] winogrande samples=1267 acc=51.70% acc_norm=51.85% primary=accuracy
+[base] task=arc_easy dataset=allenai/ai2_arc@210d026faf9955653af8916fad021475a3f00453 samples=570
+[base] arc_easy: 250/570
+[base] arc_easy: 500/570
+[base] arc_easy samples=570 acc=57.02% acc_norm=49.12% primary=accuracy_norm
+[base] task=arc_challenge dataset=allenai/ai2_arc@210d026faf9955653af8916fad021475a3f00453 samples=299
+[base] arc_challenge: 250/299
+[base] arc_challenge samples=299 acc=25.42% acc_norm=27.09% primary=accuracy_norm
+[base] task=openbookqa dataset=allenai/openbookqa@388097ea7776314e93a529163e0fea805b8a6454 samples=500
+[base] openbookqa: 250/500
+[base] openbookqa: 500/500
+[base] openbookqa samples=500 acc=20.40% acc_norm=28.80% primary=accuracy_norm
+[base] task=boolq dataset=google/boolq@35b264d03638db9f4ce671b711558bf7ff0f80d5 samples=3270
+[base] boolq: 250/3270
+[base] boolq: 500/3270
+[base] boolq: 750/3270
+[base] boolq: 1000/3270
+[base] boolq: 1250/3270
+[base] boolq: 1500/3270
+[base] boolq: 1750/3270
+[base] boolq: 2000/3270
+[base] boolq: 2250/3270
+[base] boolq: 2500/3270
+[base] boolq: 2750/3270
+[base] boolq: 3000/3270
+[base] boolq: 3250/3270
+[base] boolq samples=3270 acc=61.93% acc_norm=61.93% primary=accuracy
+
+===BASE_RESULTS_JSON===
+{"benchmark": "base", "protocol": "atma-base-loglikelihood-v1", "tasks": ["lambada", "hellaswag", "piqa", "winogrande", "arc_easy", "arc_challenge", "openbookqa", "boolq"], "limit": null, "dataset_revisions": {"EleutherAI/lambada_openai": "900124bf3b8235c6daf21033af9948b3f07346c4", "Rowan/hellaswag": "218ec52e09a7e7462a5400043bb9a69a41d06b76", "allenai/ai2_arc": "210d026faf9955653af8916fad021475a3f00453", "allenai/openbookqa": "388097ea7776314e93a529163e0fea805b8a6454", "allenai/winogrande": "01e74176c63542e6b0bcb004dcdea22d94fb67b5", "codelion/finepdfs-1B": "6fbca6dd53e3e794f607cfe1f5a91c07e17b01ab", "emozilla/pg19": "c021754c8e01c5b1cc83a1f549c1f97fbbb756b8", "google/boolq": "35b264d03638db9f4ce671b711558bf7ff0f80d5", "hoskinson-center/proof-pile": "490b980249446f2f3bd2df3a8cf085d0f2de240a", "lighteval/piqa": "41782e6bf0ef7de82a2ca8a9feb1dca042837fae"}, "results": {"lambada": {"samples": 5153, "accuracy": 0.2747913836600039, "accuracy_se": 0.006218748050015533, "target_tokens": 6555, "target_nll": 3.3155388860255024, "target_perplexity": 27.537229415019162, "primary_metric": "accuracy"}, "hellaswag": {"samples": 10042, "accuracy": 0.30830511850229037, "accuracy_se": 0.004608266003110619, "accuracy_norm": 0.3355905198167696, "accuracy_norm_se": 0.004712079875831044, "primary_metric": "accuracy_norm", "primary_value": 0.3355905198167696}, "piqa": {"samples": 1838, "accuracy": 0.6420021762785637, "accuracy_se": 0.011182417167909912, "accuracy_norm": 0.64689880304679, "accuracy_norm_se": 0.011147950075872028, "primary_metric": "accuracy_norm", "primary_value": 0.64689880304679}, "winogrande": {"samples": 1267, "accuracy": 0.5169692186266772, "accuracy_se": 0.014038846927782945, "accuracy_norm": 0.5185477505919495, "accuracy_norm_se": 0.014037270857395966, "primary_metric": "accuracy", "primary_value": 0.5169692186266772}, "arc_easy": {"samples": 570, "accuracy": 0.5701754385964912, "accuracy_se": 0.020735401028692074, "accuracy_norm": 0.49122807017543857, "accuracy_norm_se": 0.020939472221735433, "primary_metric": "accuracy_norm", "primary_value": 0.49122807017543857}, "arc_challenge": {"samples": 299, "accuracy": 0.25418060200668896, "accuracy_se": 0.025179809794854235, "accuracy_norm": 0.2709030100334448, "accuracy_norm_se": 0.025701825682994006, "primary_metric": "accuracy_norm", "primary_value": 0.2709030100334448}, "openbookqa": {"samples": 500, "accuracy": 0.204, "accuracy_se": 0.018021320706318948, "accuracy_norm": 0.288, "accuracy_norm_se": 0.020251222185339826, "primary_metric": "accuracy_norm", "primary_value": 0.288}, "boolq": {"samples": 3270, "accuracy": 0.6192660550458715, "accuracy_se": 0.008491326895762633, "accuracy_norm": 0.6192660550458715, "accuracy_norm_se": 0.008491326895762633, "primary_metric": "accuracy", "primary_value": 0.6192660550458715}}, "elapsed_s": 285.5, "model_config": {"arch_type": "raven_native", "attn_type": "raven_native", "reg_mode": "baseline", "distractor": false, "memory": false, "window": false, "vocab_size": 50304, "hidden_size": 1024, "num_hidden_layers": 16, "num_heads": 4, "num_kv_heads": 4, "atma_head_match": true, "num_slots": 256, "topk": 32, "feature_map": "swish", "router_score": "sigmoid", "router_type": "lin", "decay_type": "Mamba2", "add_gumbel_noise": true, "bias_rmm": false, "gate_logit_normalizer": 8, "conv_kernel_size": 3, "seq_len": 2048, "num_chunks": 99, "batch_size": 524288, "val_tokens": 2097152, "mbs": 16, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha_on": 0.01, "dist_align_weight_on": 0.01, "optimizer": "adamw_raven", "adamw_lr": 0.0003, "adamw_lr_min_frac": 0.1, "adamw_warmup_frac": 0.05, "adamw_beta1": 0.9, "adamw_beta2": 0.95, "adamw_eps": 1e-15, "adamw_weight_decay": 0.1, "skip_nan_inf": true, "compile_model": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "fla_custom_op": true, "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144], "clean_dataset": "codelion/finepdfs-1B", "val_data": "finewebedu10B/finewebedu_val_*.bin", "num_eval_docs": 64, "num_needle_trials": 64, "needle_val_len": 5, "run_id": "raven_native__reg-baseline__distr-0__mem-0__win-0", "comparison_group": "raven_scaled_promotion", "mixer_ratio": "16_raven", "num_random_keys": 0, "dist_align_loss_weight": 0.0, "sigr_alpha": 0.0, "attn_window": null, "mem_enabled": false}, "scoring_max_length": 2048}
+===END===
+[run] done in 285.5s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/base_base_zero_shot_raven_native_f5b583bc31.log
