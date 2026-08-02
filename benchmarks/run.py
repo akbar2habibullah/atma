@@ -73,6 +73,8 @@ def main():
     ap.add_argument("--haystack_revision", default=None,
                     help="retrieval only: immutable Hugging Face dataset revision")
     ap.add_argument("--max_tokens", type=int, default=16)
+    ap.add_argument("--retrieval_value_tokens", type=int, default=5,
+                    help="teacher-forced digit tokens per retrieval needle")
     ap.add_argument("--decode_tokens", type=int, default=32, help="serving decode length")
     ap.add_argument("--limit", type=int, default=None, help="base-task examples per task")
     ap.add_argument("--batch_size", type=int, default=8, help="direct-scoring batch size")
@@ -102,11 +104,14 @@ def main():
         else:
             args.tasks = []
     if args.lengths is None:
-        args.lengths = (
-            ["0k", "1k", "2k", "4k", "8k", "16k", "32k"]
-            if args.benchmark == "babilong"
-            else ["2k", "8k", "32k", "64k", "128k", "256k"]
-        )
+        if args.benchmark == "babilong":
+            args.lengths = ["0k", "1k", "2k", "4k", "8k", "16k", "32k"]
+        elif args.benchmark == "serving":
+            args.lengths = ["2k", "4k", "8k", "16k", "32k", "64k", "128k"]
+        else:
+            args.lengths = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
+    if args.retrieval_value_tokens <= 0:
+        ap.error("--retrieval_value_tokens must be positive")
     if args.datasets is None:
         args.datasets = ["pg19", "proof_pile", "finepdfs"]
 
@@ -124,7 +129,7 @@ def main():
     model = None
     scorer = None
     try:
-        if args.benchmark in {"babilong", "retrieval"}:
+        if args.benchmark == "babilong":
             from benchmarks.model import EvalModel
 
             max_model_len = args.max_model_len or _infer_max_model_len(
@@ -153,14 +158,21 @@ def main():
             emit_log(fh, model, res)
         elif args.benchmark == "retrieval":
             from benchmarks.retrieval import emit_log, run_retrieval
+            from benchmarks.scoring import DirectScorer
 
             kinds = [kind for kind in args.tasks if kind in ("passkey", "niah")] or ["passkey"]
+            scorer = DirectScorer(
+                args.model,
+                max_length=max(_parse_len(length) for length in args.lengths)
+                + args.retrieval_value_tokens,
+                batch_size=1,
+            )
             res = run_retrieval(
-                model, kinds, args.lengths, args.depths, num_samples=args.samples,
-                max_tokens=args.max_tokens, seed=args.seed, haystack=args.haystack,
+                scorer, kinds, args.lengths, args.depths, num_samples=args.samples,
+                value_tokens=args.retrieval_value_tokens, seed=args.seed, haystack=args.haystack,
                 haystack_revision=args.haystack_revision, log_fn=log,
             )
-            emit_log(fh, model, res)
+            emit_log(fh, scorer, res)
         elif args.benchmark == "base":
             from benchmarks.base_tasks import emit_log, run_base_tasks
             from benchmarks.scoring import DirectScorer

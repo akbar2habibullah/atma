@@ -1,15 +1,9 @@
-"""Synthetic long-context retrieval — passkey & needle-in-a-haystack (NIAH).
+"""Training-aligned synthetic and real-text needle retrieval.
 
-Generate-and-match, so it fits the autoregressive inference interface (like BABILong). No
-external dataset: the haystack is built deterministically with the GPT-2 tokenizer (the model's
-tokenizer) so every (length, depth) cell is an EXACT token length and the needle sits at a
-controlled depth. Covers the realistic-at-370M subset of RULER (niah_single); multi-key and the
-full RULER 13-task pipeline are deferred (heavy data-gen, ~0 signal at 370M base).
-
-This complements two existing things:
-  - BABILong tests retrieval+*reasoning*; this tests pure retrieval at length.
-  - eval.py's induction-needle scores the value by loglikelihood via direct forward; this scores
-    it by *generation* through the served engine — the deployed-model view of the same capability.
+These checkpoints are base language models, not instruction-tuned generators. Retrieval is
+therefore measured the same way as scaled_ablation.eval_hf_checkpoints: run the training
+model's full-context forward path, teacher-force a short digit value, and report token accuracy,
+exact-value accuracy, and cross entropy. Serving generation is benchmarked separately.
 """
 import gc
 import json
@@ -62,6 +56,7 @@ def _tokenizer():
     if _TOK is None:
         from transformers import AutoTokenizer
         _TOK = AutoTokenizer.from_pretrained("gpt2")
+        _TOK.model_max_length = 10**30
     return _TOK
 
 
@@ -74,29 +69,26 @@ def _parse_len(s):
     return int(s)
 
 
-def make_sample(kind, target_tokens, depth, rng, haystack_ids=None):
-    """Build one (prompt_ids, answer) at an exact token length with the needle at `depth`.
-
-    kind="passkey": numeric key in repeated filler.
-    kind="niah":    a 'magic number' bound to a random word, in filler (or real text if
-                    haystack_ids is given).
-    """
+def make_sample(kind, target_tokens, depth, rng, haystack_ids=None, value_tokens=5):
+    """Build an exact-length (context_ids, value_ids) teacher-forced needle."""
     tok = _tokenizer()
     if kind == "passkey":
-        key = str(rng.randint(10 ** 6, 10 ** 7 - 1))
-        needle = f" The pass key is {key}. Remember it. {key} is the pass key. "
-        question = f" What is the pass key? The pass key is"
-        answer = key
+        record = rng.randint(10 ** 6, 10 ** 7 - 1)
+        cue = f" The access code for record {record} is"
     else:  # niah
-        key = str(rng.randint(10 ** 6, 10 ** 7 - 1))
         word = rng.choice(["ocean", "garden", "mountain", "river", "forest", "desert"])
-        needle = f" The special magic {word} number is {key}. "
-        question = f" What is the special magic {word} number? The special magic {word} number is"
-        answer = key
+        cue = f" The special magic {word} number is"
 
-    needle_ids = tok.encode(needle)
-    q_ids = tok.encode(question)
-    budget = max(0, target_tokens - len(needle_ids) - len(q_ids))
+    digits = [rng.randint(0, 9) for _ in range(value_tokens)]
+    value_ids = tok.encode("".join(f" {digit}" for digit in digits))
+    cue_ids = tok.encode(cue)
+    needle_ids = cue_ids + value_ids
+    scaffold = 1 + len(needle_ids) + len(cue_ids)
+    if target_tokens < scaffold:
+        raise ValueError(
+            f"target length {target_tokens} is shorter than needle scaffold {scaffold}"
+        )
+    budget = target_tokens - scaffold
 
     if haystack_ids is not None:
         body = list(haystack_ids[:budget])
@@ -106,15 +98,16 @@ def make_sample(kind, target_tokens, depth, rng, haystack_ids=None):
         body = (unit * reps)[:budget]
 
     insert = int(depth * len(body))
-    full = body[:insert] + needle_ids + body[insert:] + q_ids
-    return full, answer
+    context = [tok.eos_token_id] + body[:insert] + needle_ids + body[insert:] + cue_ids
+    assert len(context) == target_tokens
+    return context, value_ids
 
 
-def run_retrieval(model, kinds, lengths, depths, num_samples=10, max_tokens=16,
+def run_retrieval(scorer, kinds, lengths, depths, num_samples=10, value_tokens=5,
                   seed=1234, haystack=None, haystack_revision=None, log_fn=print):
     """Evaluate retrieval accuracy on a (kind, length, depth) grid. Returns a results dict.
-    Generation goes through the production inference adapter."""
-    rng = random.Random(seed)
+    Scoring goes through the checkpoint-exact training model forward path. Every sample keeps
+    the same cue and value across lengths and depths so cells are paired."""
     length_toks = [(_l, _parse_len(_l)) for _l in lengths]
     hay_ids = None
     if haystack:
@@ -138,63 +131,87 @@ def run_retrieval(model, kinds, lengths, depths, num_samples=10, max_tokens=16,
         hay_ids = big
 
     results = {k: {} for k in kinds}
+    exact_results = {k: {} for k in kinds}
+    nll_results = {k: {} for k in kinds}
     oom_cells = []
     t0 = time.perf_counter()
     for kind in kinds:
         for lname, ltok in length_toks:
             for depth in depths:
-                prompts, answers = [], []
-                for _ in range(num_samples):
-                    ids, ans = make_sample(kind, ltok, depth, rng, hay_ids)
-                    prompts.append(ids)                  # list[int] prompt (engine accepts token ids)
-                    answers.append(ans)
-                try:
-                    gens = model.generate(prompts, max_tokens=max_tokens)
-                except Exception as exc:
-                    if not _is_cuda_oom(exc):
-                        raise
-                    cell = {
+                correct_tokens = total_tokens = exact = completed = 0
+                total_nll = 0.0
+                error = None
+                for sample_index in range(num_samples):
+                    sample_rng = random.Random(f"{seed}:{kind}:{sample_index}")
+                    context_ids, target_ids = make_sample(
+                        kind, ltok, depth, sample_rng, hay_ids, value_tokens=value_tokens
+                    )
+                    try:
+                        score = scorer.score_token_ids(context_ids, target_ids)
+                        correct_tokens += score["correct_tokens"]
+                        total_tokens += score["tokens"]
+                        exact += int(score["greedy_exact"])
+                        total_nll -= score["loglikelihood"]
+                        completed += 1
+                    except Exception as exc:
+                        if not _is_cuda_oom(exc):
+                            raise
+                        error = str(exc)[:500]
+                        _clear_after_oom()
+                        break
+                    finally:
+                        clear = getattr(scorer, "clear_cache", None)
+                        if clear is not None:
+                            clear()
+
+                depth_key = str(depth)
+                if error is not None or completed != num_samples:
+                    oom_cells.append({
                         "kind": kind,
                         "length": lname,
                         "depth": depth,
-                        "error": str(exc)[:500],
-                    }
-                    oom_cells.append(cell)
-                    results[kind].setdefault(lname, {})[str(depth)] = None
-                    log_fn(
-                        f"[retrieval] {kind:>7} len={lname:>4} depth={depth:>4}: OOM"
-                    )
-                    del prompts, answers
-                    # The failed scheduler still owns its unfinished sequences. Recreate the
-                    # engine before the next cell so an OOM cannot contaminate later results.
-                    if hasattr(model, "close"):
-                        model.close()
-                    _clear_after_oom()
+                        "error": error,
+                    })
+                    results[kind].setdefault(lname, {})[depth_key] = None
+                    exact_results[kind].setdefault(lname, {})[depth_key] = None
+                    nll_results[kind].setdefault(lname, {})[depth_key] = None
+                    log_fn(f"[retrieval] {kind:>7} len={lname:>4} depth={depth:>4}: OOM")
                     continue
-                acc = 100.0 * sum(
-                    compare_retrieval_answer(g, a) for g, a in zip(gens, answers)
-                ) / num_samples
-                results[kind].setdefault(lname, {})[str(depth)] = acc
-                log_fn(f"[retrieval] {kind:>7} len={lname:>4} depth={depth:>4}: acc={acc:.1f}%")
+
+                token_acc = 100.0 * correct_tokens / total_tokens
+                exact_acc = 100.0 * exact / completed
+                nll = total_nll / total_tokens
+                results[kind].setdefault(lname, {})[depth_key] = token_acc
+                exact_results[kind].setdefault(lname, {})[depth_key] = exact_acc
+                nll_results[kind].setdefault(lname, {})[depth_key] = nll
+                log_fn(
+                    f"[retrieval] {kind:>7} len={lname:>4} depth={depth:>4}: "
+                    f"token_acc={token_acc:.1f}% exact={exact_acc:.1f}% nll={nll:.4f}"
+                )
 
     return {
         "benchmark": "retrieval",
+        "protocol": "teacher-forced-needle-v2",
         "kinds": kinds,
         "lengths": lengths,
         "depths": depths,
         "num_samples": num_samples,
+        "value_tokens": value_tokens,
         "seed": seed,
+        "paired_across_lengths_and_depths": True,
         "haystack": haystack or "synthetic-filler",
         "haystack_revision": haystack_revision,
         "results": results,
+        "exact_results": exact_results,
+        "nll_results": nll_results,
         "oom_cells": oom_cells,
         "elapsed_s": round(time.perf_counter() - t0, 1),
-        "unsupported_checkpoint": bool(getattr(model, "wip", [])),
+        "unsupported_checkpoint": False,
     }
 
 
-def emit_log(fh, model, res):
-    fh.write("\n[retrieval] accuracy %, per kind (rows=length, cols=depth):\n")
+def emit_log(fh, scorer, res):
+    fh.write("\n[retrieval] teacher-forced token accuracy %, per kind (rows=length, cols=depth):\n")
     depths = [str(d) for d in res["depths"]]
     for kind in res["kinds"]:
         fh.write(f"  {kind}:\n")
@@ -208,7 +225,6 @@ def emit_log(fh, model, res):
     if res.get("oom_cells"):
         fh.write(f"\n  OOM cells: {len(res['oom_cells'])} (recorded as null)\n")
     fh.write("\n===RETRIEVAL_RESULTS_JSON===\n")
-    fh.write(json.dumps({**res, "model_config": getattr(model, "cfg", {}),
-                         "model_unsupported": getattr(model, "wip", []),
-                         "serving_metrics": getattr(model, "last_metrics", None)}))
+    fh.write(json.dumps({**res, "model_config": getattr(scorer, "cfg", {}),
+                         "model_unsupported": [], "serving_metrics": None}))
     fh.write("\n===END===\n")

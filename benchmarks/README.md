@@ -32,7 +32,7 @@ Use these rules for every reported number:
 | Group | Benchmarks | Status | Purpose | Confound control |
 |---|---|---|---|---|
 | Intrinsic long-context LM | FinePDFs clean PPL, FineWeb-Edu junk PPL, induction needle loglikelihood | Covered by `scaled_ablation.evaluate` | Direct architecture signal during the scaled sweep | Direct forward, same tokenizer/data, OOM recorded per length |
-| Exact retrieval generation | Passkey, synthetic NIAH, real-text NIAH | Implemented in `retrieval.py` | Served-model retrieval check | GPT-2 token exact lengths, greedy decode, exact-match short answers |
+| Training-aligned retrieval | Passkey, synthetic NIAH, real-text NIAH | Implemented in `retrieval.py` | Base-model retrieval check | Exact GPT-2 token lengths, teacher-forced token accuracy, exact-value accuracy, and NLL |
 | Long reasoning after adaptation | BABILong qa1-10 | Implemented harness, requires task fine-tune | Measures each 10B attention type's adapted long-context potential | Same fixed recipe and fine-tune protocol for each attention type, with per-task reporting |
 | Base LM quality controls | LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-E, ARC-C, OpenBookQA, BoolQ | Implemented in `base_tasks.py` + `scoring.py` | Check that long-context architecture did not destroy normal LM capability | Multiple-choice/loglikelihood only, no chat prompts |
 | Long-doc LM controls | PG-19, Proof-Pile, FinePDFs bits-per-byte | Implemented in `longdoc.py` | Domain/generalization check at long lengths | Same fixed target at every context length, no decoding |
@@ -47,7 +47,7 @@ Use two separate tables:
 
 | Table | Models | Tasks | Interpretation |
 |---|---|---|---|
-| No-finetune base-model comparison | Atma scaled checkpoints and open-source pretrained checkpoints, all used as-is | PPL/BPB, LAMBADA, MCQ loglikelihood, exact retrieval if the prompt is model-agnostic | General base-model quality and retrieval behavior |
+| No-finetune base-model comparison | Atma scaled checkpoints and open-source pretrained checkpoints, all used as-is | PPL/BPB, LAMBADA, MCQ loglikelihood, teacher-forced retrieval | General base-model quality and retrieval behavior |
 | Fine-tuned adaptation probe | Scaled Atma checkpoints fine-tuned with the same task recipe | BABILong qa1-10 | Adapted long-context potential per attention type under the fixed recipe |
 
 Open-source baselines that we do not fine-tune should stay in the no-finetune table. For
@@ -67,17 +67,21 @@ protocol rather than just the long-context part.
 ## Retrieval
 
 Synthetic passkey + NIAH over a length x depth grid. Prompts are built with the GPT-2 tokenizer
-so each cell has an exact token length and controlled needle depth.
+so each cell has an exact token length and controlled needle depth. Like
+`scaled_ablation.eval_hf_checkpoints`, this uses the checkpoint-exact training forward path and
+teacher-forces five digit tokens. Free generation is intentionally reserved for serving tests
+because these are base checkpoints, not instruction-tuned models. Trial cues and values are
+paired across every length and depth.
 
 ```bash
 python -m benchmarks.run --benchmark retrieval --model checkpoints/<run_id> \
     --tasks passkey niah --lengths 1k 2k 4k 8k 16k 32k 64k 128k \
     --depths 0 0.25 0.5 0.75 1 --samples 50 \
-    --max_num_seqs 16 --out benchmarks/logs/retrieval_<run_id>.log --strict
+    --retrieval_value_tokens 5 --out benchmarks/logs/retrieval_<run_id>.log --strict
 ```
 
 Add `--haystack codelion/finepdfs-1B` for real-text NIAH instead of synthetic filler.
-Use `--max_model_len`, `--max_num_batched_tokens`, and `--max_num_seqs` to control memory.
+Every completed long-context example releases cached CUDA allocations before the next forward.
 
 ## BABILong
 
@@ -159,7 +163,7 @@ content/position confound created when each length scores a different part of a 
 ```bash
 python -m benchmarks.run --benchmark longdoc --model checkpoints/<run_id> \
     --datasets pg19 proof_pile finepdfs \
-    --lengths 2k 8k 32k 64k 128k 256k \
+    --lengths 2k 4k 8k 16k 32k 64k 128k 256k \
     --target_tokens 256 --num_docs 8 \
     --out benchmarks/logs/longdoc_<run_id>.log --strict
 ```
@@ -175,7 +179,7 @@ prompt, resets peak CUDA memory statistics, and records OOM cells.
 
 ```bash
 python -m benchmarks.run --benchmark serving --model checkpoints/<run_id> \
-    --lengths 2k 8k 32k 64k 128k 256k \
+    --lengths 2k 4k 8k 16k 32k 64k 128k 256k \
     --decode_tokens 32 --serving_samples 1 --max_num_seqs 1 \
     --out benchmarks/logs/serving_<run_id>.log --strict
 ```
@@ -238,13 +242,15 @@ python -m benchmarks.run_pipeline --stage serving --gpu 0
 
 Useful cost controls include `--models polar nope rope`, `--base_limit 100`, `--samples 10`,
 `--num_docs 2`, and the group-specific length arguments. `--stage pilot` runs retrieval with 10
-samples per cell. Defaults are lengths `2K, 8K, 32K, 64K, 128K, 256K`, retrieval depths 10%,
-50%, and 90%, and one concurrent generation sequence.
+samples per cell. Retrieval and long-document defaults are lengths
+`2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K`; serving defaults stop at the common validated
+maximum of `128K`. Retrieval uses depths 10%, 50%, and 90% with five teacher-forced value
+tokens, and serving uses one concurrent sequence.
 
 Every exact job configuration has a fingerprint. Completed fingerprints are skipped on resume;
 `--rerun` creates a new attempt without overwriting the prior log. Failed/OOM jobs are recorded
-and the pipeline continues unless `--fail_fast` is set. Set `HF_TOKEN` if authentication is
-required.
+and the pipeline continues unless `--fail_fast` is set. Aggregation excludes retrieval logs from
+the retired free-generation protocol. Set `HF_TOKEN` if authentication is required.
 
 The default output directory, `benchmarks/logs/atma_10b/`, contains:
 

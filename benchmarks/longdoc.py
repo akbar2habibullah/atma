@@ -23,12 +23,21 @@ class LongDocSpec:
     config: str | None
     split: str
     text_field: str = "text"
+    loader: str | None = None
+    data_file: str | None = None
+    streaming: bool = True
 
 
 LONGDOC_SPECS = {
     "pg19": LongDocSpec("emozilla/pg19", None, "test"),
-    "proof_pile": LongDocSpec("hoskinson-center/proof-pile", None, "test"),
-    "finepdfs": LongDocSpec("codelion/finepdfs-1B", None, "train"),
+    "proof_pile": LongDocSpec(
+        "hoskinson-center/proof-pile", None, "test", loader="json",
+        data_file="test/proofpile_test.jsonl.gz",
+    ),
+    "finepdfs": LongDocSpec(
+        "codelion/finepdfs-1B", None, "train", loader="parquet",
+        data_file="data/*.parquet", streaming=False,
+    ),
 }
 
 
@@ -43,6 +52,14 @@ def _parse_length(value):
 
 def _load_stream(spec: LongDocSpec, revision: str | None):
     from datasets import load_dataset
+
+    if spec.loader and spec.data_file:
+        pinned = revision or "main"
+        uri = f"hf://datasets/{spec.dataset_id}@{pinned}/{spec.data_file}"
+        return load_dataset(
+            spec.loader, data_files={spec.split: uri}, split=spec.split,
+            streaming=spec.streaming,
+        )
 
     args = [spec.dataset_id]
     if spec.config:
@@ -71,9 +88,10 @@ def select_documents(
     log_fn,
 ):
     dataset = _load_stream(spec, revision)
+    iterator = iter(dataset)
     documents = []
     scanned = 0
-    for row in dataset:
+    for row in iterator:
         scanned += 1
         text = row.get(spec.text_field)
         if not text or len(text) < required_tokens:
@@ -91,6 +109,9 @@ def select_documents(
                 break
         if scanned >= max_scan:
             break
+    close = getattr(iterator, "close", None)
+    if close is not None:
+        close()
     return documents, scanned
 
 
@@ -163,6 +184,10 @@ def run_longdoc(
                     error = str(exc)[:500]
                     _clear_after_oom()
                     break
+                finally:
+                    clear = getattr(scorer, "clear_cache", None)
+                    if clear is not None:
+                        clear()
                 total_nll -= score["loglikelihood"]
                 total_tokens += score["tokens"]
                 total_bytes += byte_count

@@ -230,12 +230,19 @@ class ModelRunner:
         print("Warming up model...")
         seq_len = min(64, self.config.max_num_batched_tokens, self.config.max_model_len)
         prefill_seqs, decode_seqs = self._make_warmup_seqs(seq_len)
-        with torch.inference_mode():
-            self.run(prefill_seqs, is_prefill=True)
-            self.run(decode_seqs, is_prefill=False)
-        for seq in prefill_seqs + decode_seqs:
-            if seq.seq_slot >= 0:
-                self.free_seq_slot(seq)
+        try:
+            with torch.inference_mode():
+                self.run(prefill_seqs, is_prefill=True)
+                # These warm up independent paths; release the prefill slot so a
+                # max_num_seqs=1 engine can allocate the decode warm-up sequence.
+                for seq in prefill_seqs:
+                    if seq.seq_slot >= 0:
+                        self.free_seq_slot(seq)
+                self.run(decode_seqs, is_prefill=False)
+        finally:
+            for seq in prefill_seqs + decode_seqs:
+                if seq.seq_slot >= 0:
+                    self.free_seq_slot(seq)
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         print("Warmup complete.")

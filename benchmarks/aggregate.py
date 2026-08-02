@@ -53,15 +53,36 @@ def _flatten(benchmark, result, source):
     model = _model_name(result, source)
     rows = []
     if benchmark == "retrieval":
+        # The retired free-generation protocol produced uniformly zero scores for these
+        # base checkpoints and could corrupt resumed matrices after the protocol migration.
+        if result.get("protocol") != "teacher-forced-needle-v2":
+            return rows
         suite = "synthetic" if result.get("haystack") == "synthetic-filler" else "real"
+        primary_metric = (
+            "token_accuracy"
+            if result.get("protocol") == "teacher-forced-needle-v2"
+            else "exact_match"
+        )
         for task, lengths in result.get("results", {}).items():
             for length, depths in lengths.items():
                 for depth, value in depths.items():
                     rows.append(_row(
                         model, benchmark, source, suite=suite, task=task, dataset=result.get("haystack"),
-                        length=length, depth=depth, metric="exact_match", value=value,
+                        length=length, depth=depth, metric=primary_metric, value=value,
                         samples=result.get("num_samples"),
                     ))
+        for field, metric in (
+            ("exact_results", "exact_match"),
+            ("nll_results", "nll_nats_per_token"),
+        ):
+            for task, lengths in result.get(field, {}).items():
+                for length, depths in lengths.items():
+                    for depth, value in depths.items():
+                        rows.append(_row(
+                            model, benchmark, source, suite=suite, task=task,
+                            dataset=result.get("haystack"), length=length, depth=depth,
+                            metric=metric, value=value, samples=result.get("num_samples"),
+                        ))
         for cell in result.get("oom_cells", []):
             rows.append(_row(
                 model, benchmark, source, suite=suite,
@@ -150,8 +171,10 @@ def aggregate(log_dir: Path):
         latest.values(), key=lambda item: str(item[0])
     ):
         for benchmark, result in extracted:
-            sources.append({"path": str(path), "benchmark": benchmark})
-            rows.extend(_flatten(benchmark, result, path))
+            flattened = _flatten(benchmark, result, path)
+            if flattened:
+                sources.append({"path": str(path), "benchmark": benchmark})
+                rows.extend(flattened)
     rows.sort(key=lambda row: (
         row["model"], row["benchmark"], str(row.get("suite")), str(row.get("task")),
         str(row.get("dataset")), str(row.get("length")), str(row.get("depth")), row["metric"],

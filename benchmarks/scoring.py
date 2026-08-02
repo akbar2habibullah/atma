@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+# Match scaled_ablation.eval_hf_checkpoints: model.blocks reads this during import.
+os.environ.setdefault("FLA_CUSTOM_OP", "1")
 
 from benchmarks.model import (
     atma_config_from_dict,
@@ -74,9 +78,13 @@ class DirectScorer:
 
     def _load_tokenizer(self, auto_tokenizer):
         try:
-            return auto_tokenizer.from_pretrained(self.checkpoint_dir, use_fast=True)
+            tokenizer = auto_tokenizer.from_pretrained(self.checkpoint_dir, use_fast=True)
         except Exception:
-            return auto_tokenizer.from_pretrained("gpt2", use_fast=True)
+            tokenizer = auto_tokenizer.from_pretrained("gpt2", use_fast=True)
+        # These architectures do not use a learned absolute-position table. Avoid the
+        # GPT-2 metadata warning when selecting intentionally long evaluation documents.
+        tokenizer.model_max_length = self.max_length or 10**30
+        return tokenizer
 
     def _load_model(self, torch):
         architecture = self.cfg.get("arch_type") or self.cfg.get("attn_type", "polar")
@@ -100,6 +108,12 @@ class DirectScorer:
             )
         model.to(self.device)
         model.eval()
+        # Length extrapolation is evaluated at full context, matching
+        # scaled_ablation.eval_hf_checkpoints rather than any training-only window.
+        for block in model.blocks:
+            attention = getattr(block, "attn", None)
+            if attention is not None and hasattr(attention, "window"):
+                attention.window = None
         return model
 
     @property
@@ -111,6 +125,15 @@ class DirectScorer:
         import torch
 
         self.model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def clear_cache(self):
+        """Release completed-example tensors between long-context forwards."""
+        import gc
+        import torch
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -173,12 +196,15 @@ class DirectScorer:
                 )
                 token_nll = F.cross_entropy(logits, targets, reduction="none")
                 nll = token_nll.sum().item()
+                correct_tokens = int((logits.argmax(-1) == targets).sum().item())
                 results.append(
                     {
                         "loglikelihood": -nll,
                         "mean_loglikelihood": -nll / count,
                         "tokens": count,
-                        "greedy_exact": bool((logits.argmax(-1) == targets).all().item()),
+                        "correct_tokens": correct_tokens,
+                        "token_accuracy": correct_tokens / count,
+                        "greedy_exact": correct_tokens == count,
                     }
                 )
         return results
@@ -198,4 +224,3 @@ class DirectScorer:
     def score_token_ids(self, context_ids, continuation_ids):
         request = TokenRequest(tuple(context_ids), tuple(continuation_ids))
         return self._score_batch([request])[0]
-

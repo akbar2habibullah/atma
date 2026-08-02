@@ -19,7 +19,9 @@ class DatasetSpec:
 BASE_TASK_SPECS = {
     "lambada": DatasetSpec("EleutherAI/lambada_openai", None, "test"),
     "hellaswag": DatasetSpec("Rowan/hellaswag", None, "validation"),
-    "piqa": DatasetSpec("ybisk/piqa", None, "validation"),
+    # Script-free Parquet mirror. Its 1,838 validation rows are field-for-field
+    # identical to the canonical ybisk/piqa conversion used by older datasets releases.
+    "piqa": DatasetSpec("lighteval/piqa", "plain_text", "validation"),
     "winogrande": DatasetSpec("allenai/winogrande", "winogrande_xl", "validation"),
     "arc_easy": DatasetSpec("allenai/ai2_arc", "ARC-Easy", "validation"),
     "arc_challenge": DatasetSpec("allenai/ai2_arc", "ARC-Challenge", "validation"),

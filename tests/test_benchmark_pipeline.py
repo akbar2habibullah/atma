@@ -1,7 +1,14 @@
 import unittest
+import random
 from pathlib import Path
 
-from benchmarks.retrieval import _is_cuda_oom, compare_retrieval_answer
+from benchmarks import retrieval as retrieval_module
+from benchmarks.retrieval import (
+    _is_cuda_oom,
+    compare_retrieval_answer,
+    make_sample,
+    run_retrieval,
+)
 from benchmarks.base_tasks import _choice_example
 from benchmarks.longdoc import _parse_length
 from benchmarks.aggregate import _flatten
@@ -26,6 +33,49 @@ class RetrievalScoringTest(unittest.TestCase):
     def test_oom_classifier_does_not_hide_generic_runtime_errors(self):
         self.assertTrue(_is_cuda_oom(RuntimeError("CUDA out of memory")))
         self.assertFalse(_is_cuda_oom(RuntimeError("kernel launch failed")))
+
+    def test_teacher_forced_sample_is_exact_length_and_reports_token_accuracy(self):
+        class CharacterTokenizer:
+            eos_token_id = 0
+
+            def encode(self, text, add_special_tokens=False):
+                return list(text.encode("utf-8"))
+
+        class PerfectScorer:
+            def __init__(self):
+                self.clears = 0
+
+            def score_token_ids(self, context_ids, target_ids):
+                count = len(target_ids)
+                return {
+                    "correct_tokens": count,
+                    "tokens": count,
+                    "greedy_exact": True,
+                    "loglikelihood": -0.25 * count,
+                }
+
+            def clear_cache(self):
+                self.clears += 1
+
+        previous = retrieval_module._TOK
+        retrieval_module._TOK = CharacterTokenizer()
+        try:
+            context, target = make_sample(
+                "passkey", 2048, 0.5, random.Random(1234), value_tokens=5
+            )
+            self.assertEqual(len(context), 2048)
+            self.assertGreater(len(target), 0)
+
+            scorer = PerfectScorer()
+            result = run_retrieval(
+                scorer, ["passkey"], ["2k"], [0.5], num_samples=2, value_tokens=5
+            )
+            self.assertEqual(result["protocol"], "teacher-forced-needle-v2")
+            self.assertEqual(result["results"]["passkey"]["2k"]["0.5"], 100.0)
+            self.assertEqual(result["exact_results"]["passkey"]["2k"]["0.5"], 100.0)
+            self.assertEqual(scorer.clears, 2)
+        finally:
+            retrieval_module._TOK = previous
 
 
 class PipelineFingerprintTest(unittest.TestCase):
@@ -63,6 +113,9 @@ class PipelineFingerprintTest(unittest.TestCase):
         args.manifest_path = Path("checkpoint_manifest.json")
 
         jobs = _jobs(args)
+        serving = next(job for job in jobs if job.benchmark == "serving")
+        self.assertIn("128k", serving.command_args)
+        self.assertNotIn("256k", serving.command_args)
         counts = {
             benchmark: sum(job.benchmark == benchmark for job in jobs)
             for benchmark in {job.benchmark for job in jobs}
@@ -86,6 +139,33 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["metric"], "accuracy_norm")
         self.assertEqual(rows[0]["value"], 0.7)
+
+    def test_teacher_forced_retrieval_metrics_are_flattened_separately(self):
+        result = {
+            "protocol": "teacher-forced-needle-v2",
+            "model_config": {"attn_type": "nope"},
+            "haystack": "synthetic-filler",
+            "num_samples": 2,
+            "results": {"passkey": {"2k": {"0.5": 80.0}}},
+            "exact_results": {"passkey": {"2k": {"0.5": 50.0}}},
+            "nll_results": {"passkey": {"2k": {"0.5": 0.25}}},
+        }
+        rows = _flatten("retrieval", result, Path("retrieval.log"))
+        self.assertEqual(
+            {row["metric"] for row in rows},
+            {"token_accuracy", "exact_match", "nll_nats_per_token"},
+        )
+
+    def test_legacy_generation_retrieval_is_not_aggregated(self):
+        rows = _flatten(
+            "retrieval",
+            {
+                "model_config": {"attn_type": "nope"},
+                "results": {"passkey": {"2k": {"0.5": 0.0}}},
+            },
+            Path("legacy_retrieval.log"),
+        )
+        self.assertEqual(rows, [])
 
 
 class TaskFormattingTest(unittest.TestCase):
@@ -129,6 +209,8 @@ class TaskFormattingTest(unittest.TestCase):
         self.assertEqual("".join(map(chr, request.continuation_ids)), " world")
 
     def test_length_parser(self):
+        self.assertEqual(_parse_length("4k"), 4096)
+        self.assertEqual(_parse_length("16k"), 16384)
         self.assertEqual(_parse_length("256k"), 262144)
 
 

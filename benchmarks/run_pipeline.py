@@ -10,7 +10,7 @@ Examples:
     # Cheap correctness/scheduling check for every model.
     python -m benchmarks.run_pipeline --stage smoke --gpu 0
 
-    # Full literal-retrieval pipeline (synthetic filler + real-text distractors).
+    # Full training-aligned retrieval pipeline (synthetic filler + real-text distractors).
     python -m benchmarks.run_pipeline --stage all --gpu 0
 
     # Resume only the matched attention ablation; completed fingerprints are skipped.
@@ -262,7 +262,11 @@ def _is_complete(path: Path) -> bool:
     if not path.is_file():
         return False
     text = path.read_text(encoding="utf-8", errors="replace")
-    return any(marker in text for marker in RESULT_MARKERS) and text.rstrip().endswith("===END===")
+    for marker in RESULT_MARKERS:
+        start = text.rfind(marker)
+        if start >= 0 and text.find("===END===", start) >= 0:
+            return True
+    return False
 
 
 def _latest_complete(path: Path) -> Path | None:
@@ -344,8 +348,7 @@ def _jobs(args) -> list[BenchmarkJob]:
                             "--depths", *(str(depth) for depth in args.depths),
                             "--samples", str(samples),
                             "--seed", str(args.seed),
-                            "--max_tokens", str(args.max_tokens),
-                            "--max_num_seqs", str(args.max_num_seqs),
+                            "--retrieval_value_tokens", str(args.retrieval_value_tokens),
                             *extra,
                         ]),
                     )
@@ -429,10 +432,6 @@ def _command(args, job: BenchmarkJob, checkpoint: Path, output: Path) -> list[st
         str(output),
         "--strict",
     ]
-    if job.benchmark == "retrieval" and args.max_model_len:
-        cmd.extend(("--max_model_len", str(args.max_model_len)))
-    if job.benchmark == "retrieval" and args.max_num_batched_tokens:
-        cmd.extend(("--max_num_batched_tokens", str(args.max_num_batched_tokens)))
     return cmd
 
 
@@ -493,18 +492,19 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--lengths",
         nargs="+",
-        default=("2k", "8k", "32k", "64k", "128k", "256k"),
+        default=("2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"),
     )
     ap.add_argument("--depths", nargs="+", type=float, default=(0.1, 0.5, 0.9))
     ap.add_argument("--longdoc_lengths", nargs="+",
-                    default=("2k", "8k", "32k", "64k", "128k", "256k"))
+                    default=("2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"))
     ap.add_argument("--serving_lengths", nargs="+",
-                    default=("2k", "8k", "32k", "64k", "128k", "256k"))
+                    default=("2k", "4k", "8k", "16k", "32k", "64k", "128k"))
     ap.add_argument("--smoke_samples", type=int, default=2)
     ap.add_argument("--pilot_samples", type=int, default=10)
     ap.add_argument("--samples", type=int, default=50)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--max_tokens", type=int, default=16)
+    ap.add_argument("--retrieval_value_tokens", type=int, default=5)
     ap.add_argument("--base_limit", type=int, default=None,
                     help="examples per base task; default evaluates each complete split")
     ap.add_argument("--base_batch_size", type=int, default=8)
