@@ -1,0 +1,32 @@
+{
+  "dataset_id": "RMT-team/babilong",
+  "dataset_revision": "ee0d588794c7ac098062ee0d247c733d62e94fe2",
+  "model": "raven_native",
+  "schema_version": 1,
+  "source_repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0",
+  "source_revision": "875d1c6ab0603a8302a168736c2d9cab179b01c3",
+  "stages": {
+    "finetune": {
+      "checkpoint": "/home/sagemaker-user/atma/checkpoints/babilong_2k_ft/raven_native",
+      "console_log": "/home/sagemaker-user/atma/benchmarks/logs/babilong_2k_ft/train/raven_native.console.log",
+      "elapsed_s": 1061.6,
+      "returncode": 0,
+      "status": "complete"
+    },
+    "full_eval": {
+      "console_log": "/home/sagemaker-user/atma/benchmarks/logs/babilong_2k_ft/full/babilong_raven_native.console.log",
+      "elapsed_s": 1491.9,
+      "log": "/home/sagemaker-user/atma/benchmarks/logs/babilong_2k_ft/full/babilong_raven_native.log",
+      "returncode": 0,
+      "status": "complete"
+    },
+    "pilot": {
+      "console_log": "/home/sagemaker-user/atma/benchmarks/logs/babilong_2k_ft/pilot/babilong_256k_raven_native.console.log",
+      "elapsed_s": 20.6,
+      "log": "/home/sagemaker-user/atma/benchmarks/logs/babilong_2k_ft/pilot/babilong_256k_raven_native.log",
+      "returncode": 0,
+      "status": "complete"
+    }
+  },
+  "target_repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native"
+}

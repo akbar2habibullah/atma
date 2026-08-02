@@ -1,0 +1,72 @@
+{
+  "best_epoch": 2,
+  "best_val_nll": 0.5079885378206792,
+  "betas": [
+    0.9,
+    0.95
+  ],
+  "curve": [
+    {
+      "elapsed_s": 224.9,
+      "epoch": 1,
+      "lr": 1.6330117273984822e-05,
+      "step": 300,
+      "train_nll": 1.1710380228209483,
+      "val_nll": 0.52719769776418
+    },
+    {
+      "elapsed_s": 450.3,
+      "epoch": 2,
+      "lr": 6.936199775201998e-06,
+      "step": 600,
+      "train_nll": 0.4073471722064279,
+      "val_nll": 0.5079885378206792
+    }
+  ],
+  "dataset_id": "RMT-team/babilong",
+  "dataset_revision": "ee0d588794c7ac098062ee0d247c733d62e94fe2",
+  "epochs": 3,
+  "eps": 1e-08,
+  "examples_per_update": 8,
+  "grad_accum_steps": 8,
+  "lr": 2e-05,
+  "micro_batch_size": 1,
+  "optimizer": "AdamW",
+  "prompt_protocol": "builtin-v1",
+  "protocol": "heldout-short-finetune-v1",
+  "reserved_test_rows": [
+    90,
+    100
+  ],
+  "seed": 1234,
+  "seq_len": 2048,
+  "source_checkpoint": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0/snapshots/de0a2f1c63b0631a040a2d6adac9e2d43fd5c581",
+  "source_repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0",
+  "source_revision": "de0a2f1c63b0631a040a2d6adac9e2d43fd5c581",
+  "tasks": [
+    "qa1",
+    "qa2",
+    "qa3",
+    "qa4",
+    "qa5",
+    "qa6",
+    "qa7",
+    "qa8",
+    "qa9",
+    "qa10"
+  ],
+  "train_lengths": [
+    "0k",
+    "1k",
+    "2k"
+  ],
+  "train_rows": [
+    0,
+    80
+  ],
+  "validation_rows": [
+    80,
+    90
+  ],
+  "weight_decay": 0.1
+}

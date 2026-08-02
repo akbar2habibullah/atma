@@ -202,6 +202,24 @@ and the aggregated matrix are written under `benchmarks/logs/babilong_2k_ft/`. U
 `--dry_run --upload` to print the five source and destination repositories without accessing
 the network. Budget roughly 5–8 hours on one L40S, plus Hugging Face upload time.
 
+### Archived BABILong raw results
+
+The published result bundles are mirrored under `benchmarks/logs/babilong_2k_ft/hub/`, one
+directory per model. Each directory preserves the full evaluation, 256K pilot, pipeline
+manifest, fine-tuning manifest, and training summary exactly as downloaded. `hub_sources.json`
+pins all five Hub commit IDs and records the URL, byte length, and SHA-256 digest of every file.
+The `full/` logs and root `benchmark_matrix.{json,csv}` are reproducible derivatives of those
+raw full-evaluation files.
+
+Re-download the pinned artifacts and rebuild the 550-row aggregate with:
+
+```bash
+python -m benchmarks.import_babilong_results
+```
+
+Use `--offline` to validate the archived files and rebuild the derived logs/matrices without
+network access. Only JSON result metadata is imported; checkpoint weights are not duplicated.
+
 ## Base LM quality controls
 
 `scoring.py` loads the training checkpoint directly and computes the checkpoint's exact
@@ -261,6 +279,7 @@ different GPU or software stack is not an architecture-only comparison.
 | `babilong.py` | BABILong prompt formatting, generation, and answer scoring |
 | `finetune_babilong.py` | Controlled answer-only fine-tuning on 0K/1K/2K held-in rows |
 | `run_babilong_pipeline.py` | Resumable all-checkpoint fine-tune/eval/Hub upload runner |
+| `import_babilong_results.py` | Pinned Hub raw-result importer and matrix reconstruction |
 | `retrieval.py` | Synthetic passkey + NIAH over length x depth grids |
 | `scoring.py` | Checkpoint-exact likelihood and full-recompute greedy generation |
 | `base_tasks.py` | LAMBADA and zero-shot multiple-choice scorers |
@@ -425,8 +444,8 @@ accuracy is teacher-forced next-token accuracy, not free-generation task success
 ## L40S Benchmark Results (2026-08-02)
 
 The no-fine-tune tables were parsed from `benchmarks/logs/atma_10b/benchmark_matrix.json`,
-generated at 2026-08-02 04:20:29 UTC. BABILong was parsed separately from
-`benchmarks/logs/babilong_2k_ft/benchmark_matrix.json`, generated at 2026-08-02 15:49:31 UTC.
+generated at 2026-08-02 04:20:29 UTC. BABILong was parsed separately from the published raw
+full-evaluation files now mirrored and aggregated under `benchmarks/logs/babilong_2k_ft/`.
 Reported precision is intentionally limited because retrieval cells have 50 trials, BABILong
 task/length cells have 10 examples, and serving cells have one timing sample.
 
