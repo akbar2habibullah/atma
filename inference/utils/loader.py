@@ -2,7 +2,7 @@ import torch
 from torch import nn
 
 
-def load_model(model: nn.Module, path_or_state_dict) -> nn.Module:
+def load_model(model: nn.Module, path_or_state_dict, *, strict: bool = False) -> nn.Module:
     """
     Loads weights from a PyTorch checkpoint file or state dict.
     Automatically strips '_orig_mod.' compiler prefixes from state dict keys if they exist.
@@ -10,7 +10,7 @@ def load_model(model: nn.Module, path_or_state_dict) -> nn.Module:
     if isinstance(path_or_state_dict, str):
         print(f"Loading weights from checkpoint: {path_or_state_dict}")
         # Use weights on CPU first to prevent GPU spike
-        state_dict = torch.load(path_or_state_dict, map_location="cpu")
+        state_dict = torch.load(path_or_state_dict, map_location="cpu", weights_only=True)
         if isinstance(state_dict, dict) and "model" in state_dict:
             state_dict = state_dict["model"]
     else:
@@ -27,6 +27,10 @@ def load_model(model: nn.Module, path_or_state_dict) -> nn.Module:
 
     # Perform weight loading
     missing, unexpected = model.load_state_dict(cleaned_state, strict=False)
+    if strict and (missing or unexpected):
+        raise RuntimeError(
+            f"checkpoint layout mismatch: missing={missing}, unexpected={unexpected}"
+        )
     if missing:
         print(f"Loader Warning: Missing keys when loading state dict: {missing}")
     if unexpected:

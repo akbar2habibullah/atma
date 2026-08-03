@@ -1,0 +1,33 @@
+{
+  "best_epoch": 1,
+  "best_val_nll": 0.5511517732148785,
+  "checkpoint": "/home/sagemaker-user/atma/checkpoints/babilong_2k_ft/raven_native",
+  "curve": [
+    {
+      "elapsed_s": 381.9,
+      "epoch": 1,
+      "lr": 1.6330117273984822e-05,
+      "step": 300,
+      "train_nll": 0.9543295679498112,
+      "val_nll": 0.5511517732148785
+    },
+    {
+      "elapsed_s": 706.9,
+      "epoch": 2,
+      "lr": 6.936199775201998e-06,
+      "step": 600,
+      "train_nll": 0.46704812973247245,
+      "val_nll": 0.591750203830336
+    },
+    {
+      "elapsed_s": 1030.7,
+      "epoch": 3,
+      "lr": 2.0000000000000003e-06,
+      "step": 900,
+      "train_nll": 0.3061027246106792,
+      "val_nll": 0.7423362843428505
+    }
+  ],
+  "elapsed_s": 1030.7,
+  "total_steps": 900
+}

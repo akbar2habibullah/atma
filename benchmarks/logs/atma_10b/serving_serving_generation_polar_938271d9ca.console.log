@@ -1,0 +1,80 @@
+[run] benchmark=serving model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d tasks=[] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k'] samples=100
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 39536 blocks × 256 (41456.5 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=   2k prefill=15640.5 tok/s decode=441.2 tok/s peak=39.46 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 39427 blocks × 256 (41342.2 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=   4k prefill=133884.1 tok/s decode=402.3 tok/s peak=39.47 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 39242 blocks × 256 (41148.2 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=   8k prefill=160145.2 tok/s decode=346.6 tok/s peak=39.44 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 38872 blocks × 256 (40760.2 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=  16k prefill=161550.7 tok/s decode=270.1 tok/s peak=39.44 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 38127 blocks × 256 (39979.1 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=  32k prefill=132091.0 tok/s decode=176.8 tok/s peak=39.44 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 36652 blocks × 256 (38432.4 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context=  64k prefill=109050.0 tok/s decode=108.5 tok/s peak=39.43 GiB
+ModelRunner rank 0 starting on device: cuda
+Total parameters: 378.22M
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt
+Per-seq state tables (conv + mem): 28 keys, 2.2 MB
+KV cache: 4 layers, 33690 blocks × 256 (35326.5 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+Warning: Failed loading tokenizer from custom path '/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt'. Falling back to standard 'gpt2' tokenizer.
+[serving] context= 128k prefill=80959.4 tok/s decode=61.3 tok/s peak=39.66 GiB
+[run] done in 47.9s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/serving_serving_generation_polar_938271d9ca.log

@@ -23,9 +23,11 @@ except Exception:
 try:
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
     _HAS_FLA = True
-except Exception:
+    _FLA_IMPORT_ERROR = None
+except Exception as error:
     chunk_gated_delta_rule = None
     _HAS_FLA = False
+    _FLA_IMPORT_ERROR = repr(error)
 
 # FLA's kernel is a Triton autograd.Function -> torch.compile graph-breaks at every memory
 # layer (lost fusion + lost cross-break memory planning = the ~2x time/RAM regression). The

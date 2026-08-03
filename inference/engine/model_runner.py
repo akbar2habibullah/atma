@@ -31,8 +31,10 @@ class ModelRunner:
         self.model = Atma(hf_config)
 
         try:
-            load_model(self.model, config.model)
+            load_model(self.model, config.model, strict=config.strict_weights)
         except Exception as e:
+            if config.strict_weights:
+                raise RuntimeError(f"strict checkpoint loading failed: {e}") from e
             print(f"Weight loading failed ({e}). Using random weights.")
 
         self.sampler = Sampler()
@@ -228,12 +230,19 @@ class ModelRunner:
         print("Warming up model...")
         seq_len = min(64, self.config.max_num_batched_tokens, self.config.max_model_len)
         prefill_seqs, decode_seqs = self._make_warmup_seqs(seq_len)
-        with torch.inference_mode():
-            self.run(prefill_seqs, is_prefill=True)
-            self.run(decode_seqs, is_prefill=False)
-        for seq in prefill_seqs + decode_seqs:
-            if seq.seq_slot >= 0:
-                self.free_seq_slot(seq)
+        try:
+            with torch.inference_mode():
+                self.run(prefill_seqs, is_prefill=True)
+                # These warm up independent paths; release the prefill slot so a
+                # max_num_seqs=1 engine can allocate the decode warm-up sequence.
+                for seq in prefill_seqs:
+                    if seq.seq_slot >= 0:
+                        self.free_seq_slot(seq)
+                self.run(decode_seqs, is_prefill=False)
+        finally:
+            for seq in prefill_seqs + decode_seqs:
+                if seq.seq_slot >= 0:
+                    self.free_seq_slot(seq)
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         print("Warmup complete.")
@@ -252,7 +261,7 @@ class ModelRunner:
             return
 
         hf = self.config.hf_config
-        max_bs = max(self.config.max_num_seqs, 2048)
+        max_bs = self.config.max_num_seqs
         max_num_blocks = (self.config.max_model_len + self.block_size - 1) // self.block_size
 
         input_ids    = torch.zeros(max_bs, dtype=torch.int64)
@@ -263,7 +272,8 @@ class ModelRunner:
         seq_slots    = torch.zeros(max_bs, dtype=torch.int64)
         outputs      = torch.zeros(max_bs, hf.hidden_size)
 
-        self.graph_bs   = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16))
+        graph_candidates = [1, 2, 4, 8] + list(range(16, max_bs + 1, 16)) + [max_bs]
+        self.graph_bs   = sorted({bs for bs in graph_candidates if bs <= max_bs})
         self.graphs     = {}
         self.graph_pool = None
 
@@ -356,11 +366,62 @@ class ModelRunner:
 
         seqlens_q = [cu_seqlens_q[i + 1] - cu_seqlens_q[i] for i in range(len(cu_seqlens_q) - 1)]
 
+        # Dense v1 is deliberately narrow: fresh, complete, equal-length prompts.
+        # A prefix-cache hit makes num_cached_tokens nonzero, while chunking makes
+        # num_scheduled_tokens differ from num_tokens. Both use the packed fallback.
+        dense_prefill = (
+            len(seqs) > 1
+            and seqlens_q[0] > 0
+            and len(set(seqlens_q)) == 1
+            and all(seq.num_cached_tokens == 0 for seq in seqs)
+            and all(seq.num_scheduled_tokens == seq.num_tokens for seq in seqs)
+            and sum(seqlens_q) <= self.config.max_num_batched_tokens
+        )
+        grouped_polar_prefill = (
+            len(seqs) > 1
+            and not dense_prefill
+            and all(length > 0 for length in seqlens_q)
+            and all(seq.num_cached_tokens == 0 for seq in seqs)
+            and all(seq.num_scheduled_tokens == seq.num_tokens for seq in seqs)
+            and sum(seqlens_q) <= self.config.max_num_batched_tokens
+            and self.device.type == "cuda"
+        )
+
+        # L40S BF16 Polar uses 128 query rows per tile. Each entry maps one
+        # independently scheduled tile to its packed sequence storage.
+        tile_seq_starts, tile_q_starts, tile_seq_lens = [], [], []
+        token_seq_starts, token_seq_ends, token_seq_slots = [], [], []
+        if grouped_polar_prefill:
+            packed_start = 0
+            for seq, length in zip(seqs, seqlens_q):
+                for query_start in range(0, length, 128):
+                    tile_seq_starts.append(packed_start)
+                    tile_q_starts.append(query_start)
+                    tile_seq_lens.append(length)
+                token_seq_starts.extend([packed_start] * length)
+                token_seq_ends.extend([packed_start + length] * length)
+                token_seq_slots.extend([seq.seq_slot] * length)
+                packed_start += length
+
         input_ids_t    = self._to_cuda(torch.tensor(input_ids,    dtype=torch.int64))
         positions_t    = self._to_cuda(torch.tensor(positions,    dtype=torch.int64))
         cu_seqlens_q_t = self._to_cuda(torch.tensor(cu_seqlens_q, dtype=torch.int32))
         cu_seqlens_k_t = self._to_cuda(torch.tensor(cu_seqlens_k, dtype=torch.int32))
         slot_mapping_t = self._to_cuda(torch.tensor(slot_mapping, dtype=torch.int32))
+        seq_slots_t = (self._to_cuda(torch.tensor([seq.seq_slot for seq in seqs], dtype=torch.int64))
+                       if dense_prefill or grouped_polar_prefill else None)
+        tile_seq_starts_t = (self._to_cuda(torch.tensor(tile_seq_starts, dtype=torch.int32))
+                             if grouped_polar_prefill else None)
+        tile_q_starts_t = (self._to_cuda(torch.tensor(tile_q_starts, dtype=torch.int32))
+                           if grouped_polar_prefill else None)
+        tile_seq_lens_t = (self._to_cuda(torch.tensor(tile_seq_lens, dtype=torch.int32))
+                          if grouped_polar_prefill else None)
+        token_seq_starts_t = (self._to_cuda(torch.tensor(token_seq_starts, dtype=torch.int32))
+                              if grouped_polar_prefill else None)
+        token_seq_ends_t = (self._to_cuda(torch.tensor(token_seq_ends, dtype=torch.int32))
+                            if grouped_polar_prefill else None)
+        token_seq_slots_t = (self._to_cuda(torch.tensor(token_seq_slots, dtype=torch.int32))
+                             if grouped_polar_prefill else None)
 
         set_context(
             is_prefill=True,
@@ -372,6 +433,17 @@ class ModelRunner:
             block_tables=block_tables,
             seqlens_q=seqlens_q,
             conv_state_tables=self.conv_state_tables,
+            seq_slots=seq_slots_t,
+            dense_prefill=dense_prefill,
+            dense_batch_size=len(seqs) if dense_prefill else 0,
+            dense_seq_len=seqlens_q[0] if dense_prefill else 0,
+            grouped_polar_prefill=grouped_polar_prefill,
+            polar_tile_seq_starts=tile_seq_starts_t,
+            polar_tile_q_starts=tile_q_starts_t,
+            polar_tile_seq_lens=tile_seq_lens_t,
+            token_seq_starts=token_seq_starts_t,
+            token_seq_ends=token_seq_ends_t,
+            token_seq_slots=token_seq_slots_t,
         )
         get_context().seqs = seqs
         return input_ids_t, positions_t

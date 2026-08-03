@@ -1,0 +1,33 @@
+{
+  "best_epoch": 1,
+  "best_val_nll": 0.5557416382816135,
+  "checkpoint": "/home/sagemaker-user/atma/checkpoints/babilong_2k_ft/atma_raven_titans",
+  "curve": [
+    {
+      "elapsed_s": 399.0,
+      "epoch": 1,
+      "lr": 1.6330117273984822e-05,
+      "step": 300,
+      "train_nll": 0.9099030527561343,
+      "val_nll": 0.5557416382816135
+    },
+    {
+      "elapsed_s": 653.8,
+      "epoch": 2,
+      "lr": 6.936199775201998e-06,
+      "step": 600,
+      "train_nll": 0.4067004992983938,
+      "val_nll": 0.6640639972700703
+    },
+    {
+      "elapsed_s": 907.3,
+      "epoch": 3,
+      "lr": 2.0000000000000003e-06,
+      "step": 900,
+      "train_nll": 0.20568567642948352,
+      "val_nll": 1.0251541603923144
+    }
+  ],
+  "elapsed_s": 907.3,
+  "total_steps": 900
+}

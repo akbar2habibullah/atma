@@ -1,0 +1,19 @@
+$ /usr/local/bin/python -m scripts.bench_kernel_efficiency --only b --warmup 10 --iterations 30
+GPU=NVIDIA B300 SXM6 AC torch=2.13.0+cu130 CUDA=13.0
+B1/B2 packed fresh heterogeneous Polar (BF16, H=8, D=128, window=1024)
+ short-heavy: lengths=[32, 48, 64, 64, 96, 128, 128, 256] tiles=9 effective_tile_pairs=16 max_err=0.00000
+  oracle     p50=2.1486 ms p95=3.3799 ms mean=2.2477 ms peak=14.7 MiB tok/s=379,781
+  grouped    p50=0.1335 ms p95=0.1596 ms mean=0.1428 ms peak=11.2 MiB tok/s=6,110,712
+  speedup=16.09x Polar launches=8->1 PASS
+ mixed: lengths=[64, 96, 128, 256, 512, 768, 1024, 1536] tiles=35 effective_tile_pairs=281 max_err=0.00000
+  oracle     p50=2.1526 ms p95=2.1714 ms mean=2.1523 ms peak=84.8 MiB tok/s=2,036,630
+  grouped    p50=0.1410 ms p95=0.1502 ms mean=0.1436 ms peak=60.2 MiB tok/s=31,101,023
+  speedup=15.27x Polar launches=8->1 PASS
+ long-tail: lengths=[64, 64, 128, 256, 512, 1024, 2048, 4096] tiles=65 effective_tile_pairs=758 max_err=0.00000
+  oracle     p50=1.3194 ms p95=1.3348 ms mean=1.3266 ms peak=169.0 MiB tok/s=6,209,071
+  grouped    p50=0.3048 ms p95=0.3058 ms mean=0.3067 ms peak=112.5 MiB tok/s=26,876,640
+  speedup=4.33x Polar launches=8->1 PASS
+ homogeneous: lengths=[512, 512, 512, 512, 512, 512, 512, 512] tiles=32 effective_tile_pairs=160 max_err=0.00000
+  oracle     p50=2.1050 ms p95=2.4905 ms mean=2.1589 ms peak=63.3 MiB tok/s=1,945,880
+  grouped    p50=0.1422 ms p95=0.1583 ms mean=0.1442 ms peak=56.3 MiB tok/s=28,809,363
+  speedup=14.81x Polar launches=8->1 PASS

@@ -16,6 +16,16 @@ class Context:
         context_lens_list: list = None,
         conv_state_tables: dict = None,
         seq_slots=None,
+        dense_prefill: bool = False,
+        dense_batch_size: int = 0,
+        dense_seq_len: int = 0,
+        grouped_polar_prefill: bool = False,
+        polar_tile_seq_starts=None,
+        polar_tile_q_starts=None,
+        polar_tile_seq_lens=None,
+        token_seq_starts=None,
+        token_seq_ends=None,
+        token_seq_slots=None,
     ):
         self.is_prefill = is_prefill
         self.cu_seqlens_q = cu_seqlens_q
@@ -31,6 +41,20 @@ class Context:
         self.conv_state_tables = conv_state_tables
         # GPU tensor (bs,) of sequence slot indices for CUDA-graph-compatible conv state I/O
         self.seq_slots = seq_slots
+        # Fresh, equal-length prefills stay flat at the model boundary while
+        # layers view their storage as [B, T, ...] and launch batched kernels.
+        self.dense_prefill = dense_prefill
+        self.dense_batch_size = dense_batch_size
+        self.dense_seq_len = dense_seq_len
+        # Fresh heterogeneous prompts can share one tile-mapped Polar launch.
+        # The map is built once by ModelRunner and reused by all attention layers.
+        self.grouped_polar_prefill = grouped_polar_prefill
+        self.polar_tile_seq_starts = polar_tile_seq_starts
+        self.polar_tile_q_starts = polar_tile_q_starts
+        self.polar_tile_seq_lens = polar_tile_seq_lens
+        self.token_seq_starts = token_seq_starts
+        self.token_seq_ends = token_seq_ends
+        self.token_seq_slots = token_seq_slots
 
 
 _local = threading.local()
@@ -49,6 +73,16 @@ def set_context(
     context_lens_list: list = None,
     conv_state_tables: dict = None,
     seq_slots=None,
+    dense_prefill: bool = False,
+    dense_batch_size: int = 0,
+    dense_seq_len: int = 0,
+    grouped_polar_prefill: bool = False,
+    polar_tile_seq_starts=None,
+    polar_tile_q_starts=None,
+    polar_tile_seq_lens=None,
+    token_seq_starts=None,
+    token_seq_ends=None,
+    token_seq_slots=None,
 ):
     _local.context = Context(
         is_prefill=is_prefill,
@@ -63,6 +97,16 @@ def set_context(
         context_lens_list=context_lens_list,
         conv_state_tables=conv_state_tables,
         seq_slots=seq_slots,
+        dense_prefill=dense_prefill,
+        dense_batch_size=dense_batch_size,
+        dense_seq_len=dense_seq_len,
+        grouped_polar_prefill=grouped_polar_prefill,
+        polar_tile_seq_starts=polar_tile_seq_starts,
+        polar_tile_q_starts=polar_tile_q_starts,
+        polar_tile_seq_lens=polar_tile_seq_lens,
+        token_seq_starts=token_seq_starts,
+        token_seq_ends=token_seq_ends,
+        token_seq_slots=token_seq_slots,
     )
 
 

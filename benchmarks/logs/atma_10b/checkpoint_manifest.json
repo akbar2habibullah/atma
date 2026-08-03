@@ -1,0 +1,148 @@
+{
+  "datasets": {
+    "EleutherAI/lambada_openai": {
+      "dataset_id": "EleutherAI/lambada_openai",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "900124bf3b8235c6daf21033af9948b3f07346c4"
+    },
+    "Rowan/hellaswag": {
+      "dataset_id": "Rowan/hellaswag",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "218ec52e09a7e7462a5400043bb9a69a41d06b76"
+    },
+    "allenai/ai2_arc": {
+      "dataset_id": "allenai/ai2_arc",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "210d026faf9955653af8916fad021475a3f00453"
+    },
+    "allenai/openbookqa": {
+      "dataset_id": "allenai/openbookqa",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "388097ea7776314e93a529163e0fea805b8a6454"
+    },
+    "allenai/winogrande": {
+      "dataset_id": "allenai/winogrande",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "01e74176c63542e6b0bcb004dcdea22d94fb67b5"
+    },
+    "codelion/finepdfs-1B": {
+      "dataset_id": "codelion/finepdfs-1B",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "6fbca6dd53e3e794f607cfe1f5a91c07e17b01ab"
+    },
+    "emozilla/pg19": {
+      "dataset_id": "emozilla/pg19",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "c021754c8e01c5b1cc83a1f549c1f97fbbb756b8"
+    },
+    "google/boolq": {
+      "dataset_id": "google/boolq",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "35b264d03638db9f4ce671b711558bf7ff0f80d5"
+    },
+    "hoskinson-center/proof-pile": {
+      "dataset_id": "hoskinson-center/proof-pile",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "490b980249446f2f3bd2df3a8cf085d0f2de240a"
+    },
+    "lighteval/piqa": {
+      "dataset_id": "lighteval/piqa",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "41782e6bf0ef7de82a2ca8a9feb1dca042837fae"
+    }
+  },
+  "models": {
+    "atma_raven_titans": {
+      "architecture": "atma_raven_titans",
+      "comparison_group": "external_raven_adamw",
+      "key": "atma_raven_titans",
+      "mbs": 16,
+      "num_chunks": 99,
+      "repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-atma-raven-titans__reg-baseline__distr-0__mem-1__win-0",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "8427bfefc77ed199e912d31c80fd6ff0ea179876",
+      "snapshot_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-atma-raven-titans__reg-baseline__distr-0__mem-1__win-0/snapshots/8427bfefc77ed199e912d31c80fd6ff0ea179876",
+      "tokenizer": "gpt2",
+      "warnings": [],
+      "weights_bytes": 1426526247,
+      "weights_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-atma-raven-titans__reg-baseline__distr-0__mem-1__win-0/snapshots/8427bfefc77ed199e912d31c80fd6ff0ea179876/weights.pt"
+    },
+    "nope": {
+      "architecture": "nope",
+      "comparison_group": "matched_atma_muon",
+      "key": "nope",
+      "mbs": 16,
+      "num_chunks": 99,
+      "repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "d2974b46bf1be80fe0285ed7c15903b8079f615a",
+      "snapshot_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a",
+      "tokenizer": "gpt2",
+      "warnings": [],
+      "weights_bytes": 1409767463,
+      "weights_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt"
+    },
+    "polar": {
+      "architecture": "polar",
+      "comparison_group": "matched_atma_muon",
+      "key": "polar",
+      "mbs": 16,
+      "num_chunks": 99,
+      "repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "faa10ea68590d57c0869c9dd6d38f40c476cff5d",
+      "snapshot_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d",
+      "tokenizer": "gpt2",
+      "warnings": [],
+      "weights_bytes": 1409939695,
+      "weights_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0/snapshots/faa10ea68590d57c0869c9dd6d38f40c476cff5d/weights.pt"
+    },
+    "raven_native": {
+      "architecture": "raven_native",
+      "comparison_group": "external_raven_adamw",
+      "key": "raven_native",
+      "mbs": 16,
+      "num_chunks": 99,
+      "repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "875d1c6ab0603a8302a168736c2d9cab179b01c3",
+      "snapshot_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0/snapshots/875d1c6ab0603a8302a168736c2d9cab179b01c3",
+      "tokenizer": "gpt2",
+      "warnings": [],
+      "weights_bytes": 1451239255,
+      "weights_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-raven-native__reg-baseline__distr-0__mem-0__win-0/snapshots/875d1c6ab0603a8302a168736c2d9cab179b01c3/weights.pt"
+    },
+    "rope": {
+      "architecture": "rope",
+      "comparison_group": "matched_atma_muon",
+      "key": "rope",
+      "mbs": 16,
+      "num_chunks": 99,
+      "repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0",
+      "requested_revision": "main",
+      "resolved_at_unix": 1785615448,
+      "resolved_revision": "de0a2f1c63b0631a040a2d6adac9e2d43fd5c581",
+      "snapshot_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0/snapshots/de0a2f1c63b0631a040a2d6adac9e2d43fd5c581",
+      "tokenizer": "gpt2",
+      "warnings": [],
+      "weights_bytes": 1409667639,
+      "weights_path": "/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0/snapshots/de0a2f1c63b0631a040a2d6adac9e2d43fd5c581/weights.pt"
+    }
+  },
+  "schema_version": 1,
+  "updated_at_unix": 1785615448
+}

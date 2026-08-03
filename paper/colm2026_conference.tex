@@ -9,6 +9,7 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amsfonts}
+\usepackage{amsthm}
 \usepackage{graphicx}
 \usepackage{longtable}
 \usepackage{array}
@@ -35,7 +36,7 @@
     showstringspaces=false
 }
 
-\title{ATMA: Length-Invariant Language Modeling via Polar Attention and Gated-Delta Compression Memory}
+\title{ATMA: Long-Context Language Modeling via Polar Attention and Gated-Delta Compression Memory}
 
 % Authors must not appear in the submitted version for COLM.
 \author{Anonymous Authors \\
@@ -44,6 +45,9 @@ Paper Under Review for COLM Workshop
 
 \newcommand{\fix}{\marginpar{FIX}}
 \newcommand{\new}{\marginpar{NEW}}
+\newtheorem{assumption}{Assumption}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
 
 \begin{document}
 
@@ -54,7 +58,7 @@ Paper Under Review for COLM Workshop
 \maketitle
 
 \begin{abstract}
-Modern large language models based on softmax scaled-dot-product attention are constrained by their training sequence length: as the key-value sequence grows, softmax probability mass can dilute across a wider distribution, inducing activation shift and long-context performance collapse. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a count-blind, unit-vector \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. Neither the Polar Attention core nor the recurrent memory is sufficient alone; their combination enables monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 120-run factorial ablation sweep, demonstrating that the combined Polar + memory model maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
+Modern large language models based on softmax scaled-dot-product attention are constrained by their training sequence length: as the key-value sequence grows, softmax probability mass can dilute across a wider distribution, inducing activation shift and long-context performance collapse. Moreover, long-context language modeling faces a structural tension: a sliding-window attention core maintains a bounded local representation and low perplexity but is blind to long-range dependencies, while full-context attention preserves global recall but suffers from out-of-distribution perplexity explosion. To resolve these limitations, we introduce \textbf{ATMA}, a hybrid convolutional-attention architecture that integrates a novel three-channel attention mechanism. ATMA factorizes the attention mixing step into: (1) a radially normalized \textbf{direction} channel, (2) a bounded \textbf{magnitude} channel driven by the participation ratio of effective matches over an extreme-value-corrected null sink, and (3) a long-term \textbf{recurrent compression memory} optimized via a gated-delta fast-weights rule. Neither the Polar Attention core nor the recurrent memory is sufficient alone; their combination enables monotonic perplexity reduction and high-fidelity long-range retrieval simultaneously. We evaluate ATMA using a 120-run factorial ablation sweep, demonstrating that the combined Polar + memory model maintains induction needle-in-a-haystack retrieval accuracy above 90\% out to 64K tokens (32$\times$ the training length of 2K) while its document perplexity improves monotonically, outperforming softmax-based memory baselines which collapse at extreme context lengths. Code: \url{https://anonymous.4open.science/r/atma-B798/}.
 \end{abstract}
 
 \section{Introduction}
@@ -68,7 +72,7 @@ Modern large language models based on softmax scaled-dot-product attention are c
 
 The capacity of Large Language Models (LLMs) to ingest, process, and reason over massive context windows is a cornerstone of modern artificial intelligence capabilities. Applications ranging from repository-level code synthesis to complex academic document analysis depend on the model's ability to maintain coherent representations across tens of thousands of tokens. However, the standard sequence mixer, softmax scaled-dot-product attention (SDPA)~\citep{Vaswani+2017}, exhibits severe limitations when generalizing to sequence lengths beyond those encountered during training.
 
-This failure of length extrapolation is consistent with a growing body of evidence on softmax dispersion in long contexts. Nakanishi~\citep{nakanishi2025scalable} observes that the maximum coordinate of a softmax vector approaches zero as the vector size increases, flattening attention as the context grows. Veli{\v{c}}kovi{\'c} et al.~\citep{velickovic2025softmax} prove that softmax-based lookup circuits for sharp decisions disperse as problem size increases, while Barbero et al.~\citep{barbero2024glasses} relate long-sequence failures to representational collapse and over-squashing in decoder-only Transformers. We use \textit{dilution} to refer to this dense-normalization effect: as the number of keys $N$ grows, probability mass is spread across a larger population, reducing the weight assigned to any fixed set of relevant keys unless logits sharpen with length. Second, softmax attention entangles magnitude information (``how many items matched the query'') with direction information (``what features were matched'') into a single normalized output. When evaluated at longer contexts, this joint distribution can shift the residual stream away from the regime seen during training.
+This failure of length extrapolation is consistent with a growing body of evidence on softmax dispersion in long contexts. Nakanishi~\citep{nakanishi2025scalable} observes that the maximum coordinate of a softmax vector approaches zero as the vector size increases, flattening attention as the context grows. Veli{\v{c}}kovi{\'c} et al.~\citep{velickovic2025softmax} prove that softmax-based lookup circuits for sharp decisions disperse as problem size increases, while Barbero et al.~\citep{barbero2024glasses} relate long-sequence failures to representational collapse and over-squashing in decoder-only Transformers. A complementary line of work uses extreme-value reasoning: Threshold Differential Attention (TDA)~\citep{huang2026threshold} argues that unrelated query-key pairs produce chance maxima that grow with context length, so fixed rectifier thresholds eventually admit spurious survivors. We use \textit{dilution} to refer to this dense-normalization effect: as the number of keys $N$ grows, probability mass is spread across a larger population, reducing the weight assigned to any fixed set of relevant keys unless logits sharpen with length. Second, softmax attention entangles magnitude information (``how many items matched the query'') with direction information (``what features were matched'') into a single normalized output. When evaluated at longer contexts, this joint distribution can shift the residual stream away from the regime seen during training.
 
 Faced with this challenge, practitioners often employ Sliding Window Attention (SWA)~\citep{beltagy2020longformer} or Recurrent/Linear Attention alternatives~\citep{deltanet2024, mamba2023}. However, this introduces a severe trade-off:
 \begin{itemize}
@@ -81,7 +85,7 @@ We resolve this tension by introducing \textbf{ATMA}, a hybrid sequence-modeling
 \begin{equation}
     \mathbf{out} = \mathbf{content} + \mathbf{count} + \mathbf{memory}
 \end{equation}
-The first two streams (\textbf{content} and \textbf{count}) form our proposed \textbf{Polar Attention} core. By projecting the matched value-sum onto the unit sphere, the \textbf{content} channel isolates \textit{what} matched, resulting in a count-blind, size-invariant direction vector. Concurrently, the \textbf{count} channel isolates \textit{how much} matched by calculating the participation ratio (inverse Simpson index) of the attention distribution, bounded via a saturating monotonic map. To prevent background noise from overwhelming the signal at extreme sequence lengths, Polar Attention calibrates its logits against a learned, extreme-value-corrected null floor that tracks the expected maximum of random scores.
+The first two streams (\textbf{content} and \textbf{count}) form our proposed \textbf{Polar Attention} core. By radially normalizing the matched value-sum, the \textbf{content} channel represents \textit{what} matched with a bounded direction vector, while the \textbf{count} channel represents \textit{how much} matched through a bounded transform of the participation ratio (inverse Simpson index). Radial normalization removes aggregate scale, but the direction can still vary with the attention distribution and the learned null value. To prevent background noise from overwhelming the signal at extreme sequence lengths, Polar Attention calibrates its logits against a learned null floor parameterized on the extreme-value scale $\sqrt{\log n}$.
 
 The third stream (\textbf{memory}) is a recurrent, per-head associative memory block driven by a gated-delta update rule, inspired by the Titans model~\citep{titans2025}. The linear memory behaves as a lossy gist that captures long-term perplexity trends, while Polar Attention supplies the bounded full-context readout needed for exact recall. The ablations show that neither ingredient is enough in isolation: memoryless Polar Attention still loses retrieval at long range, and softmax paired with the same memory collapses at extreme lengths.
 
@@ -93,6 +97,9 @@ Our implementation is optimized and numerically cross-verified across three para
 
 \subsection{Softmax Attention and Scaling Limits}
 Traditional Transformer architectures rely on softmax scaled-dot-product self-attention~\citep{Vaswani+2017}. While highly expressive, the $O(T^2)$ computational complexity has inspired numerous long-context extensions. Positional representations like Rotary Position Embeddings (RoPE)~\citep{rope2021} and Attention with Linear Biases (ALiBi)~\citep{alibi2021} allow models to extrapolate position indicators to longer sequences. However, they do not directly alter the dense simplex normalization of softmax. Prior work has framed this as flattening, dispersion, or loss of sharpness: Scalable-Softmax rescales logits to counter the vanishing maximum softmax probability~\citep{nakanishi2025scalable}; adaptive-temperature analyses show that softmax lookup circuits lose sharpness out-of-distribution as size grows~\citep{velickovic2025softmax}; and sparse-attention work proves that softmax distributions become increasingly dispersed whereas entmax can retain nonzero probability on a fixed relevant set~\citep{vasylenko2026sparse}. Sliding Window Attention (SWA)~\citep{beltagy2020longformer} avoids this dilution by truncating the attention context, but permanently sacrifices long-range recall.
+
+\subsection{Extreme-Value-Aware Attention}
+TDA~\citep{huang2026threshold} provides a direct theoretical reference point for the noise side of long-context attention. Under a sub-Gaussian noise model for unrelated query-key scores, the maximum spurious score over $n$ keys grows on the order of $\sqrt{\log n}$; TDA therefore sets a row-wise threshold $\tau_i \propto \sqrt{2\log i / d}$ and keeps only rectified exceedances. This yields ultra-sparse, non-dispersive attention by controlling the expected number of spurious survivors per row, and the differential variant subtracts a second thresholded view to cancel common-mode noise. ATMA adopts the same extreme-value premise but makes a different architectural choice: rather than converting attention into hard exceedance filtering, Polar Attention keeps a softmax-style value readout and adds a learned, extreme-value-corrected null sink. This lets the model preserve a differentiable full-context direction channel while separately exposing a bounded participation-ratio magnitude channel.
 
 \subsection{Linear Attention and Recurrent Fast Weights}
 To achieve linear-time complexity, linear attention reformulates attention by shifting the computation order of the key, query, and value matrices~\citep{deltanet2024}. This reparametrization effectively treats the sequence mixer as a recurrent neural network with a matrix-valued state. Recent models like Gated DeltaNet~\citep{deltanet2024} and Titans~\citep{titans2025} incorporate data-dependent gating and delta-rule updates to actively overwrite and retrieve memories. Titans, in particular, proposes a ``Memory-as-Gate'' (MAG) or ``Memory-as-Layer'' approach to store historical context. However, purely linear recurrent states are fundamentally limited by their storage capacity ($O(d_k \cdot d_v)$ parameters); they act as lossy compression systems that struggle to exact-recall rare pinpoint facts (needles) out of massive text haystacks.
@@ -115,7 +122,7 @@ where the SubLayer is either an LFM2 gated convolution or a Polar Attention laye
 By keeping the attention footprint sparse (only 4 out of 16 layers), ATMA maintains low computational overhead while leveraging the global mixing capacity of Polar Attention and Titans memory.
 
 \subsection{Polar Attention}
-Polar Attention is a length-invariant replacement for softmax scaled-dot-product attention. It operates within the standard Grouped-Query Attention (GQA) framework, with $H$ query heads and $H_{\text{KV}} = H / 4$ key-value heads. Prior to scoring, the horizontal residual causal convolutions (Canon layers) are applied to the $q$, $k$, and $v$ projections. We also apply RMS-normalization to the queries and keys. 
+Polar Attention is designed as a length-robust alternative to softmax scaled-dot-product attention. It operates within the standard Grouped-Query Attention (GQA) framework, with $H$ query heads and $H_{\text{KV}} = H / 4$ key-value heads. Prior to scoring, the horizontal residual causal convolutions (Canon layers) are applied to the $q$, $k$, and $v$ projections. We also apply RMS-normalization to the queries and keys.
 
 For a given query $i$ attending over keys $j < n_i$ (where $n_i = i + 1$), the raw scores are computed as:
 \begin{equation}
@@ -136,6 +143,7 @@ To prevent softmax dilution and resist extreme-value noise, we introduce per-hea
     \end{equation}
     where $\text{null\_base}$ (init 2.0) and $\gamma$ (init raw 0.5) are learned per-head parameters.
 \end{enumerate}
+This null floor plays the same statistical role as the length-dependent exceedance threshold in TDA~\citep{huang2026threshold}: it rises with the extreme-value scale of unrelated scores. When its learned slope dominates the noise scale, background noise is prevented from winning merely because the context is longer. The distinction is operational. TDA discards sub-threshold keys and aggregates only sparse survivors; Polar Attention appends the null as an additional softmax competitor. Noise mass can therefore drain into the null sink while real-key weights remain available for the direction and magnitude channels below. Appendix~\ref{appendix:theory} gives sufficient conditions under which this null-sink odds ratio vanishes with context length and the full ATMA mixer remains bounded.
 
 \subsubsection{Direction Channel (``What'')}
 We append the null logit $\mathrm{null}_i$ to the real key-logits, apply softmax, and form a convex combination of the real values and a learned default null vector $v_{\text{null}} \in \mathbb{R}^{d_k}$:
@@ -143,11 +151,11 @@ We append the null logit $\mathrm{null}_i$ to the real key-logits, apply softmax
     w_i &= \operatorname{softmax}\left( \left[ \mathrm{temp}_i \cdot \sigma_{i\bullet}, \ \mathrm{temp}_i \cdot \mathrm{null}_i \right] \right) \\
     s_i &= \sum_{j} w_{ij} v_j + w_{iN} v_{\text{null}}
 \end{align}
-We then project $s_i$ onto the unit sphere to isolate the \textbf{direction} channel $c_i$:
+We then radially normalize $s_i$ to obtain the \textbf{direction} channel $c_i$:
 \begin{equation}
-    c_i = \frac{s_i}{\|s_i\|}
+    c_i = \frac{s_i}{\max(\|s_i\|_2,\varepsilon)}
 \end{equation}
-The unit projection ensures that $c_i$ is completely count-blind and size-invariant; it represents purely \textit{what} feature was attended to, regardless of how many instances matched or the sequence length.
+where $\varepsilon>0$ is a numerical stabilizer. Consequently $\|c_i\|_2\le 1$, with equality whenever $\|s_i\|_2\ge\varepsilon$. This removes radial activation scale from the content channel. It does not, by itself, make the direction independent of match count: changing the number or distribution of matches can change the real-key mixture and its balance with the learned null value. The separate magnitude channel below exposes a bounded summary of effective match count.
 
 \subsubsection{Magnitude Channel (``How Much'')}
 To represent \textit{how many} effective matches were found, we reuse the attention weights $w_i$. We first renormalize them over the real keys only, and then calculate the \textbf{participation ratio} $n_{\text{eff}}$ (which corresponds to the inverse Simpson index):
@@ -175,7 +183,7 @@ To calibrate the null floor during training, we introduce an auxiliary \textbf{d
 This loss (weighted by 0.01 when enabled) pushes random distractors below the null floor, widening the signal-to-noise margin $\Delta$. In the final ablation, however, the best Polar + memory configuration leaves this auxiliary objective disabled: once the recurrent memory branch is active, the distractor objective over-sharpens the null floor and hurts retrieval (Section~\ref{sec:window_distractor_ablation}).
 
 \subsection{Titans Memory-as-Gate Integration}
-While Polar Attention preserves length-invariant activations, a single attention core cannot solve the window-vs-retrieval trade-off alone. We incorporate a long-term recurrent memory as an additive third channel in the residual block:
+While Polar Attention bounds the ranges of its direction and magnitude channels, a single attention core cannot solve the window-vs-retrieval trade-off alone. We incorporate a long-term recurrent memory as an additive third channel in the residual block:
 \begin{equation}
     \mathbf{out} = \mathbf{out}_{\text{polar}} + \mathbf{out}_{\text{mem}}
 \end{equation}
@@ -307,7 +315,7 @@ The combination of Polar Attention and Titans memory achieves the best of both w
 \begin{enumerate}
     \item \textbf{Monotonic Perplexity Reduction:} Document perplexity falls consistently from 2.70 nats down to 1.96 nats at 64K tokens, improving over the softmax-memory baseline's 2.34 nats and the RoPE-memory's 2.86 nats at 64K, demonstrating that the model actively uses the longer context to improve predictions.
     \item \textbf{Flat Retrieval Generalization:} Retrieval accuracy remains flat at 91--98\% (length-weighted average of 94\%) out to 32$\times$ training length.
-    \item \textbf{Polar vs. Baselines Contrast:} While Softmax + Titans memory performs well at shorter context lengths, it collapses to 16\% retrieval at 64K. RoPE + Titans memory collapses even faster, falling to 0\% retrieval by 32K context. This occurs because neither traditional softmax nor RoPE representations are length-invariant, leading to activation drift that corrupts the memory readout.
+    \item \textbf{Polar vs. Baselines Contrast:} While Softmax + Titans memory performs well at shorter context lengths, it collapses to 16\% retrieval at 64K. RoPE + Titans memory collapses even faster, falling to 0\% retrieval by 32K context. In this controlled sweep, their attention activations drift more severely outside the training-length regime, which is associated with degraded memory-assisted retrieval.
 \end{enumerate}
 
 \subsection{Ablation of Windowing and Distractors}
@@ -453,7 +461,7 @@ Polar + Memory + Distractor ($R=2048$) & 36.39 s & 31.8\% & 20.7\% \\
 \end{table}
 
 \section{Conclusion}
-We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off. By pairing a length-invariant Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We rigorously verified our design through a 120-run sweep, and demonstrated that hardware-level software codesign keeps the memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs. Future work will investigate extending write-path distractors to further enhance memory capacity.
+We presented ATMA, a hybrid sequence mixer that resolves the long-context perplexity-retrieval trade-off in our controlled setting. By pairing a bounded Polar Attention core with a recurrent gated-delta Titans memory, ATMA retains flat induction needle retrieval accuracy above 90\% out to 64K tokens (32$\times$ training length) while document perplexity reduces monotonically. We evaluated our design through a 120-run sweep, and demonstrated that hardware-level software codesign keeps the memory branch to a 4.5 percentage-point MFU drop on NVIDIA L4 GPUs. Future work will investigate extending write-path distractors to further enhance memory capacity.
 
 \bibliography{colm2026_conference}
 \bibliographystyle{colm2026_conference}
@@ -461,6 +469,191 @@ We presented ATMA, a hybrid sequence mixer that resolves the long-context perple
 \appendix
 
 \clearpage
+\section{Theoretical Framing}
+\label{appendix:theory}
+
+This appendix analyzes the role of the extreme-value-corrected null sink and the bounded
+ATMA mixer. The statements are sufficient-condition results: they establish noise-odds and
+norm bounds under explicit distributional and bounded-state assumptions, but they do not
+establish distributional invariance or replace the empirical ablation evidence in Section~4.
+
+\subsection{Extreme-Value Null Floor}
+
+Fix one query and let $X_j$ denote the score of an irrelevant key after the same normalization
+used by Polar Attention. The TDA analysis motivates the following noise model.
+
+\begin{assumption}[Sub-Gaussian noise scores]
+For irrelevant keys $j \in \mathcal{N}_n$, $|\mathcal{N}_n| \le n$, the scores are mean-zero
+and $v^2$-sub-Gaussian for some $v>0$:
+\begin{equation}
+    \mathbb{E}\exp(tX_j) \le \exp\left(\frac{v^2 t^2}{2}\right)
+    \quad \text{for all } t \in \mathbb{R}.
+\end{equation}
+\end{assumption}
+
+Polar uses a learned floor of the form
+\begin{equation}
+    \nu_n = b + s\sqrt{\log(n+1)}, \qquad b \ge 0,\quad s \ge 0,
+\end{equation}
+where $b$ corresponds to \texttt{null\_base} and $s$ to the positive learned null-slope.
+The implementation does not constrain the learned base to remain nonnegative, so the results
+below apply to trained heads for which $b\ge0$; alternatively, a nonnegative parameterization
+of \texttt{null\_base} would enforce this condition.
+The next proposition is the direct analogue of the TDA survivor-count bound, with the
+hard threshold replaced by the Polar null floor.
+
+\begin{proposition}[Noise exceedances above the Polar null floor]
+Under Assumption~1, the expected number of irrelevant keys whose score exceeds $\nu_n$ is
+\begin{equation}
+    \mathbb{E}\left[\sum_{j \in \mathcal{N}_n} \mathbf{1}\{X_j > \nu_n\}\right]
+    \le
+    n \exp\left(-\frac{\nu_n^2}{2v^2}\right).
+\end{equation}
+In particular, if $s \ge \sqrt{2}\,v$, this expectation is $O(1)$; if
+$s > \sqrt{2}\,v$, it decays polynomially in $n$.
+\end{proposition}
+
+\begin{proof}
+For each irrelevant key, sub-Gaussian concentration gives
+$\Pr[X_j > \nu_n] \le \exp(-\nu_n^2/(2v^2))$. Summing this tail probability over at most
+$n$ irrelevant keys proves the bound. If $b \ge 0$, then
+$\nu_n^2 \ge s^2\log(n+1)$, so the right-hand side is at most
+$n(n+1)^{-s^2/(2v^2)}$, which is bounded when $s^2/(2v^2)\ge 1$ and decays when the
+inequality is strict.
+\end{proof}
+
+\subsection{Soft Null-Sink Odds}
+
+Unlike TDA, Polar does not discard sub-threshold keys. It appends the null floor as a softmax
+competitor. For $n\ge2$, let
+\begin{equation}
+    \theta_n = 1 + a\log n, \qquad a \ge 0,
+\end{equation}
+be the length temperature and define the real-noise-to-null odds
+\begin{equation}
+    R_n = \sum_{j\in\mathcal{N}_n}\exp\left(\theta_n(X_j-\nu_n)\right).
+\end{equation}
+Then $R_n$ is exactly the ratio between the unnormalized softmax mass assigned to irrelevant
+real keys and the unnormalized mass assigned to the null sink, restricted to noise keys.
+
+\begin{proposition}[Null odds vanish under an extreme-value margin]
+Suppose that, for some constants $c$ and $s$ with $s>c>\sqrt{2}\,v$, the learned null floor
+has $\nu_n=s\sqrt{\log(n+1)}$ up to a nonnegative offset. With probability tending to one,
+\begin{equation}
+    R_n \le
+    n\exp\left(-(1+a\log n)(s-c)\sqrt{\log n}\right).
+\end{equation}
+If $a>0$, this upper bound converges to zero faster than any inverse polynomial in $n$.
+\end{proposition}
+
+\begin{proof}
+By the same union bound as Proposition~1,
+\begin{equation}
+    \Pr\left[\max_{j\in\mathcal{N}_n} X_j > c\sqrt{\log(n+1)}\right]
+    \le n(n+1)^{-c^2/(2v^2)} \to 0,
+\end{equation}
+because $c>\sqrt{2}\,v$. On the complementary event, every irrelevant score is at least
+$(s-c)\sqrt{\log n}$ below the null floor, hence each summand in $R_n$ is at most
+$\exp(-(1+a\log n)(s-c)\sqrt{\log n})$. Summing over at most $n$ noise keys gives the
+displayed bound. For $a>0$, the logarithm of the bound is
+$\log n-a(s-c)(\log n)^{3/2}+O(\sqrt{\log n})$, which tends to $-\infty$ faster than
+$-\rho\log n$ for any fixed $\rho$.
+\end{proof}
+
+This result is the theoretical bridge from TDA to Polar: TDA enforces the extreme-value
+threshold by hard sparsification, while Polar uses the same scaling to make the null sink
+win the softmax competition against pure background noise.
+
+\subsection{Bounded Direction and Magnitude Channels}
+
+\begin{proposition}[Polar readout is radially normalized and bounded]
+For the implementation-level normalization with $\varepsilon>0$, define
+\begin{equation}
+    s_i = \sum_j w_{ij}v_j + w_{iN}v_{\mathrm{null}},
+    \qquad
+    c_i = \frac{s_i}{\max(\lVert s_i\rVert_2,\varepsilon)}.
+\end{equation}
+Then $\lVert c_i\rVert_2\le1$, with equality whenever
+$\lVert s_i\rVert_2\ge\varepsilon$. The magnitude channel
+\begin{equation}
+    \mathrm{mag}_i =
+    \tanh\left(\beta\log(1+m_{\mathrm{eff},i})\right)
+\end{equation}
+lies in $[0,1)$ for $\beta\ge0$ and all $m_{\mathrm{eff},i}\ge0$. If the normalized
+real-key distribution is exactly uniform on a support of $m$ keys, its participation ratio is
+$n_{\mathrm{eff}}=m$.
+\end{proposition}
+
+\begin{proof}
+The norm bound follows directly from the denominator. The magnitude bound follows
+from $\log(1+m_{\mathrm{eff},i})\ge0$ and $\tanh(x)\in[0,1)$ for finite $x\ge0$. For $m$
+equally weighted real keys, $\hat{w}_{ij}=1/m$ on the support, so
+$n_{\mathrm{eff}}=1/\sum_{j=1}^{m}(1/m)^2=m$.
+\end{proof}
+
+Thus the content channel removes radial scale while the magnitude channel exposes a bounded
+summary of effective match count. This is a channel-level decomposition, not a claim that
+$c_i$ is generally independent of count: changing the real-key mixture or its balance with a
+nonzero learned $v_{\mathrm{null}}$ can rotate the direction.
+
+\subsection{Bounded Recurrent Memory State}
+
+The recurrent memory branch is also bounded under standard normalized-key and contractive-gate
+conditions. Consider the gated-delta update used by ATMA:
+\begin{equation}
+    M_t = \gamma_t M_{t-1}(I-\beta_t k_tk_t^\top) + \beta_t v_tk_t^\top .
+\end{equation}
+
+\begin{assumption}[Contractive memory update]
+For all $t$, $\lVert q_t\rVert_2=\lVert k_t\rVert_2=1$, $\lVert v_t\rVert_2\le V$, $0\le\beta_t\le1$, and
+$0\le\gamma_t\le\bar{\gamma}<1$.
+\end{assumption}
+
+\begin{proposition}[Gated-delta state norm is length-bounded]
+Under Assumption~2,
+\begin{equation}
+    \lVert M_t\rVert_F
+    \le
+    \bar{\gamma}^t\lVert M_0\rVert_F + \frac{V}{1-\bar{\gamma}} .
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+Since $\lVert k_t\rVert_2=1$ and $0\le\beta_t\le1$, the matrix
+$I-\beta_t k_tk_t^\top$ has spectral norm at most one. Also
+$\lVert \beta_t v_tk_t^\top\rVert_F \le V$. Therefore
+$\lVert M_t\rVert_F\le \bar{\gamma}\lVert M_{t-1}\rVert_F+V$. Unrolling this scalar
+recurrence proves the bound.
+\end{proof}
+
+\begin{corollary}[ATMA mixer is bounded under fixed weights]
+Under the conditions above, and for fixed projection operator norms, the per-layer ATMA
+mixing output
+\begin{equation}
+    \mathbf{out}=\mathbf{content}+\mathbf{count}+\mathbf{memory}
+\end{equation}
+is bounded independently of sequence length.
+\end{corollary}
+
+\begin{proof}
+The content channel is a projection of head directions with norm at most one multiplied by
+sigmoid gates,
+the count channel is a projection of magnitudes in $[0,1)$, and the memory readout is bounded
+by Proposition~4 and the fixed readout projection norms. The sum of finitely many bounded
+terms is bounded independently of $n$.
+\end{proof}
+
+\subsection{Scope of the Machine-Checked Artifact}
+
+The accompanying Lean artifact machine-checks the finite-sum, exponential-monotonicity,
+bounded-channel composition, and invariant-set induction steps used above. The sub-Gaussian
+tail inequality, the high-probability extreme-value margin, and the one-step matrix contraction
+are supplied to Lean as premises rather than derived from measure-theoretic random variables
+and the implemented gated-delta recurrence. We therefore describe it as a machine-checked
+proof skeleton, not an end-to-end formal verification of the ATMA method. The learned
+conditions $b\ge0$ and $s>c>\sqrt{2}v$ are sufficient conditions and are not asserted to hold
+for every trained head without an empirical parameter-and-score audit.
+
 \section{Regularization Modes}
 \label{appendix:reg_modes}
 
@@ -538,7 +731,7 @@ def polar_reduce(sigma, v, n_keys, *, v_null, null_base,
     w_null = w[..., -1:]
 
     # Direction channel: convex value mix plus learned null vector, projected
-    # to the unit sphere so the channel is count-blind.
+    # radially so the content channel has bounded norm.
     s = torch.matmul(w_r, v) + w_null * v_null.to(cd).view(1, H, 1, dk)
     c = F.normalize(s, p=2, dim=-1, eps=eps)
 

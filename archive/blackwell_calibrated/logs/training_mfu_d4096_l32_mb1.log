@@ -1,0 +1,3 @@
+$ /usr/local/bin/python -m scripts.bench_training_mfu --microbatch 1 --hidden-size 4096 --layers 32 --seq-length 1024 --grad-accum 1 --warmup 2 --iterations 5 --measure-peak --allow-conv-fallback
+causal-conv1d kernel not available, using PyTorch fallback
+flash-linear-attention fused gated-delta kernel is required

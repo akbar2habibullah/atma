@@ -29,9 +29,11 @@ except Exception:
 # capturable). Both fall back to the materialized polar_reduce on CPU. The sliding window
 # (attn_window) and the Titans MAG memory branch (mem_enabled) match model/reference.py.
 try:
-    from kernel.polar_triton import polar_attention_fwd, polar_attention_decode, HAS_TRITON  # noqa: F401
+    from kernel.polar_triton import (polar_attention_fwd, polar_attention_packed_fwd,
+                                     polar_attention_decode, HAS_TRITON)  # noqa: F401
 except Exception:
     polar_attention_fwd = None
+    polar_attention_packed_fwd = None
     polar_attention_decode = None
     HAS_TRITON = False
 
@@ -61,9 +63,38 @@ except Exception:
     gated_delta_decode_step = None
     _HAS_STEP_KERNEL = False
 
+try:
+    from kernel.causal_conv1d_triton import causal_conv1d_decode_step
+    from kernel.causal_conv1d_triton import HAS_TRITON as _HAS_CONV_STEP_KERNEL
+except Exception:
+    causal_conv1d_decode_step = None
+    _HAS_CONV_STEP_KERNEL = False
+
+try:
+    from kernel.inference_ops_triton import squared_relu_gate, softcap_logits, packed_causal_conv1d
+    from kernel.inference_ops_triton import HAS_TRITON as _HAS_INFERENCE_OPS
+except Exception:
+    squared_relu_gate = None
+    softcap_logits = None
+    packed_causal_conv1d = None
+    _HAS_INFERENCE_OPS = False
+
 
 def _infer_linear(in_f, out_f):
     return ReplicatedLinear(in_f, out_f, bias=True)
+
+
+class InferenceMLP(MLP):
+    """MLP with a forward-only fused activation for CUDA inference."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_gate = self.fc(x)
+        x, gate = torch.chunk(x_gate, 2, dim=-1)
+        if squared_relu_gate is not None and _HAS_INFERENCE_OPS and x.is_cuda:
+            x = squared_relu_gate(x, gate)
+        else:
+            x = gate * x.relu().square()
+        return self.proj(x)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +139,24 @@ def prefill_causal_conv1d(
     return out
 
 
+def prefill_causal_conv1d_dense(
+    layer_id: str,
+    seq_slots: torch.Tensor,
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias,
+    conv_state_tables: dict,
+) -> torch.Tensor:
+    """Batched fresh-prefill depthwise convolution and final-state scatter."""
+    _, _, channels = x.shape
+    kernel_size = weight.shape[1]
+    x_input = x.transpose(1, 2).contiguous()
+    x_padded = F.pad(x_input, (kernel_size - 1, 0))
+    out = F.conv1d(x_padded, weight.unsqueeze(1), bias, groups=channels)
+    conv_state_tables[layer_id][seq_slots] = x_padded[:, :, -(kernel_size - 1):]
+    return out.transpose(1, 2)
+
+
 def _gpu_conv_step(
     layer_id: str,
     seq_slots: torch.Tensor,
@@ -124,6 +173,11 @@ def _gpu_conv_step(
     weight            : (hdim, kernel_size) — depthwise conv weights
     Returns           : (bs, hdim) conv output (residual; caller adds to input)
     """
+    if (bias is None and causal_conv1d_decode_step is not None
+            and _HAS_CONV_STEP_KERNEL and new_vals.is_cuda):
+        return causal_conv1d_decode_step(
+            new_vals, weight, seq_slots, conv_state_tables[layer_id]
+        )
     states = conv_state_tables[layer_id][seq_slots]          # (bs, hdim, ks-1) gather
     out = (states * weight[:, :-1].unsqueeze(0)).sum(2)      # (bs, hdim)
     out = out + new_vals * weight[:, -1].unsqueeze(0)
@@ -246,6 +300,44 @@ class AtmaAttention(AtmaAttnBase):
         r_flat = r.reshape(T, H * dk).to(x_seq.dtype)
         return mem.proj(r_flat * torch.sigmoid(mem.gate(x_seq)))
 
+    def _mem_prefill_dense(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
+        """Batched equivalent of _mem_prefill for fresh equal-length prompts."""
+        mem = self.mem
+        B, T, _ = x.shape
+        H, dk = self.num_heads, self.head_dim
+        g_logit = mem.w_gamma(x).float() + mem.gamma_bias
+        b_logit = mem.w_beta(x).float() + mem.beta_bias
+        S0 = mem_state_table[seq_slots]
+
+        if self._mem_use_fla(x):
+            g = F.logsigmoid(g_logit).contiguous()
+            beta = torch.sigmoid(b_logit).contiguous()
+            q = q_t.transpose(1, 2).contiguous()
+            k = k_t.transpose(1, 2).contiguous()
+            v = v_t.transpose(1, 2).contiguous()
+            r, S = chunk_gated_delta_rule(
+                q=q, k=k, v=v, g=g, beta=beta, scale=1.0,
+                initial_state=S0, output_final_state=True,
+                use_qk_l2norm_in_kernel=True,
+            )
+            mem_state_table[seq_slots] = S
+            r = F.rms_norm(r, (dk,))
+        else:
+            gamma = torch.sigmoid(g_logit).transpose(1, 2)
+            beta = torch.sigmoid(b_logit).transpose(1, 2)
+            qn = F.normalize(q_t.float(), dim=-1)
+            kn = F.normalize(k_t.float(), dim=-1)
+            r, S = gated_delta_chunked(
+                qn, kn, v_t.float(), gamma, beta, chunk=mem.chunk,
+                S0=S0.transpose(-1, -2),
+            )
+            mem_state_table[seq_slots] = S.transpose(-1, -2)
+            r = F.rms_norm(r.transpose(1, 2), (dk,))
+
+        r_flat = r.reshape(B * T, H * dk).to(x.dtype)
+        x_flat = x.reshape(B * T, -1)
+        return mem.proj(r_flat * torch.sigmoid(mem.gate(x_flat)))
+
     def _mem_decode(self, x, q_t, k_t, v_t, seq_slots, mem_state_table) -> torch.Tensor:
         """x: (B, D); q_t,k_t,v_t: (B, H, dk) current-token tensors (KV heads expanded).
         Single gated-delta step, batched over sequences (CUDA-graph compatible).
@@ -302,22 +394,74 @@ class AtmaAttention(AtmaAttnBase):
             q_all = F.rms_norm(q_all, (self.head_dim,))
             k_all = F.rms_norm(k_all, (self.head_dim,))
 
+            if context.dense_prefill:
+                B, T = context.dense_batch_size, context.dense_seq_len
+                slots = context.seq_slots
+                q_flat = q_all.reshape(B, T, -1)
+                k_flat = k_all.reshape(B, T, -1)
+                v_flat = v_all.reshape(B, T, -1)
+                q_conv = q_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_q", slots, q_flat, w_q, None, context.conv_state_tables)
+                k_conv = k_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_k", slots, k_flat, w_k, None, context.conv_state_tables)
+                v_conv = v_flat + prefill_causal_conv1d_dense(
+                    f"attn_{self.layer_idx}_v", slots, v_flat, w_v, None, context.conv_state_tables)
+
+                k_packed = k_conv.reshape(total, self.num_kv_heads, dk)
+                v_packed = v_conv.reshape(total, self.num_kv_heads, dk)
+                if self.attn.k_cache.numel() > 0 and context.slot_mapping.numel() > 0:
+                    store_kvcache(k_packed, v_packed, self.attn.k_cache,
+                                  self.attn.v_cache, context.slot_mapping)
+
+                qh = q_conv.view(B, T, H, dk).transpose(1, 2).contiguous()
+                kh = (k_conv.view(B, T, self.num_kv_heads, dk)
+                      .repeat_interleave(groups, dim=2).transpose(1, 2).contiguous())
+                vh = (v_conv.view(B, T, self.num_kv_heads, dk)
+                      .repeat_interleave(groups, dim=2).transpose(1, 2).contiguous())
+                n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
+                c, mag = self._polar(qh, kh, vh, n_keys, is_causal=True)
+                out = self._combine(c, mag, gate_all, total)
+                if self.mem is not None:
+                    out = out + self._mem_prefill_dense(
+                        x.view(B, T, -1), qh, kh, vh, slots, mem_table)
+                return out
+
             conv_state_tables = context.conv_state_tables
             q_parts, k_parts, v_parts, tok_starts = [], [], [], []
-            start = 0
-            for i, seqlen in enumerate(context.seqlens_q):
-                seq = context.seqs[i]
-                qi = q_all[start:start + seqlen].reshape(seqlen, -1)
-                ki = k_all[start:start + seqlen].reshape(seqlen, -1)
-                vi = v_all[start:start + seqlen].reshape(seqlen, -1)
-                qi_conv = qi + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi, w_q, None, conv_state_tables)
-                ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k, None, conv_state_tables)
-                vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v, None, conv_state_tables)
-                q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
-                k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
-                v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
-                tok_starts.append(start)
-                start += seqlen
+            if context.grouped_polar_prefill and packed_causal_conv1d is not None:
+                packed_args = (context.token_seq_starts, context.token_seq_ends,
+                               context.token_seq_slots)
+                q_flat = q_all.reshape(total, -1)
+                k_flat = k_all.reshape(total, -1)
+                v_flat = v_all.reshape(total, -1)
+                q_flat = q_flat + packed_causal_conv1d(
+                    q_flat, w_q, conv_state_tables[f"attn_{self.layer_idx}_q"], *packed_args)
+                k_flat = k_flat + packed_causal_conv1d(
+                    k_flat, w_k, conv_state_tables[f"attn_{self.layer_idx}_k"], *packed_args)
+                v_flat = v_flat + packed_causal_conv1d(
+                    v_flat, w_v, conv_state_tables[f"attn_{self.layer_idx}_v"], *packed_args)
+                tok_starts, packed_start = [], 0
+                for seqlen in context.seqlens_q:
+                    tok_starts.append(packed_start)
+                    packed_start += seqlen
+                q_parts = list(q_flat.view(total, H, dk).split(context.seqlens_q, dim=0))
+                k_parts = list(k_flat.view(total, self.num_kv_heads, dk).split(context.seqlens_q, dim=0))
+                v_parts = list(v_flat.view(total, self.num_kv_heads, dk).split(context.seqlens_q, dim=0))
+            else:
+                start = 0
+                for i, seqlen in enumerate(context.seqlens_q):
+                    seq = context.seqs[i]
+                    qi = q_all[start:start + seqlen].reshape(seqlen, -1)
+                    ki = k_all[start:start + seqlen].reshape(seqlen, -1)
+                    vi = v_all[start:start + seqlen].reshape(seqlen, -1)
+                    qi_conv = qi + prefill_causal_conv1d(f"attn_{self.layer_idx}_q", seq, qi, w_q, None, conv_state_tables)
+                    ki_conv = ki + prefill_causal_conv1d(f"attn_{self.layer_idx}_k", seq, ki, w_k, None, conv_state_tables)
+                    vi_conv = vi + prefill_causal_conv1d(f"attn_{self.layer_idx}_v", seq, vi, w_v, None, conv_state_tables)
+                    q_parts.append(qi_conv.view(seqlen, self.num_heads, self.head_dim))
+                    k_parts.append(ki_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                    v_parts.append(vi_conv.view(seqlen, self.num_kv_heads, self.head_dim))
+                    tok_starts.append(start)
+                    start += seqlen
 
             k_packed = torch.cat(k_parts, dim=0)
             v_packed = torch.cat(v_parts, dim=0)
@@ -334,6 +478,34 @@ class AtmaAttention(AtmaAttnBase):
             # correctly here, but the per-seq conv/memory state tables start from zeros
             # for the new sequence, so its early outputs can drift — see docs/inference.md.
             c_parts, mag_parts, mem_parts = [], [], []
+            if context.grouped_polar_prefill and polar_attention_packed_fwd is not None:
+                q_grouped = torch.cat(q_parts, dim=0).contiguous()
+                k_grouped = k_packed.repeat_interleave(groups, dim=1).contiguous()
+                v_grouped = v_packed.repeat_interleave(groups, dim=1).contiguous()
+                c_grouped, mag_grouped = polar_attention_packed_fwd(
+                    q_grouped, k_grouped, v_grouped,
+                    context.polar_tile_seq_starts, context.polar_tile_q_starts,
+                    context.polar_tile_seq_lens, window=self.window,
+                    **self._polar_params(),
+                )
+                # _combine consumes [B,H,T,D]; these views retain packed token order.
+                c = c_grouped.transpose(0, 1).unsqueeze(0)
+                mag = mag_grouped.transpose(0, 1).unsqueeze(0)
+                if self.mem is not None:
+                    for i, qi in enumerate(q_parts):
+                        seq = context.seqs[i]
+                        seqlen = qi.shape[0]
+                        token_start = tok_starts[i]
+                        qh = q_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        kh = k_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        vh = v_grouped[token_start:token_start + seqlen].transpose(0, 1).unsqueeze(0)
+                        x_seq = x[token_start:token_start + seqlen]
+                        mem_parts.append(self._mem_prefill(seq, x_seq, qh, kh, vh, mem_table))
+                out = self._combine(c, mag, gate_all, total)
+                if self.mem is not None:
+                    out = out + torch.cat(mem_parts, dim=0)
+                return out
+
             for i, (qi, ki, vi) in enumerate(zip(q_parts, k_parts, v_parts)):
                 seq = context.seqs[i]
                 seqlen = qi.shape[0]
@@ -465,6 +637,20 @@ class AtmaLFM2Conv(AtmaConvBase):
 
         if context.is_prefill:
             conv_state_tables = context.conv_state_tables
+            if context.dense_prefill:
+                B, T = context.dense_batch_size, context.dense_seq_len
+                x_gated = x_gated_all.view(B, T, -1)
+                x_conv = prefill_causal_conv1d_dense(
+                    f"conv_{self.layer_idx}_gated", context.seq_slots, x_gated,
+                    w_conv, None, conv_state_tables,
+                )
+                return self.out_proj((C_all.view(B, T, -1) * x_conv).reshape(B * T, -1))
+            if context.grouped_polar_prefill and packed_causal_conv1d is not None:
+                x_conv = packed_causal_conv1d(
+                    x_gated_all, w_conv, conv_state_tables[f"conv_{self.layer_idx}_gated"],
+                    context.token_seq_starts, context.token_seq_ends, context.token_seq_slots,
+                )
+                return self.out_proj(C_all * x_conv)
             y_parts = []
             start = 0
             for i, seqlen in enumerate(context.seqlens_q):
@@ -517,7 +703,7 @@ class AtmaDecoderBlock(nn.Module):
             if attention
             else AtmaLFM2Conv(layer_idx, dim, kernel_size=conv_kernel_size)
         )
-        self.mlp = MLP(dim, linear_cls=_infer_linear)
+        self.mlp = InferenceMLP(dim, linear_cls=_infer_linear)
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
 
@@ -563,4 +749,6 @@ class Atma(nn.Module):
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         logits = self.proj(hidden_states)
+        if softcap_logits is not None and _HAS_INFERENCE_OPS and logits.is_cuda:
+            return softcap_logits(logits)
         return 15.0 * logits * (logits.square() + 225.0).rsqrt()

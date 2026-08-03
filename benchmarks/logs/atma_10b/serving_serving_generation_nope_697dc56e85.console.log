@@ -1,0 +1,52 @@
+[run] benchmark=serving model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a tasks=[] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k'] samples=100
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 39538 blocks × 256 (41458.6 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=   2k prefill=13069.5 tok/s decode=450.1 tok/s peak=39.46 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 39431 blocks × 256 (41346.4 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=   4k prefill=146567.8 tok/s decode=408.8 tok/s peak=39.44 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 39250 blocks × 256 (41156.6 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=   8k prefill=166503.8 tok/s decode=353.0 tok/s peak=39.43 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 38888 blocks × 256 (40777.0 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=  16k prefill=168510.1 tok/s decode=271.7 tok/s peak=39.46 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 38160 blocks × 256 (40013.7 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=  32k prefill=142318.8 tok/s decode=177.8 tok/s peak=39.47 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 36717 blocks × 256 (38500.6 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context=  64k prefill=113809.9 tok/s decode=108.4 tok/s peak=39.49 GiB
+Loading weights from checkpoint: /home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a/weights.pt
+KV cache: 4 layers, 33820 blocks × 256 (35462.8 MB)
+Warming up model...
+Warmup complete.
+Capturing CUDA graphs for decode...
+CUDA graphs captured for batch sizes: [1]
+[serving] context= 128k prefill=89013.1 tok/s decode=61.0 tok/s peak=39.54 GiB
+[run] done in 47.4s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/serving_serving_generation_nope_697dc56e85.log

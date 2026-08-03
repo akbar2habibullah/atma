@@ -27,7 +27,7 @@ except Exception:
     polar_attention_triton_fwd = None
     HAS_TRITON = False
 
-# Tilde Research Wall Attention (data-dependent per-channel forget gates lifted into softmax;
+# Tilde Research Wall Attention (data-dependent per-channel gates lifted into softmax;
 # https://github.com/tilde-research/wall-attention-release). Optional GPU/Triton kernel used for
 # the faithful memory-efficient path for attn_type="wall"; a pure-PyTorch fallback covers CPU and
 # missing-kernel development runs.
@@ -50,11 +50,64 @@ except Exception:
         _wall_attn_kernel = None
         _HAS_WALL = False
 
+def _wall_kernel_call(q, k, v, g, scale: float, window_size: int):
+    return _wall_attn_kernel(q, k, v, g, scale=scale, window_size=(None if window_size == 0 else window_size))
+
+
+_wall_attn = _wall_kernel_call if _HAS_WALL else None
+_WALL_CUSTOM_OP = os.environ.get("ATMA_WALL_CUSTOM_OP", "0") == "1"
+if _HAS_WALL and _WALL_CUSTOM_OP:
+    try:
+        @torch.library.custom_op("atma::wall_attn_fwd", mutates_args=())
+        def _wall_fwd(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, g: torch.Tensor,
+                      scale: float, window_size: int) -> torch.Tensor:
+            return _wall_kernel_call(q, k, v, g, scale, window_size)
+
+        @_wall_fwd.register_fake
+        def _(q, k, v, g, scale: float, window_size: int):
+            return q.new_empty((*q.shape[:-1], v.shape[-1]))
+
+        @torch.library.custom_op("atma::wall_attn_bwd", mutates_args=())
+        def _wall_bwd(grad_o: torch.Tensor, q: torch.Tensor, k: torch.Tensor,
+                      v: torch.Tensor, g: torch.Tensor, scale: float,
+                      window_size: int) -> list[torch.Tensor]:
+            with torch.enable_grad():
+                ins = [t.detach().requires_grad_(True) for t in (q, k, v, g)]
+                o = _wall_kernel_call(*ins, scale, window_size)
+                return list(torch.autograd.grad(o, ins, grad_o))
+
+        @_wall_bwd.register_fake
+        def _(grad_o, q, k, v, g, scale: float, window_size: int):
+            return [torch.empty_like(t) for t in (q, k, v, g)]
+
+        def _wall_setup(ctx, inputs, output):
+            q, k, v, g, scale, window_size = inputs
+            ctx.save_for_backward(q, k, v, g)
+            ctx.scale = scale
+            ctx.window_size = window_size
+
+        def _wall_backward(ctx, grad_o):
+            grads = _wall_bwd(grad_o, *ctx.saved_tensors, ctx.scale, ctx.window_size)
+            return tuple(grads) + (None, None)
+
+        _wall_fwd.register_autograd(_wall_backward, setup_context=_wall_setup)
+        _wall_attn = _wall_fwd
+    except Exception:
+        _wall_attn = _wall_kernel_call
+
 # Polar structural-prior inits (softplus^-1 of validated targets: g~0.3, slope~1, beta~0.2)
 _LEN_GAIN_INIT = -1.0
 _NULL_SLOPE_INIT = 0.5
 _NULL_BASE_INIT = 2.0
 _MAG_BETA_INIT = -1.5
+_WALL_GATE_BIAS_INIT = 6.0
+_WALL_GATE_LOG_MAX = 0.87
+
+
+def _wall_log_decay(logits: Tensor, *, log_max: float = _WALL_GATE_LOG_MAX) -> Tensor:
+    """Map Wall gate logits to bounded natural-log decays for the Triton kernel."""
+    g_hat = F.logsigmoid(logits.float())
+    return (-log_max * (1.0 - torch.exp(g_hat / log_max))).to(logits.dtype)
 
 def _causal_conv1d_fallback(x: Tensor, weight: Tensor) -> Tensor:
     """Pure PyTorch depthwise causal conv1d. x: (B, H, L), weight: (H, k)."""
@@ -344,6 +397,14 @@ class Linear(nn.Linear):
         return F.linear(x, self.weight.type_as(x), self.bias.type_as(x))
 
 
+class LinearNoBias(nn.Linear):
+    def __init__(self, in_features, out_features):
+        super().__init__(in_features, out_features, bias=False)
+
+    def forward(self, x):
+        return F.linear(x, self.weight.type_as(x), None)
+
+
 class LFM2Conv(AtmaConvBase):
     """Liquid Foundation Model 2 gated short convolutions
     (LFM2 Report, https://arxiv.org/abs/2511.23404)."""
@@ -390,10 +451,9 @@ class CausalSelfAttention(AtmaAttnBase):
     """Softmax attention core for the ablation grid, three position schemes:
       pos="nope" -> canon convs on q/k/v, NO positional encoding (the legacy default).
       pos="rope" -> rotary on q/k, NO canon, tuned SDPA scale 0.12.
-      pos="wall" -> canon convs + Wall Attention (Tilde Research): data-dependent per-channel
-                    log-forget gates g, cumulative prefix sum P, score q_i.k_j.exp(P_i-P_j)
-                    per channel, then softmax. Implemented as the stable q/k rescale
-                    q~=exp(P)q, k~=exp(-P)k feeding standard attention.
+      pos="wall" -> canon convs + Wall Attention (Tilde Research): data-dependent
+                    per-channel log-decay gates g, cumulative prefix sum P, score
+                    q_i.k_j.exp(P_i-P_j) per channel, then softmax.
     Shares the GQA + output-gate surround with PolarAttention. The optional training
     sliding window (SWA), MSE distractor, and additive Titans memory branch are wired
     here so every grid cell (reg x distractor x memory x window x core) is distinct.
@@ -404,7 +464,7 @@ class CausalSelfAttention(AtmaAttnBase):
                  kernel_size=4, pos: str = "nope", window: int = None,
                  mem_enabled: bool = False, mem_chunk: int = 64,
                  mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto",
-                 wall_gate_bias: float = -4.0):
+                 wall_gate_bias: float | None = None):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         self.num_random_keys = num_random_keys or 0
         self.pos = pos
@@ -417,9 +477,11 @@ class CausalSelfAttention(AtmaAttnBase):
             # true no-canon baseline.
             self.canon_q = self.canon_k = self.canon_v = None
         H, dk = self.num_heads, self.head_dim
-        # Wall keeps canon (so all params are used); adds a per-channel log-forget gate head.
-        self.w_wall = Linear(dim, H * dk) if pos == "wall" else None
-        self.wall_gate_bias = wall_gate_bias                # g = -softplus(W_g x + bias); bias<0 -> slow forget at init
+        # Wall keeps canon (so all params are used); g is passed to the kernel directly.
+        self.w_wall = LinearNoBias(dim, H * dk) if pos == "wall" else None
+        if self.w_wall is not None:
+            nn.init.zeros_(self.w_wall.weight)              # bias keeps init near vanilla softmax attention
+        self.wall_gate_bias = _WALL_GATE_BIAS_INIT if wall_gate_bias is None else float(wall_gate_bias)
         self.mem = (TitansMemory(dim, H, dk, Linear, chunk=mem_chunk,
                                  gamma_bias=mem_gamma_bias, beta_bias=mem_beta_bias, kernel=mem_kernel)
                     if mem_enabled else None)
@@ -452,7 +514,8 @@ class CausalSelfAttention(AtmaAttnBase):
         backward. The torch fallback is only for CPU / missing-kernel development runs."""
         B, T = x.shape[0], x.shape[1]
         H, dk = self.num_heads, self.head_dim
-        g = -F.softplus(self.w_wall(x).view(B, T, H, dk) + self.wall_gate_bias)  # (B,T,H,dk) <= 0, nats
+        g_logits = self.w_wall(x).view(B, T, H, dk) + self.wall_gate_bias
+        g = _wall_log_decay(g_logits)                       # natural-log decay in (-g_max, 0]
         scale = dk ** -0.5
         align_loss = torch.tensor(0.0, device=x.device)
 
@@ -461,8 +524,9 @@ class CausalSelfAttention(AtmaAttnBase):
 
         if _HAS_WALL and q_attn.is_cuda:
             try:                                                    # fused fwd+bwd kernel; supports GQA
-                y = _wall_attn_kernel(q_attn.contiguous(), k_attn.contiguous(), v_attn.contiguous(),
-                                      g.to(q_attn.dtype).contiguous(), scale=scale, window_size=W)
+                wall_window = 0 if W is None else int(W)
+                y = _wall_attn(q_attn.contiguous(), k_attn.contiguous(), v_attn.contiguous(),
+                               g.to(q_attn.dtype).contiguous(), scale, wall_window)
                 if self.num_random_keys > 0 and self.training:
                     R = self.num_random_keys
                     rand_input = torch.randn(B, R, x.shape[2], device=x.device, dtype=x.dtype)
@@ -470,13 +534,13 @@ class CausalSelfAttention(AtmaAttnBase):
                     v_rand = self.v(rand_input).view(B, R, self.num_kv_heads, dk).detach()
                     q_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=q_attn.dtype)
                     g_pad = torch.zeros(B, R, H, dk, device=x.device, dtype=g.dtype)
-                    y_dist = _wall_attn_kernel(
+                    y_dist = _wall_attn(
                         torch.cat([q_pad, q_attn], dim=1).contiguous(),
                         torch.cat([k_rand, k_attn], dim=1).contiguous(),
                         torch.cat([v_rand, v_attn], dim=1).contiguous(),
                         torch.cat([g_pad, g], dim=1).to(q_attn.dtype).contiguous(),
-                        scale=scale,
-                        window_size=None,
+                        scale,
+                        0,
                     )[:, R:]
                     align_loss = F.mse_loss(y_dist, y)
                 return y, align_loss
@@ -536,12 +600,7 @@ class CausalSelfAttention(AtmaAttnBase):
 
         W = self.window
         if self.pos == "wall":
-            if self.training:
-                def wall_fn(x_, q_, k_, v_):
-                    return self._wall_attention(x_, q_, k_, v_, groups, W)
-                y, align_loss = checkpoint(wall_fn, x, q_attn, k_attn, v_attn, use_reentrant=False)
-            else:
-                y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
+            y, align_loss = self._wall_attention(x, q_attn, k_attn, v_attn, groups, W)
         else:
             align_loss = torch.tensor(0.0, device=x.device)
             if W is None and self.pos == "nope" and _fa3 is not None:
@@ -738,7 +797,7 @@ class Block(nn.Module):
         mem_gamma_bias: float = 3.9,
         mem_beta_bias: float = 0.0,
         mem_kernel: str = "auto",
-        wall_gate_bias: float = -4.0,
+        wall_gate_bias: float | None = None,
     ):
         super().__init__()
         if not attention:

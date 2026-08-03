@@ -10,10 +10,6 @@ from kernel.wall import wall_attn, wall_attn_reference
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 
 
-def negative_gates(*shape, device, dtype, scale):
-    return -(torch.rand(*shape, device=device, dtype=dtype) * scale + scale)
-
-
 @requires_cuda
 @pytest.mark.parametrize("dtype", [torch.float32])
 @pytest.mark.parametrize("B,T,H,HQ,K,V", [(1, 48, 2, 4, 32, 16), (2, 31, 1, 1, 24, 8)])
@@ -25,7 +21,7 @@ def test_matches_reference_mha(dtype, B, T, H, HQ, K, V, window_size):
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.025)
+    g = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.05
     scale = K**-0.5
 
     o_ref = wall_attn_reference(q, k, v, g, scale=scale, window_size=window_size)
@@ -44,7 +40,7 @@ def test_gqa_matches_reference():
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.02)
+    g = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.04
     scale = K**-0.5
 
     o_ref = wall_attn_reference(q, k, v, g, scale=scale)
@@ -63,7 +59,7 @@ def test_varlen_packed_matches_reference():
     q = torch.randn(1, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(1, T, H, K, device=device, dtype=dtype)
     v = torch.randn(1, T, H, V, device=device, dtype=dtype)
-    g = negative_gates(1, T, HQ, K, device=device, dtype=dtype, scale=0.03)
+    g = torch.randn(1, T, HQ, K, device=device, dtype=dtype) * 0.06
     cu = torch.tensor([0, T1, T], dtype=torch.long, device=device)
     scale = K**-0.5
 
@@ -81,7 +77,7 @@ def test_sink_bias_matches_reference():
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.025)
+    g = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.05
     sink_bias = torch.randn(HQ, device=device, dtype=dtype) * 0.1
     scale = K**-0.5
 
@@ -117,7 +113,7 @@ def test_backward_matches_eager_reference():
     q0 = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k0 = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v0 = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g0 = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.015)
+    g0 = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.03
     scale = K**-0.5
 
     q = q0.clone().requires_grad_(True)
@@ -151,7 +147,7 @@ def test_dg_nonzero_after_backward():
     q = torch.randn(B, T, HQ, K, device=device, requires_grad=True)
     k = torch.randn(B, T, H, K, device=device, requires_grad=True)
     v = torch.randn(B, T, H, V, device=device, requires_grad=True)
-    g = negative_gates(B, T, HQ, K, device=device, dtype=torch.float32, scale=0.02).requires_grad_(True)
+    g = (torch.randn(B, T, HQ, K, device=device) * 0.04).requires_grad_(True)
     o = wall_attn(q, k, v, g, scale=K**-0.5)
     o.sum().backward()
     assert g.grad is not None and torch.isfinite(g.grad).all()
@@ -173,7 +169,7 @@ def test_g_gradient_matches_finite_differences():
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g0 = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.02)
+    g0 = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.04
     go = torch.randn(B, T, HQ, V, device=device, dtype=dtype)
 
     g = g0.clone().requires_grad_(True)
@@ -209,7 +205,7 @@ def test_scalar_gate_matches_reference(B, T, H, HQ, K, V):
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.025)
+    g = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.05
     g_scalar = torch.randn(B, T, HQ, device=device, dtype=dtype) * 0.1
     scale = K**-0.5
 
@@ -231,7 +227,7 @@ def test_scalar_gate_gradient_finite_differences():
     q = torch.randn(B, T, HQ, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
     v = torch.randn(B, T, H, V, device=device, dtype=dtype)
-    g0 = negative_gates(B, T, HQ, K, device=device, dtype=dtype, scale=0.02)
+    g0 = torch.randn(B, T, HQ, K, device=device, dtype=dtype) * 0.04
     gs0 = torch.randn(B, T, HQ, device=device, dtype=dtype) * 0.1
     go = torch.randn(B, T, HQ, V, device=device, dtype=dtype)
 

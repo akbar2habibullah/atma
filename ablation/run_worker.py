@@ -62,6 +62,7 @@ def main():
     host, pid = socket.gethostname(), os.getpid()
     env = dict(os.environ)
     env.setdefault("FLA_CUSTOM_OP", "1")          # compile-clean FLA path
+    env.setdefault("ATMA_WALL_CUSTOM_OP", "1")    # harmless for fair grid; needed for Wall diagnostics
     if args.gpu is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     tag = f"[worker {host}:{pid} gpu={args.gpu}]"

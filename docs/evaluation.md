@@ -1,5 +1,9 @@
 # Length Extrapolation & Long-Range Retrieval
 
+For the post-training 2K-to-256K activation and randomized modal analysis of
+five pretrained 10B-token checkpoints, see
+[Pretrained checkpoint stress sweep to 256K](CHECKPOINT_STRESS.md).
+
 Polar Attention is designed to **train short, infer long**. All numbers below come from the **120-cell ablation** — identical 370M models, `seq_len=2048`, ~1B tokens, evaluated at full context from 2K to 64K (32× train length) on a single 24 GB L4. The full grid is browsable in [pages/dashboard.html](../pages/dashboard.html); the probes themselves are produced by [eval.py](../eval.py) (reference at the bottom). See [POLAR_ATTENTION.md](POLAR_ATTENTION.md) for the mechanism.
 
 ## 1. Attention alone does not extrapolate — with or without polar/RoPE

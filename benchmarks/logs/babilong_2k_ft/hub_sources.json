@@ -1,0 +1,168 @@
+{
+  "dataset_revision": "ee0d588794c7ac098062ee0d247c733d62e94fe2",
+  "imported_at_unix": 1785693863,
+  "models": {
+    "atma_raven_titans": {
+      "files": {
+        "babilong_256k_pilot_result.json": {
+          "bytes": 2734,
+          "sha256": "37526958eceb84254278c1415aeee83a1981bfd8303ab9209736503899a7f790",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/resolve/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a/babilong_256k_pilot_result.json"
+        },
+        "babilong_full_eval_result.json": {
+          "bytes": 21469,
+          "sha256": "8620b52166a34c39349c697073674ffe43f6f709ecbd3d6fe021a83170cdaac0",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/resolve/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a/babilong_full_eval_result.json"
+        },
+        "babilong_pipeline_manifest.json": {
+          "bytes": 1422,
+          "sha256": "abe43732c89f9338350a0ee14999659af8ac772063390157a528f29c4dc6d7b4",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/resolve/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a/babilong_pipeline_manifest.json"
+        },
+        "finetune_manifest.json": {
+          "bytes": 1388,
+          "sha256": "3bdae71f0c9be387d446837090b6cb81df455db6dade39a1384e5e439ca21de2",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/resolve/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a/finetune_manifest.json"
+        },
+        "training_summary.json": {
+          "bytes": 771,
+          "sha256": "8478b765e2261a32f607e83784bdd1b6aff45a54bb2cbf892fb5a53ba77a3394",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/resolve/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a/training_summary.json"
+        }
+      },
+      "repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans",
+      "revision": "bbb6c7d4ba2f197c4ca980b2a97e27994031d65a",
+      "tree_url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-atma-raven-titans/tree/bbb6c7d4ba2f197c4ca980b2a97e27994031d65a"
+    },
+    "nope": {
+      "files": {
+        "babilong_256k_pilot_result.json": {
+          "bytes": 1379,
+          "sha256": "7d46f1f6eda69bb76e9c61445f9685b7d63d8260c2448588beced83671b81338",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/resolve/d8cf012152bfaeed2439e83313223bd982b2bdbb/babilong_256k_pilot_result.json"
+        },
+        "babilong_full_eval_result.json": {
+          "bytes": 20069,
+          "sha256": "628f6ebe16ffefc08cfd6ebdb7e583d9f6f1c71524972239785015ea4486ea3f",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/resolve/d8cf012152bfaeed2439e83313223bd982b2bdbb/babilong_full_eval_result.json"
+        },
+        "babilong_pipeline_manifest.json": {
+          "bytes": 1306,
+          "sha256": "9943b3064b098ad84cb12a4375b28897a70381c8521b2691301f3f5c5051adf7",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/resolve/d8cf012152bfaeed2439e83313223bd982b2bdbb/babilong_pipeline_manifest.json"
+        },
+        "finetune_manifest.json": {
+          "bytes": 1362,
+          "sha256": "403e89ea05986c69e0b62c1dfb2c67623b33ad9368cce5ea64dd7f23736e18fe",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/resolve/d8cf012152bfaeed2439e83313223bd982b2bdbb/finetune_manifest.json"
+        },
+        "training_summary.json": {
+          "bytes": 758,
+          "sha256": "dfb673fee1f3bc4ca789965bef9c51368065fc2bfe6b6ea5e6e4f0920e61981c",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/resolve/d8cf012152bfaeed2439e83313223bd982b2bdbb/training_summary.json"
+        }
+      },
+      "repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-nope",
+      "revision": "d8cf012152bfaeed2439e83313223bd982b2bdbb",
+      "tree_url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-nope/tree/d8cf012152bfaeed2439e83313223bd982b2bdbb"
+    },
+    "polar": {
+      "files": {
+        "babilong_256k_pilot_result.json": {
+          "bytes": 1379,
+          "sha256": "1400062e213aafca152e13e847be94946dcd5f3fc871b346251a7428d6447cd5",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/resolve/c1625542a0576a547d888523da8d3067b633d9d2/babilong_256k_pilot_result.json"
+        },
+        "babilong_full_eval_result.json": {
+          "bytes": 20111,
+          "sha256": "47e05138d7bc9763c07b588686f0835ebcc89ae7bc97ffcc809fe59963825803",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/resolve/c1625542a0576a547d888523da8d3067b633d9d2/babilong_full_eval_result.json"
+        },
+        "babilong_pipeline_manifest.json": {
+          "bytes": 1314,
+          "sha256": "97fd26c65fbe05f05f5cdbd3e21aa402af32be6a06adaf8104e218b34530d03f",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/resolve/c1625542a0576a547d888523da8d3067b633d9d2/babilong_pipeline_manifest.json"
+        },
+        "finetune_manifest.json": {
+          "bytes": 1364,
+          "sha256": "aa5b2356517a21a91a88a5933bb50cad38344e884e2c6d3600421fab68868773",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/resolve/c1625542a0576a547d888523da8d3067b633d9d2/finetune_manifest.json"
+        },
+        "training_summary.json": {
+          "bytes": 760,
+          "sha256": "b19f2132fbb3a7b5c3f29f4e623ba815995fe938a8c03b9797f5e4b75859b95f",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/resolve/c1625542a0576a547d888523da8d3067b633d9d2/training_summary.json"
+        }
+      },
+      "repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-polar",
+      "revision": "c1625542a0576a547d888523da8d3067b633d9d2",
+      "tree_url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-polar/tree/c1625542a0576a547d888523da8d3067b633d9d2"
+    },
+    "raven_native": {
+      "files": {
+        "babilong_256k_pilot_result.json": {
+          "bytes": 2714,
+          "sha256": "bed156a846cdcbcc3e762c9ee97fa4e792f54d4cc2615f8bdd0baf334b23a49e",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/resolve/f97dd4bf59c2bfb083672696dbc0cbe51991e22a/babilong_256k_pilot_result.json"
+        },
+        "babilong_full_eval_result.json": {
+          "bytes": 21449,
+          "sha256": "36146f54f5a59ef1f2a72825fdd17d57a235fbe88d7f4f993d0ce732441bd61d",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/resolve/f97dd4bf59c2bfb083672696dbc0cbe51991e22a/babilong_full_eval_result.json"
+        },
+        "babilong_pipeline_manifest.json": {
+          "bytes": 1378,
+          "sha256": "4ef206d0aff9da1d186e145c38a165e4d923ea9d19df7c43b57a585fdf53aac1",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/resolve/f97dd4bf59c2bfb083672696dbc0cbe51991e22a/babilong_pipeline_manifest.json"
+        },
+        "finetune_manifest.json": {
+          "bytes": 1378,
+          "sha256": "3c0a0bfcfafea4a63e1c73471dcca8ddd452a0b3869bea227906de75e52679fb",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/resolve/f97dd4bf59c2bfb083672696dbc0cbe51991e22a/finetune_manifest.json"
+        },
+        "training_summary.json": {
+          "bytes": 767,
+          "sha256": "08271430c285005bd92950fdf1134ee3f6119dec55627070bd5e2c342a574c81",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/resolve/f97dd4bf59c2bfb083672696dbc0cbe51991e22a/training_summary.json"
+        }
+      },
+      "repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native",
+      "revision": "f97dd4bf59c2bfb083672696dbc0cbe51991e22a",
+      "tree_url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-raven-native/tree/f97dd4bf59c2bfb083672696dbc0cbe51991e22a"
+    },
+    "rope": {
+      "files": {
+        "babilong_256k_pilot_result.json": {
+          "bytes": 1378,
+          "sha256": "f62ca187ed36e0a89f17d843d9813176daccb2dd8752cddb696ab3091dc47d62",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/resolve/a2262bb0d50f825f12e47a4974a1c56d9496df34/babilong_256k_pilot_result.json"
+        },
+        "babilong_full_eval_result.json": {
+          "bytes": 20084,
+          "sha256": "04777f247d25d1e37efe9bcc31c78f3406973b0d5e9469008253e33ca7a4032b",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/resolve/a2262bb0d50f825f12e47a4974a1c56d9496df34/babilong_full_eval_result.json"
+        },
+        "babilong_pipeline_manifest.json": {
+          "bytes": 1305,
+          "sha256": "8be99d4647b86ddca5bbd35add39cad99294e4eb9ae175f0ca8d7969fe53c694",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/resolve/a2262bb0d50f825f12e47a4974a1c56d9496df34/babilong_pipeline_manifest.json"
+        },
+        "finetune_manifest.json": {
+          "bytes": 1546,
+          "sha256": "8bd1e774b788feb0fc163d00853ec2c6a9aca626dcdcf31f529cab82ac2f265e",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/resolve/a2262bb0d50f825f12e47a4974a1c56d9496df34/finetune_manifest.json"
+        },
+        "training_summary.json": {
+          "bytes": 755,
+          "sha256": "04619b321aa48c9c67e0ef4e5731f62b4aa88e3a8330c3bad45762a70a5a5fa1",
+          "url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/resolve/a2262bb0d50f825f12e47a4974a1c56d9496df34/training_summary.json"
+        }
+      },
+      "repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-rope",
+      "revision": "a2262bb0d50f825f12e47a4974a1c56d9496df34",
+      "tree_url": "https://huggingface.co/ChavyvAkvar/atma-10b-babilong-2k-ft-rope/tree/a2262bb0d50f825f12e47a4974a1c56d9496df34"
+    }
+  },
+  "prompt_protocol": "builtin-v1",
+  "schema_version": 1
+}

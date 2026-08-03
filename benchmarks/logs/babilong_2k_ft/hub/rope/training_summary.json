@@ -1,0 +1,33 @@
+{
+  "best_epoch": 2,
+  "best_val_nll": 0.5079885378206792,
+  "checkpoint": "/home/sagemaker-user/atma/checkpoints/babilong_2k_ft/rope",
+  "curve": [
+    {
+      "elapsed_s": 224.9,
+      "epoch": 1,
+      "lr": 1.6330117273984822e-05,
+      "step": 300,
+      "train_nll": 1.1710380228209483,
+      "val_nll": 0.52719769776418
+    },
+    {
+      "elapsed_s": 450.3,
+      "epoch": 2,
+      "lr": 6.936199775201998e-06,
+      "step": 600,
+      "train_nll": 0.4073471722064279,
+      "val_nll": 0.5079885378206792
+    },
+    {
+      "elapsed_s": 675.4,
+      "epoch": 3,
+      "lr": 2.0000000000000003e-06,
+      "step": 900,
+      "train_nll": 0.2814835157534136,
+      "val_nll": 0.6616861137748429
+    }
+  ],
+  "elapsed_s": 675.4,
+  "total_steps": 900
+}

@@ -1,0 +1,3 @@
+$ /usr/local/bin/python -m scripts.stress_inference --mode decode --batch 1024 --context-length 512 --warmup 2 --iterations 20 --include-sampler
+Total parameters: 9209.13M
+{"batch": 1024, "context_length": 512, "context_max": 512, "context_mean": 512.0, "context_min": 512, "dtype": "bfloat16", "gpu": "NVIDIA B300 SXM6 AC", "hidden_size": 4096, "includes_sampler": true, "iterations": 20, "layers": 32, "mean_ms": 25.35159044265747, "mode": "decode", "p50_ms": 25.35036849975586, "p95_ms": 25.382272720336914, "parameter_count": 9209125504, "parameter_gib": 17.153332948684692, "peak_allocated_gib": 50.36164855957031, "peak_reserved_gib": 50.845703125, "route": "cuda_graph", "status": "ok", "throughput_tok_s": 40393.89013259755, "tokens": 1024, "warmup": 2}

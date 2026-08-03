@@ -2,6 +2,12 @@
 .claude
 *.zip
 /logs
+/profile_results
+/.torchinductor
 **/.ipynb_checkpoints
 ablation/shards
+scaled_ablation/eval_manifests
+scaled_ablation/cross_eval_*.json
+/tmp/training_artifact_diag/
 paper/arxiv
+/checkpoints/babilong_2k_ft/

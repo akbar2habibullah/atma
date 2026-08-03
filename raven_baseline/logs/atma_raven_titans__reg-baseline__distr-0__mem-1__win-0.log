@@ -1,0 +1,43 @@
+====================================================================================================
+[raven_baseline] run_id=atma_raven_titans__reg-baseline__distr-0__mem-1__win-0 arch_type=atma_raven_titans host=default device=cuda torch=2.12.1+cu130 fla_custom_op=1
+====================================================================================================
+[raven_baseline] train_steps=1900 (num_chunks=10, batch_size=524288, seq_len=2048)
+[raven_baseline] params=382.37M
+
+===ABLATION_CONFIG_JSON===
+{"arch_type": "atma_raven_titans", "attn_type": "atma_raven_titans", "reg_mode": "baseline", "distractor": false, "memory": true, "window": false, "vocab_size": 50304, "hidden_size": 1024, "num_hidden_layers": 16, "num_heads": 8, "num_kv_heads": 2, "atma_head_match": true, "num_slots": 256, "topk": 32, "feature_map": "swish", "router_score": "sigmoid", "router_type": "lin", "decay_type": "Mamba2", "add_gumbel_noise": true, "bias_rmm": false, "gate_logit_normalizer": 8, "conv_kernel_size": 3, "seq_len": 2048, "num_chunks": 10, "batch_size": 524288, "val_tokens": 2097152, "mbs": 4, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha_on": 0.01, "dist_align_weight_on": 0.01, "optimizer": "adamw_raven", "adamw_lr": 0.0003, "adamw_lr_min_frac": 0.1, "adamw_warmup_frac": 0.05, "adamw_beta1": 0.9, "adamw_beta2": 0.95, "adamw_eps": 1e-15, "adamw_weight_decay": 0.1, "skip_nan_inf": true, "compile_model": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "fla_custom_op": true, "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536], "clean_dataset": "codelion/finepdfs-100M", "val_data": "finewebedu10B/finewebedu_val_*.bin", "num_eval_docs": 16, "num_needle_trials": 16, "needle_val_len": 5, "run_id": "atma_raven_titans__reg-baseline__distr-0__mem-1__win-0", "comparison_group": "raven_bridge_1b", "mixer_ratio": "12_lfm2_4_raven", "num_random_keys": 0, "dist_align_loss_weight": 0.0, "sigr_alpha": 0.0, "attn_window": null, "mem_enabled": true, "num_params": 382369536, "host": "default", "device": "cuda"}
+===END===
+step:0/1900 val_loss:10.82769 wall:0.0s step_avg:0.0ms MFU:0.0%
+step:125/1900 val_loss:6.42906 wall:5679.0s step_avg:45431.6ms MFU:25.7%
+step:250/1900 val_loss:5.46961 wall:11285.2s step_avg:44849.8ms MFU:26.1%
+step:375/1900 val_loss:4.91184 wall:16889.3s step_avg:44832.8ms MFU:26.1%
+step:500/1900 val_loss:4.56596 wall:22494.5s step_avg:44841.6ms MFU:26.1%
+step:625/1900 val_loss:4.33996 wall:28086.6s step_avg:44737.1ms MFU:26.1%
+step:750/1900 val_loss:4.17967 wall:33695.8s step_avg:44873.7ms MFU:26.0%
+step:875/1900 val_loss:4.06223 wall:39293.5s step_avg:44781.5ms MFU:26.1%
+step:1000/1900 val_loss:3.95853 wall:44904.0s step_avg:44883.6ms MFU:26.0%
+step:1125/1900 val_loss:3.88273 wall:50515.1s step_avg:44889.2ms MFU:26.0%
+step:1250/1900 val_loss:3.82727 wall:56115.3s step_avg:44801.7ms MFU:26.1%
+step:1375/1900 val_loss:3.77813 wall:61723.2s step_avg:44862.8ms MFU:26.0%
+step:1500/1900 val_loss:3.74169 wall:67317.1s step_avg:44751.3ms MFU:26.1%
+step:1625/1900 val_loss:3.71879 wall:72914.6s step_avg:44779.9ms MFU:26.1%
+step:1750/1900 val_loss:3.69817 wall:78518.7s step_avg:44832.6ms MFU:26.1%
+step:1875/1900 val_loss:3.68264 wall:84125.2s step_avg:44852.3ms MFU:26.1%
+step:1900/1900 val_loss:3.68305 wall:85247.3s step_avg:44885.2ms MFU:26.0%
+
+===ABLATION_CURVE_JSON===
+[{"step": 0, "wall_s": 0.0, "val_loss": 10.827688973397017, "mfu": 0.0, "step_ms": 0.0, "tok_s": 0.0}, {"step": 125, "wall_s": 5678.956, "val_loss": 6.429055558517575, "mfu": 25.72, "step_ms": 45431.65, "tok_s": 11540.1}, {"step": 250, "wall_s": 11285.177, "val_loss": 5.469605823978782, "mfu": 26.05, "step_ms": 44849.76, "tok_s": 11689.9}, {"step": 375, "wall_s": 16889.271, "val_loss": 4.911838376894593, "mfu": 26.06, "step_ms": 44832.76, "tok_s": 11694.3}, {"step": 500, "wall_s": 22494.474, "val_loss": 4.565957400947809, "mfu": 26.06, "step_ms": 44841.62, "tok_s": 11692.0}, {"step": 625, "wall_s": 28086.613, "val_loss": 4.339958827011287, "mfu": 26.12, "step_ms": 44737.11, "tok_s": 11719.3}, {"step": 750, "wall_s": 33695.824, "val_loss": 4.179668649099767, "mfu": 26.04, "step_ms": 44873.69, "tok_s": 11683.6}, {"step": 875, "wall_s": 39293.51, "val_loss": 4.06222986150533, "mfu": 26.09, "step_ms": 44781.49, "tok_s": 11707.7}, {"step": 1000, "wall_s": 44903.964, "val_loss": 3.9585263608023524, "mfu": 26.03, "step_ms": 44883.63, "tok_s": 11681.1}, {"step": 1125, "wall_s": 50515.119, "val_loss": 3.882726015523076, "mfu": 26.03, "step_ms": 44889.24, "tok_s": 11679.6}, {"step": 1250, "wall_s": 56115.329, "val_loss": 3.827270859852433, "mfu": 26.08, "step_ms": 44801.68, "tok_s": 11702.4}, {"step": 1375, "wall_s": 61723.174, "val_loss": 3.7781263291835785, "mfu": 26.05, "step_ms": 44862.76, "tok_s": 11686.5}, {"step": 1500, "wall_s": 67317.088, "val_loss": 3.741685184650123, "mfu": 26.11, "step_ms": 44751.31, "tok_s": 11715.6}, {"step": 1625, "wall_s": 72914.578, "val_loss": 3.718790525570512, "mfu": 26.1, "step_ms": 44779.92, "tok_s": 11708.1}, {"step": 1750, "wall_s": 78518.654, "val_loss": 3.6981653245165944, "mfu": 26.06, "step_ms": 44832.61, "tok_s": 11694.3}, {"step": 1875, "wall_s": 84125.188, "val_loss": 3.6826429264619946, "mfu": 26.05, "step_ms": 44852.27, "tok_s": 11689.2}, {"step": 1900, "wall_s": 85247.318, "val_loss": 3.6830469956621528, "mfu": 26.03, "step_ms": 44885.2, "tok_s": 11680.6}]
+===END===
+[raven_baseline] training done: 85247.3s, final MFU 26.0%
+[raven_baseline] checkpoint -> checkpoints/atma_raven_titans__reg-baseline__distr-0__mem-1__win-0
+[raven_baseline] evaluating (clean_ppl / junk_ppl / needle at full context)...
+
+===ABLATION_EVAL_JSON===
+{"clean_ppl": {"2048": 3.5131692066788673, "4096": 3.4931928664445877, "8192": 3.453165739774704, "16384": 3.3206664621829987, "32768": 3.2702676840126514, "65536": 3.2300772378221154}, "junk_ppl": {"2048": 3.601653203368187, "4096": 3.616636350750923, "8192": 3.6085415929555893, "16384": 3.6269262582063675, "32768": 3.623721946030855, "65536": 3.653912778943777}, "needle": {"2048": {"ce": 5.104109913110733, "acc": 2.500000037252903}, "4096": {"ce": 5.067076534032822, "acc": 2.500000037252903}, "8192": {"ce": 5.3139708340168, "acc": 3.7500000558793545}, "16384": {"ce": 5.21697723865509, "acc": 1.2500000186264515}, "32768": {"ce": 5.16057226061821, "acc": 3.7500000558793545}, "65536": {"ce": 5.162220597267151, "acc": 3.7500000558793545}}, "needle_baseline": 5.145264595746994, "num_clean_docs": 16, "mfu_final": 26.03, "train_elapsed_s": 85247.318, "num_params": 382369536, "train_steps": 1900}
+===END===
+[raven_baseline] eval:
+  clean_ppl(nats): {2048: 3.5131692066788673, 4096: 3.4931928664445877, 8192: 3.453165739774704, 16384: 3.3206664621829987, 32768: 3.2702676840126514, 65536: 3.2300772378221154}
+  junk_ppl(nats):  {2048: 3.601653203368187, 4096: 3.616636350750923, 8192: 3.6085415929555893, 16384: 3.6269262582063675, 32768: 3.623721946030855, 65536: 3.653912778943777}
+  needle:          {2048: 2.5, 4096: 2.5, 8192: 3.8, 16384: 1.3, 32768: 3.8, 65536: 3.8}
+  needle_baseline CE: 5.145264595746994
+[raven_baseline] DONE

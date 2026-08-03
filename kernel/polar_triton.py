@@ -26,6 +26,7 @@ matmul loops (Triton: dq, and dk/dv).
 """
 
 import math
+import os
 import torch
 import torch.nn.functional as F
 
@@ -179,6 +180,119 @@ if HAS_TRITON:
         tl.store(Q2_OUT + mbase, q2_i, mask=m_valid)
 
 
+    @triton.jit
+    def _polar_packed_fwd_kernel(
+        Q, K, V, TILE_SEQ_START, TILE_Q_START, TILE_SEQ_LEN,
+        VNULL, SPG, NULLBASE, SPS, BETA, C, MAG,
+        stride_qt, stride_qh, stride_qd,
+        stride_kt, stride_kh, stride_kd,
+        stride_vt, stride_vh, stride_vd,
+        stride_ct, stride_ch, stride_cd,
+        stride_mt, stride_mh,
+        H, scale, eps,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, DK: tl.constexpr,
+        INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        WINDOW: tl.constexpr,
+    ):
+        """Fresh causal Polar attention over a packed, ragged request batch.
+
+        TILE_* maps each program to an independent query tile. Unlike padding all
+        requests to max_seqlen, every scheduled tile contains useful query rows and
+        tiles from short and long requests can execute concurrently across SMs.
+        """
+        tile = tl.program_id(0)
+        h = tl.program_id(1)
+        seq_start = tl.load(TILE_SEQ_START + tile)
+        q_start = tl.load(TILE_Q_START + tile)
+        seq_len = tl.load(TILE_SEQ_LEN + tile)
+
+        scale = scale.to(tl.float32)
+        eps = eps.to(tl.float32)
+        offs_m = q_start + tl.arange(0, BLOCK_M)
+        offs_d = tl.arange(0, DK)
+        m_valid = offs_m < seq_len
+        q_idx = seq_start + offs_m
+        q = tl.load(
+            Q + q_idx[:, None] * stride_qt + h * stride_qh
+            + offs_d[None, :] * stride_qd,
+            mask=m_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+
+        # Fresh causal prompts have exactly local_query_position + 1 live keys.
+        n_i = (offs_m + 1).to(tl.float32)
+        if WINDOW > 0:
+            n_clamp = tl.maximum(tl.minimum(n_i, float(WINDOW)), 1.0)
+        else:
+            n_clamp = tl.maximum(n_i, 1.0)
+        spg = tl.load(SPG + h).to(tl.float32)
+        sps = tl.load(SPS + h).to(tl.float32)
+        beta = tl.load(BETA + h).to(tl.float32)
+        nb = tl.load(NULLBASE + h).to(tl.float32)
+        temp = 1.0 + spg * tl.log(n_clamp)
+        nullv = nb + sps * tl.sqrt(tl.log(n_clamp + 1.0))
+
+        m_i = tl.full([BLOCK_M], -1e38, tl.float32)
+        l_i = tl.zeros([BLOCK_M], tl.float32)
+        q2_i = tl.zeros([BLOCK_M], tl.float32)
+        acc = tl.zeros([BLOCK_M, DK], tl.float32)
+
+        # A tile only needs keys through its last query. The runtime bound is
+        # different for every tile/request and avoids max-length padding work.
+        hi = tl.minimum(q_start + BLOCK_M, seq_len)
+        for start_n in range(0, hi, BLOCK_N):
+            offs_n = start_n + tl.arange(0, BLOCK_N)
+            n_valid = offs_n < seq_len
+            k_idx = seq_start + offs_n
+            k = tl.load(
+                K + k_idx[:, None] * stride_kt + h * stride_kh
+                + offs_d[None, :] * stride_kd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            v = tl.load(
+                V + k_idx[:, None] * stride_vt + h * stride_vh
+                + offs_d[None, :] * stride_vd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            a = sig * temp[:, None]
+            valid = offs_n[None, :] < n_i[:, None]
+            if WINDOW > 0:
+                valid = valid & (offs_n[None, :] >= (n_i[:, None] - WINDOW))
+            a = tl.where(valid, a, -1e38).to(tl.float32)
+
+            m_new = tl.maximum(m_i, tl.max(a, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.where(valid, tl.exp(a - m_new[:, None]), 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(
+                p.to(DOT_DTYPE), v, input_precision=INPUT_PRECISION)
+            m_i = m_new
+
+        a_n = temp * nullv
+        m_new = tl.maximum(m_i, a_n)
+        alpha = tl.exp(m_i - m_new)
+        l_i *= alpha
+        q2_i *= alpha * alpha
+        acc *= alpha[:, None]
+        m_i = m_new
+        p_n = tl.exp(a_n - m_i)
+        z = l_i + p_n
+        vn = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
+        s = acc + p_n[:, None] * vn[None, :]
+        c = s / tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)[:, None]
+        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        m_eff = n_eff * (l_i / tl.maximum(z, eps))
+        mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
+
+        tl.store(
+            C + q_idx[:, None] * stride_ct + h * stride_ch
+            + offs_d[None, :] * stride_cd,
+            c, mask=m_valid[:, None],
+        )
+        tl.store(MAG + q_idx * stride_mt + h * stride_mh, mag, mask=m_valid)
+
+
 def _softplus(x):
     return F.softplus(x)
 
@@ -194,9 +308,94 @@ def _dtype_meta(dtype):
     return _DOT.get(dtype, tl.bfloat16), "ieee", False
 
 
-def _fwd_config(dk, is_fp32):
-    """Block sizes / pipelining fitting L4 shared memory (~99 KB). 16-bit tiles are
-    half the size of fp32 tiles, so they can run wider / deeper."""
+_PROFILE_ALIASES = {
+    "auto": "auto",
+    "default": "auto",
+    "l4": "l4",
+    "cuda": "l4",
+    "small": "small",
+    "conservative": "small",
+    "low_smem": "small",
+    "hip": "small",
+    "rocm": "small",
+    "amd": "small",
+    "large": "large",
+    "high_smem": "large",
+    "a100": "large",
+    "h100": "large",
+    "hopper": "large",
+}
+
+
+def _smem_optin(props):
+    return int(getattr(props, "shared_memory_per_block_optin",
+                       getattr(props, "shared_memory_per_block", 0)) or 0)
+
+
+def _polar_tuning_profile(device=None):
+    """Return the launch-config profile for this device.
+
+    Override with ATMA_POLAR_TRITON_PROFILE={l4,small,large,auto} or the shorter
+    ATMA_POLAR_TRITON_CFG alias. The L4 profile preserves the original measured
+    defaults; `small` is for lower-smem or ROCm devices, and `large` uses wider
+    tiles on A100/H100-class parts.
+    """
+    requested = os.environ.get("ATMA_POLAR_TRITON_PROFILE") or os.environ.get("ATMA_POLAR_TRITON_CFG")
+    if requested:
+        key = requested.strip().lower().replace("-", "_")
+        if key not in _PROFILE_ALIASES:
+            valid = ", ".join(sorted(k for k in _PROFILE_ALIASES if k != "auto"))
+            raise ValueError(f"unknown polar Triton profile {requested!r}; valid: auto, {valid}")
+        mapped = _PROFILE_ALIASES[key]
+        if mapped != "auto":
+            return mapped
+
+    if not HAS_TRITON or not torch.cuda.is_available():
+        return "l4"
+    if getattr(torch.version, "hip", None):
+        return "small"
+
+    dev = torch.device(device) if device is not None else torch.device("cuda", torch.cuda.current_device())
+    idx = torch.cuda.current_device() if dev.index is None else dev.index
+    props = torch.cuda.get_device_properties(idx)
+    name = props.name.lower()
+    smem = _smem_optin(props)
+    major = getattr(props, "major", 0)
+
+    if " l4" in f" {name}" or name.endswith("l4"):
+        return "l4"
+    if major >= 9 or smem >= 160 * 1024:
+        return "large"
+    if smem and smem < 96 * 1024:
+        return "small"
+    return "l4"
+
+
+def _fwd_config(dk, is_fp32, device=None):
+    """Block sizes / pipelining selected by GPU profile.
+
+    The L4 profile is the original measured default (~99 KB opt-in shared memory).
+    16-bit tiles are half the size of fp32 tiles, so they can run wider / deeper.
+    """
+    profile = _polar_tuning_profile(device)
+    if profile == "small":
+        if is_fp32:
+            if dk >= 128:
+                return dict(block_m=32, block_n=32, num_warps=4, num_stages=1)
+            return dict(block_m=64, block_n=32, num_warps=4, num_stages=2)
+        if dk >= 128:
+            return dict(block_m=64, block_n=64, num_warps=4, num_stages=2)
+        return dict(block_m=64, block_n=64, num_warps=4, num_stages=2)
+
+    if profile == "large":
+        if is_fp32:
+            if dk >= 128:
+                return dict(block_m=64, block_n=64, num_warps=4, num_stages=2)
+            return dict(block_m=128, block_n=64, num_warps=4, num_stages=2)
+        if dk >= 128:
+            return dict(block_m=128, block_n=128, num_warps=8, num_stages=2)
+        return dict(block_m=128, block_n=128, num_warps=4, num_stages=3)
+
     if is_fp32:
         if dk >= 128:
             return dict(block_m=64, block_n=32, num_warps=4, num_stages=2)
@@ -207,10 +406,53 @@ def _fwd_config(dk, is_fp32):
     return dict(block_m=128, block_n=64, num_warps=4, num_stages=3)
 
 
-def _bwd_config(dk, is_fp32):
+def _bwd_config(dk, is_fp32, device=None):
     """Backward keeps an extra resident gs tile (and dk/dv accumulators for the
     dk/dv kernel), so it needs smaller tiles than forward. Separate dq / dk-dv
     launch params."""
+    profile = _polar_tuning_profile(device)
+    if profile == "small":
+        if is_fp32:
+            if dk >= 128:
+                return dict(
+                    dq=dict(block_m=32, block_n=32, num_warps=4, num_stages=1),
+                    kv=dict(block_m=32, block_n=32, num_warps=4, num_stages=1),
+                )
+            return dict(
+                dq=dict(block_m=64, block_n=32, num_warps=4, num_stages=1),
+                kv=dict(block_m=32, block_n=32, num_warps=4, num_stages=1),
+            )
+        if dk >= 128:
+            return dict(
+                dq=dict(block_m=64, block_n=32, num_warps=4, num_stages=2),
+                kv=dict(block_m=64, block_n=32, num_warps=4, num_stages=2),
+            )
+        return dict(
+            dq=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
+            kv=dict(block_m=64, block_n=32, num_warps=4, num_stages=2),
+        )
+
+    if profile == "large":
+        if is_fp32:
+            if dk >= 128:
+                return dict(
+                    dq=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
+                    kv=dict(block_m=64, block_n=32, num_warps=4, num_stages=2),
+                )
+            return dict(
+                dq=dict(block_m=128, block_n=64, num_warps=4, num_stages=2),
+                kv=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
+            )
+        if dk >= 128:
+            return dict(
+                dq=dict(block_m=64, block_n=128, num_warps=4, num_stages=2),
+                kv=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
+            )
+        return dict(
+            dq=dict(block_m=128, block_n=64, num_warps=4, num_stages=2),
+            kv=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
+        )
+
     if is_fp32:
         if dk >= 128:
             return dict(
@@ -231,6 +473,17 @@ def _bwd_config(dk, is_fp32):
         dq=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
         kv=dict(block_m=64, block_n=64, num_warps=4, num_stages=2),
     )
+
+
+def _decode_config(dk, is_fp32, device=None):
+    profile = _polar_tuning_profile(device)
+    if profile == "small":
+        return dict(block_n=32 if dk >= 128 else 64, num_warps=4, num_stages=1)
+    if profile == "large":
+        if is_fp32:
+            return dict(block_n=64, num_warps=4, num_stages=2)
+        return dict(block_n=128 if dk >= 128 else 64, num_warps=4, num_stages=2)
+    return dict(block_n=64, num_warps=4, num_stages=2)
 
 
 def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
@@ -261,7 +514,7 @@ def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
     dot_dtype, ip, is_fp32 = _dtype_meta(out_dtype)
     if is_fp32:
         ip = input_precision           # caller may request "tf32" for fp32 speed
-    cfg = _fwd_config(dk, is_fp32)
+    cfg = _fwd_config(dk, is_fp32, dev)
     block_m = block_m or cfg["block_m"]
     block_n = block_n or cfg["block_n"]
     num_warps = num_warps or cfg["num_warps"]
@@ -335,6 +588,66 @@ def polar_attention_fwd(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
         q.contiguous(), k.contiguous(), v.contiguous(), n_keys,
         v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
         eps, is_causal, input_precision, window=window)
+    return c, mag
+
+
+@torch.no_grad()
+def polar_attention_packed_fwd(
+    q, k, v, tile_seq_starts, tile_q_starts, tile_seq_lens, *,
+    v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
+    eps=1e-6, input_precision="ieee", window=None,
+):
+    """Grouped fresh-prefill Polar attention for packed variable-length requests.
+
+    q/k/v use ``[total_tokens, heads, head_dim]`` layout. ``tile_*`` contains one
+    entry per BLOCK_M query tile and is prepared once with the serving context.
+    The route is intentionally fresh-causal only; chunked/prefix requests retain
+    the established per-sequence implementation.
+    """
+    if not HAS_TRITON or not q.is_cuda:
+        raise RuntimeError("packed Polar attention requires CUDA and Triton")
+    if q.ndim != 3 or k.shape != q.shape or v.shape != q.shape:
+        raise ValueError("q, k, and v must have identical [tokens, heads, dim] shapes")
+    total, heads, dk = q.shape
+    if q.dtype not in (torch.bfloat16, torch.float16):
+        raise ValueError("packed Polar route is enabled only for 16-bit inference")
+    if dk & (dk - 1):
+        raise ValueError(f"head_dim (dk={dk}) must be a power of two")
+    if not (tile_seq_starts.numel() == tile_q_starts.numel() == tile_seq_lens.numel()):
+        raise ValueError("packed Polar tile-map tensors must have equal lengths")
+
+    dot_dtype, ip, is_fp32 = _dtype_meta(q.dtype)
+    if is_fp32:
+        ip = input_precision
+    cfg = _fwd_config(dk, is_fp32, q.device)
+    # The serving context builds its reusable map at the L40S-tuned 128 rows.
+    # Keep this explicit so an environment profile override cannot silently make
+    # the map and launch disagree.
+    block_m, block_n = 128, cfg["block_n"]
+    spg = _softplus(len_gain_raw.float()).contiguous()
+    sps = _softplus(null_slope_raw.float()).contiguous()
+    beta = _softplus(mag_beta_raw.float()).contiguous()
+    nb = null_base.float().contiguous()
+    vn = v_null.float().contiguous()
+    tile_seq_starts = tile_seq_starts.to(device=q.device, dtype=torch.int32).contiguous()
+    tile_q_starts = tile_q_starts.to(device=q.device, dtype=torch.int32).contiguous()
+    tile_seq_lens = tile_seq_lens.to(device=q.device, dtype=torch.int32).contiguous()
+    c = torch.empty_like(q)
+    mag = torch.empty((total, heads), device=q.device, dtype=q.dtype)
+    _polar_packed_fwd_kernel[(tile_seq_starts.numel(), heads)](
+        q, k, v, tile_seq_starts, tile_q_starts, tile_seq_lens,
+        vn, spg, nb, sps, beta, c, mag,
+        q.stride(0), q.stride(1), q.stride(2),
+        k.stride(0), k.stride(1), k.stride(2),
+        v.stride(0), v.stride(1), v.stride(2),
+        c.stride(0), c.stride(1), c.stride(2),
+        mag.stride(0), mag.stride(1),
+        heads, 1.0 / math.sqrt(dk), eps,
+        BLOCK_M=block_m, BLOCK_N=block_n, DK=dk,
+        INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        WINDOW=0 if window is None else int(window),
+        num_warps=cfg["num_warps"], num_stages=cfg["num_stages"],
+    )
     return c, mag
 
 
@@ -464,7 +777,7 @@ if HAS_TRITON:
 @torch.no_grad()
 def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
                            v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
-                           eps=1e-6, block_n=64, window=None):
+                           eps=1e-6, block_n=None, num_warps=None, num_stages=None, window=None):
     """Paged polar decode. One query per sequence over its cached context.
 
     q            : (B, H, dk)  current-token query (KV heads NOT expanded; GQA done in-kernel)
@@ -490,7 +803,11 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
     block_size = k_cache.shape[1]
     out_dtype = q.dtype
     dev = q.device
-    dot_dtype, _, _ = _dtype_meta(out_dtype)
+    dot_dtype, _, is_fp32 = _dtype_meta(out_dtype)
+    cfg = _decode_config(dk, is_fp32, dev)
+    block_n = block_n or cfg["block_n"]
+    num_warps = num_warps or cfg["num_warps"]
+    num_stages = num_stages or cfg["num_stages"]
 
     spg = F.softplus(len_gain_raw.float()).contiguous()
     sps = F.softplus(null_slope_raw.float()).contiguous()
@@ -518,7 +835,7 @@ def polar_attention_decode(q, k_cache, v_cache, block_tables, context_lens, *,
         BLOCK_SIZE=block_size, MAX_BLOCKS=max_blocks, BLOCK_N=block_n, DK=dk,
         G=groups, GP=gp, DOT_DTYPE=dot_dtype,
         WINDOW=(0 if window is None else int(window)),
-        num_warps=4, num_stages=2,
+        num_warps=num_warps, num_stages=num_stages,
     )
     return c.to(out_dtype), mag.to(out_dtype)
 
@@ -759,7 +1076,7 @@ def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
     dk_out = torch.zeros((B, H, Tk, dk), device=dev, dtype=fdt)
     dv_out = torch.zeros((B, H, Tk, dk), device=dev, dtype=fdt)
 
-    cfg = _bwd_config(dk, is_fp32)
+    cfg = _bwd_config(dk, is_fp32, dev)
     cq, ckv = cfg["dq"], cfg["kv"]
 
     common = (

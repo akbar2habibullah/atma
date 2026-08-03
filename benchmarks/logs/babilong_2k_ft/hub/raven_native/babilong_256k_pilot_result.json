@@ -1,0 +1,128 @@
+{
+  "benchmark": "babilong",
+  "counts": {
+    "qa1": {
+      "256k": 1
+    }
+  },
+  "dataset_id": "RMT-team/babilong",
+  "dataset_revision": "ee0d588794c7ac098062ee0d247c733d62e94fe2",
+  "elapsed_s": 8.0,
+  "generation_backend": "DirectScorer",
+  "lengths": [
+    "256k"
+  ],
+  "macro_average": {
+    "256k": 0.0
+  },
+  "macro_task_counts": {
+    "256k": 1
+  },
+  "model_config": {
+    "adamw_beta1": 0.9,
+    "adamw_beta2": 0.95,
+    "adamw_eps": 1e-15,
+    "adamw_lr": 0.0003,
+    "adamw_lr_min_frac": 0.1,
+    "adamw_warmup_frac": 0.05,
+    "adamw_weight_decay": 0.1,
+    "add_gumbel_noise": true,
+    "arch_type": "raven_native",
+    "atma_head_match": true,
+    "attn_type": "raven_native",
+    "attn_window": null,
+    "batch_size": 524288,
+    "bias_rmm": false,
+    "clean_dataset": "codelion/finepdfs-1B",
+    "comparison_group": "raven_scaled_promotion",
+    "compile_model": true,
+    "conv_kernel_size": 3,
+    "cooldown_frac": 0.7,
+    "decay_type": "Mamba2",
+    "dist_align_loss_weight": 0.0,
+    "dist_align_weight_on": 0.01,
+    "distractor": false,
+    "eval_lengths": [
+      2048,
+      4096,
+      8192,
+      16384,
+      32768,
+      65536,
+      131072,
+      262144
+    ],
+    "feature_map": "swish",
+    "fla_custom_op": true,
+    "gate_logit_normalizer": 8,
+    "hidden_size": 1024,
+    "mbs": 16,
+    "mem_beta_bias": 0.0,
+    "mem_chunk": 128,
+    "mem_enabled": false,
+    "mem_gamma_bias": 3.9,
+    "mem_kernel": "auto",
+    "memory": false,
+    "mixer_ratio": "16_raven",
+    "needle_distances": [
+      2048,
+      4096,
+      8192,
+      16384,
+      32768,
+      65536,
+      131072,
+      262144
+    ],
+    "needle_val_len": 5,
+    "num_chunks": 99,
+    "num_eval_docs": 64,
+    "num_heads": 4,
+    "num_hidden_layers": 16,
+    "num_kv_heads": 4,
+    "num_needle_trials": 64,
+    "num_random_keys": 0,
+    "num_slots": 256,
+    "optimizer": "adamw_raven",
+    "reg_mode": "baseline",
+    "router_score": "sigmoid",
+    "router_type": "lin",
+    "run_id": "raven_native__reg-baseline__distr-0__mem-0__win-0",
+    "seq_len": 2048,
+    "sigr_alpha": 0.0,
+    "sigr_alpha_on": 0.01,
+    "sketch_dim": 64,
+    "skip_nan_inf": true,
+    "topk": 32,
+    "val_data": "finewebedu10B/finewebedu_val_*.bin",
+    "val_tokens": 2097152,
+    "vocab_size": 50304,
+    "window": false
+  },
+  "model_unsupported": [],
+  "num_samples": 1,
+  "oom_cells": [],
+  "prompt_protocol": "builtin-v1",
+  "protocol": "heldout-short-finetune-v1",
+  "results": {
+    "qa1": {
+      "256k": 0.0
+    }
+  },
+  "row_ids": {
+    "qa1": {
+      "256k": [
+        90
+      ]
+    }
+  },
+  "row_range": [
+    90,
+    100
+  ],
+  "serving_metrics": null,
+  "tasks": [
+    "qa1"
+  ],
+  "unsupported_checkpoint": false
+}

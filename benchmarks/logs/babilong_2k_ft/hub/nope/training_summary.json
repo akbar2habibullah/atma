@@ -1,0 +1,33 @@
+{
+  "best_epoch": 1,
+  "best_val_nll": 0.49043869246592614,
+  "checkpoint": "/home/sagemaker-user/atma/checkpoints/babilong_2k_ft/nope",
+  "curve": [
+    {
+      "elapsed_s": 259.5,
+      "epoch": 1,
+      "lr": 1.6330117273984822e-05,
+      "step": 300,
+      "train_nll": 1.10553227699203,
+      "val_nll": 0.49043869246592614
+    },
+    {
+      "elapsed_s": 484.3,
+      "epoch": 2,
+      "lr": 6.936199775201998e-06,
+      "step": 600,
+      "train_nll": 0.3827959013159751,
+      "val_nll": 0.5080616948791836
+    },
+    {
+      "elapsed_s": 707.8,
+      "epoch": 3,
+      "lr": 2.0000000000000003e-06,
+      "step": 900,
+      "train_nll": 0.24714693900260298,
+      "val_nll": 0.6208562808593531
+    }
+  ],
+  "elapsed_s": 707.8,
+  "total_steps": 900
+}

@@ -8,7 +8,8 @@ proj zero-init, torch.compile), records a val-loss-vs-wall-clock curve, then run
 structured eval (ablation/evaluate.py) on the in-memory model. Emits ONE self-describing
 .log holding three delimited JSON blocks (config / curve / eval) + human-readable lines.
 
-Set FLA_CUSTOM_OP=1 in the environment (the runner does) for the compile-clean FLA path.
+Set FLA_CUSTOM_OP=1 for the compile-clean FLA path. ATMA_WALL_CUSTOM_OP=1 is only relevant when
+reproducing diagnostic Wall runs.
 """
 import argparse
 import json
@@ -54,7 +55,8 @@ def main():
 
     p0("=" * 100)
     p0(f"[ablation] run_id={cfg['run_id']} host={socket.gethostname()} device={device} "
-       f"torch={torch.__version__} fla_custom_op={os.environ.get('FLA_CUSTOM_OP','0')}")
+       f"torch={torch.__version__} fla_custom_op={os.environ.get('FLA_CUSTOM_OP','0')} "
+       f"wall_custom_op={os.environ.get('ATMA_WALL_CUSTOM_OP','0')}")
     p0("=" * 100)
 
     try:
@@ -97,7 +99,7 @@ def main():
             attn_type=cfg["attn_type"], attn_window=cfg["attn_window"],
             mem_enabled=cfg["mem_enabled"], mem_chunk=cfg["mem_chunk"],
             mem_gamma_bias=cfg["mem_gamma_bias"], mem_beta_bias=cfg["mem_beta_bias"],
-            mem_kernel=cfg["mem_kernel"], wall_gate_bias=cfg.get("wall_gate_bias", -4.0),
+            mem_kernel=cfg["mem_kernel"], wall_gate_bias=cfg.get("wall_gate_bias"),
         )
         model = Model(ac, reg_mode=cfg["reg_mode"], sketch_dim=cfg["sketch_dim"]).to(device)
         num_params = sum(p.numel() for p in model.parameters())
@@ -140,9 +142,9 @@ def main():
         peak_flops = 65e12
         if device.type == "cuda":
             name = torch.cuda.get_device_name()
-            peak_flops = {"A100": 312e12, "V100": 125e12, "T4": 65e12, "L4": 121e12,
+            peak_flops = {"A100": 312e12, "V100": 125e12, "T4": 65e12, "L40S": 362e12, "L4": 121e12,
                           "H100": 989e12, "H200": 989e12}.get(next((k for k in
-                          ["A100", "V100", "T4", "L4", "H100", "H200"] if k in name), "T4"), 65e12)
+                          ["A100", "V100", "T4", "L40S", "L4", "H100", "H200"] if k in name), "T4"), 65e12)
 
         sigr_alpha = cfg["sigr_alpha"]
         dist_w = cfg["dist_align_loss_weight"]

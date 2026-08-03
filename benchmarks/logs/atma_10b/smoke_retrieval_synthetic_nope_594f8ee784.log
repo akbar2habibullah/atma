@@ -1,0 +1,28 @@
+[run] benchmark=retrieval model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0/snapshots/d2974b46bf1be80fe0285ed7c15903b8079f615a tasks=['passkey', 'niah'] lengths=['2k', '8k'] samples=2
+[retrieval] passkey len=  2k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.0967
+[retrieval] passkey len=  2k depth= 0.5: token_acc=100.0% exact=100.0% nll=0.1563
+[retrieval] passkey len=  2k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.3488
+[retrieval] passkey len=  8k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.2810
+[retrieval] passkey len=  8k depth= 0.5: token_acc=100.0% exact=100.0% nll=0.5803
+[retrieval] passkey len=  8k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.6266
+[retrieval]    niah len=  2k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.1858
+[retrieval]    niah len=  2k depth= 0.5: token_acc=100.0% exact=100.0% nll=0.2262
+[retrieval]    niah len=  2k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.2802
+[retrieval]    niah len=  8k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.4294
+[retrieval]    niah len=  8k depth= 0.5: token_acc=100.0% exact=100.0% nll=0.5186
+[retrieval]    niah len=  8k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.5745
+
+[retrieval] teacher-forced token accuracy %, per kind (rows=length, cols=depth):
+  passkey:
+    len     0.1    0.5    0.9
+      2k  100.0  100.0  100.0
+      8k  100.0  100.0  100.0
+  niah:
+    len     0.1    0.5    0.9
+      2k  100.0  100.0  100.0
+      8k  100.0  100.0  100.0
+
+===RETRIEVAL_RESULTS_JSON===
+{"benchmark": "retrieval", "protocol": "teacher-forced-needle-v2", "kinds": ["passkey", "niah"], "lengths": ["2k", "8k"], "depths": [0.1, 0.5, 0.9], "num_samples": 2, "value_tokens": 5, "seed": 1234, "paired_across_lengths_and_depths": true, "haystack": "synthetic-filler", "haystack_revision": null, "results": {"passkey": {"2k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}, "8k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}}, "niah": {"2k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}, "8k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}}}, "exact_results": {"passkey": {"2k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}, "8k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}}, "niah": {"2k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}, "8k": {"0.1": 100.0, "0.5": 100.0, "0.9": 100.0}}}, "nll_results": {"passkey": {"2k": {"0.1": 0.09665588140487671, "0.5": 0.15630563497543334, "0.9": 0.3487744092941284}, "8k": {"0.1": 0.28102835416793825, "0.5": 0.5803455352783203, "0.9": 0.6265782833099365}}, "niah": {"2k": {"0.1": 0.1857713282108307, "0.5": 0.22623014450073242, "0.9": 0.28018927574157715}, "8k": {"0.1": 0.42936962842941284, "0.5": 0.5185990810394288, "0.9": 0.5745191812515259}}}, "oom_cells": [], "elapsed_s": 6.6, "unsupported_checkpoint": false, "model_config": {"vocab_size": 50304, "num_hidden_layers": 16, "hidden_size": 1024, "head_dim": 128, "attn_kernel_size": 4, "conv_kernel_size": 3, "max_position_embeddings": 2048, "rms_norm_eps": 1e-06, "dtype": "bfloat16", "tie_word_embeddings": false, "num_random_keys": 0, "attn_online": false, "attn_k_block": 512, "attn_kernel": "triton", "attn_type": "nope", "wall_gate_bias": null, "attn_window": null, "mem_enabled": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto"}, "model_unsupported": [], "serving_metrics": null}
+===END===
+[run] done in 6.6s -> /home/sagemaker-user/atma/benchmarks/logs/atma_10b/smoke_retrieval_synthetic_nope_594f8ee784.log

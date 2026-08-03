@@ -62,8 +62,12 @@ c, mag = polar_attention_fwd(q, k, v, n_keys, is_causal=..., **polar_params)
 - All softmax/elementwise math is fp32; only `tl.dot` operands use the input dtype
   (bf16/fp16 → tensor cores). GQA is handled outside the kernel (KV heads are
   `repeat_interleave`-expanded to H by the caller, exactly as the PyTorch path does).
-- Block sizes / pipelining are chosen per (dtype, `dk`) to fit the L4's ~99 KB of
-  shared memory (see `_fwd_config` / `_bwd_config`).
+- Block sizes / pipelining are chosen per GPU profile and per (dtype, `dk`). Auto
+  detection keeps the original L4-tuned launch shape on L4 / ~99 KB-smem parts,
+  switches to a conservative profile on lower-smem or ROCm devices, and uses wider
+  tiles on A100/H100-class high-smem GPUs. Override while benchmarking with
+  `ATMA_POLAR_TRITON_PROFILE={auto,l4,small,large}` or the alias
+  `ATMA_POLAR_TRITON_CFG`.
 
 ## Numerical parity
 
