@@ -1,5 +1,5 @@
 \begin{longtable}{llcccrrrrrrrr}
-\caption{Complete Results of the 120-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. Clean PPL is measured on coherent FinePDFs documents; junk PPL is measured on the concatenated validation stream. PPL is in nats (lower is better), Needle is accuracy in \% (higher is better), MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
+\caption{Complete Results of the 120-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. Clean NLL is measured on coherent FinePDFs documents; junk NLL is measured on the concatenated validation stream. NLL is in nats/token (lower is better), Needle is greedy per-digit accuracy in \% (higher is better), and MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
 \toprule
 Type & Reg & Dist & Mem & Win & Val & Clean2K & Clean64K & Junk2K & Junk64K & Ndl2K & Ndl64K & MFU \\
 \midrule
