@@ -1,0 +1,167 @@
+\section{Theoretical Framing}
+\label{appendix:theory}
+
+These are sufficient-condition results. They establish noise-odds and norm bounds under explicit assumptions; they do not establish distributional invariance or replace the empirical evidence.
+
+\subsection{Extreme-value null floor}
+
+\begin{assumption}[Sub-Gaussian noise scores]
+For irrelevant keys $j\in\mathcal N_n$, $|\mathcal N_n|\leq n$, scores $X_j$ are mean-zero and $v^2$-sub-Gaussian: $\mathbb E\exp(tX_j)\leq\exp(v^2t^2/2)$ for all $t\in\mathbb R$.
+\end{assumption}
+
+Let the Polar null floor be $\nu_n=b+s\sqrt{\log(n+1)}$ with $b,s\geq0$.
+
+\begin{proposition}[Noise exceedances]
+Under Assumption 1,
+\begin{equation}
+\mathbb E\!\left[\sum_{j\in\mathcal N_n}{\bf1}\{X_j>\nu_n\}\right]
+\leq n\exp\!\left(-\frac{\nu_n^2}{2v^2}\right).
+\end{equation}
+If $s\geq\sqrt2v$ this is $O(1)$; if the inequality is strict it decays polynomially.
+\end{proposition}
+
+\begin{proof}
+Apply the sub-Gaussian tail bound to each key and sum. Since $b\geq0$, $\nu_n^2\geq s^2\log(n+1)$.
+\end{proof}
+
+Unlike TDA, Polar retains sub-threshold keys. With temperature $\theta_n=1+a\log n$, define the unnormalized noise-to-null odds $R_n=\sum_{j\in\mathcal N_n}\exp(\theta_n(X_j-\nu_n))$.
+
+\begin{proposition}[Vanishing null odds]
+Suppose $s>c>\sqrt2v$ and the null floor is $s\sqrt{\log(n+1)}$ up to a nonnegative offset. With probability tending to one,
+\begin{equation}
+R_n\leq n\exp\!\left(-(1+a\log n)(s-c)\sqrt{\log n}\right).
+\end{equation}
+For $a>0$, the bound converges to zero faster than any inverse polynomial.
+\end{proposition}
+
+\begin{proof}
+A union bound gives $\Pr[\max_jX_j>c\sqrt{\log(n+1)}]\leq n(n+1)^{-c^2/(2v^2)}\to0$. On the complementary event, every noise score is at least $(s-c)\sqrt{\log n}$ below the floor. Bound each summand and sum over at most $n$ keys.
+\end{proof}
+
+\subsection{Bounded channels and recurrent state}
+
+\begin{proposition}[Bounded Polar readout]
+For $c_i=s_i/\max(\lVert s_i\rVert_2,\varepsilon)$, $\lVert c_i\rVert_2\leq1$. For $\mu_i=\tanh(\beta\log(1+m_{{\rm eff},i}))$, $\mu_i\in[0,1)$ when $\beta,m_{{\rm eff},i}\geq0$. A distribution uniform over $m$ real keys has participation ratio $m$.
+\end{proposition}
+
+\begin{proof}
+The first two claims follow from the denominator and range of $\tanh$. Uniform weights satisfy $(\sum_{j=1}^m(1/m)^2)^{-1}=m$.
+\end{proof}
+
+\begin{assumption}[Contractive memory]
+For every $t$, $\lVert q_t\rVert_2=\lVert k_t\rVert_2=1$, $\lVert v_t\rVert_2\leq V$, $0\leq\beta_t\leq1$, and $0\leq\gamma_t\leq\bar\gamma<1$.
+\end{assumption}
+
+\begin{proposition}[Length-bounded state]
+For recurrence~\eqref{eq:memory},
+\begin{equation}
+\lVert M_t\rVert_F\leq\bar\gamma^t\lVert M_0\rVert_F+\frac{V}{1-\bar\gamma}.
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+$I-\beta_tk_tk_t^\top$ has spectral norm at most one and $\lVert\beta_tv_tk_t^\top\rVert_F\leq V$. Thus $\lVert M_t\rVert_F\leq\bar\gamma\lVert M_{t-1}\rVert_F+V$; unrolling gives the result.
+\end{proof}
+
+The Lean artifact checks the finite-sum, exponential-monotonicity, bounded-channel composition, and invariant-set induction steps. It takes the sub-Gaussian tail, high-probability margin, and one-step contraction as premises. It is therefore a machine-checked proof skeleton, not end-to-end formal verification. The learned conditions $b\geq0$ and $s>c>\sqrt2v$ require an empirical head-wise audit before they can be asserted for a trained checkpoint.
+
+\section{Evaluation Protocols}
+\label{appendix:protocol}
+
+Stage I contains 120 approximately 370--378M-parameter runs trained for 1,900 steps of 524,288 tokens at sequence length 2,048 on FineWeb-Edu. Stage II contains three matched attention models trained for 18,722 such steps (9.816B tokens). The five promoted checkpoints and ten open-weight controls are evaluated with checkpoint-exact forward paths.
+
+Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The primary metric is teacher-forced accuracy over five target tokens. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
+
+\section{Complete Factorial Sweep}
+\label{appendix:full_ablation}
+
+The complete 120-cell table is retained in the submission source and artifact. The main paper reports only the recipe transitions needed to justify promotion.
+\begingroup
+\fontsize{5}{6}\selectfont
+\setlength{\tabcolsep}{1pt}
+\input{../appendix_table.tex}
+\endgroup
+
+\section{Retrieval Breakdown}
+\label{appendix:retrieval}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_niah_heatmap.pdf}
+\caption{Retrieval depth sweeps for the five promoted models. Each cell is teacher-forced token accuracy.}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrrr}
+\toprule
+\textbf{Model} & \textbf{Haystack} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\
+\midrule
+Polar & Synthetic & 99.6 & 98.4 & 98.5 & 97.0 & 94.9 & 92.3 & 80.3 & 68.4 \\
+& FinePDFs & 98.6 & 86.3 & 77.9 & 49.1 & 40.7 & 16.3 & 3.2 & 0.3 \\
+NoPE & Synthetic & 99.5 & 98.7 & 98.9 & 94.9 & 70.3 & 26.5 & 10.2 & 1.2 \\
+& FinePDFs & 99.3 & 52.9 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+RoPE & Synthetic & 81.7 & 44.9 & 33.1 & 0.8 & 6.8 & 0.1 & 0.0 & 0.0 \\
+& FinePDFs & 94.8 & 4.7 & 0.2 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+Atma-Raven-Titans & Synthetic & 64.8 & 60.7 & 51.1 & 46.9 & 41.7 & 35.8 & 25.9 & 19.3 \\
+& FinePDFs & 23.2 & 2.6 & 0.7 & 0.2 & 1.4 & 0.5 & 1.6 & 0.7 \\
+Raven Native & Synthetic & 55.9 & 57.7 & 51.4 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1 \\
+& FinePDFs & 22.1 & 15.4 & 8.2 & 3.3 & 5.3 & 2.9 & 3.7 & 5.4 \\
+\bottomrule
+\end{tabular}}
+\caption{Zero-shot retrieval accuracy (\%) by haystack type and context length, averaged over needle depths.}
+\end{table}
+
+\section{Short-Context Quality and Systems}
+\label{appendix:quality}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_downstream_candle.pdf}
+\caption{Eight short-context control tasks (22,939 examples per model).}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_serving_scaling.pdf}
+\caption{Single-sequence serving on one L40S. Attention decode scales with KV-cache length; recurrent Raven uses fixed state.}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrr}
+\toprule
+\textbf{Group} & \textbf{Model} & \textbf{Base mean} & \textbf{128K prefill} & \textbf{Decode} & \textbf{Peak alloc.} & \textbf{Train MFU} \\
+& & (\%) & (s) & (ms/token) & (GiB) & (\%, 2K) \\
+\midrule
+Matched & NoPE & 45.1 & 1.47 & 16.4 & 39.40 & 42.77 \\
+Matched & Polar & 43.3 & 1.62 & 16.3 & 39.41 & 40.44 \\
+Matched & RoPE & 44.6 & 1.47 & 16.5 & 39.41 & 42.45 \\
+Raven/AdamW & Atma-Raven-Titans & 43.1 & 1.00 & 2.27 & 8.62 & 30.92 \\
+Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
+\bottomrule
+\end{tabular}}
+\caption{Short-context quality and serving trade-offs. Serving uses one sequence and one timing sample; it is descriptive rather than an uncertainty estimate.}
+\end{table}
+
+\section{Stress and Environment Diagnostics}
+\label{appendix:diagnostics}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{fig_stress_heatmap.pdf}
+\caption{Block-wise sampled secant gains over 64 nested FinePDFs documents and 64 perturbation directions per document. The probe localizes checkpoint-specific changes but does not estimate a global Lipschitz constant.}
+\end{figure}
+
+For each block $f_i$, the diagnostic samples
+\begin{equation}
+G_i=\frac{\lVert f_i(x+\delta x)-f_i(x)\rVert_{\rm rms}}{\lVert\delta x\rVert_{\rm rms}},
+\qquad \lVert\delta x\rVert_{\rm rms}=0.02\lVert x\rVert_{\rm rms}.
+\end{equation}
+The maximum sampled gain is a lower bound on the local operator norm along sampled directions; it is not a tight bound on the block Lipschitz constant. In the observed NoPE collapse, changes first concentrate near blocks 6--7 and later propagate through the residual stream. Polar's sampled gains and activation moments remain comparatively flat through 256K.
+
+The environment diagnostic re-evaluates checkpoints under PyTorch 2.12 and 2.13, compares microbatch 4 and 16 on L40S, and uses deterministic short-context stream fixtures. These controls rule out evaluation-version and microbatch-only explanations in the tested runs. They do not isolate a unique low-level cause, because the L4/L40S intervention was not replicated over multiple training seeds and kernel configurations.
