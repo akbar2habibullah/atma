@@ -98,10 +98,10 @@ The weak and strong modes follow the two SIGReg families introduced by Weak-SIGR
 \section{Polar Attention Implementation}
 \label{appendix:polar_implementation}
 
-\subsubsection{Numerical oracle.}
+\subsection{Numerical oracle}
 The materialized PyTorch path forms the masked real-key logits and virtual null logit in FP32, applies a single softmax, and computes the direction and magnitude channels from the resulting weights. It is used as a numerical oracle for forward and backward tests, not as the production long-context path, because materializing the $T\times T$ score matrix is memory-prohibitive at the evaluated lengths.
 
-\subsubsection{Streaming sufficient statistics.}
+\subsection{Streaming sufficient statistics}
 The Triton kernel follows the online-max strategy used by FlashAttention-style kernels. For one query row, it streams $K,V$ blocks and retains only four FP32 statistics: the running maximum $M$, real-key exponential sum $L$, squared exponential sum $Q_2$, and unnormalized value sum $S$. If a new block changes the row maximum, $\alpha=\exp(M_{\rm old}-M_{\rm new})$ rescales each statistic as shown in Table~\ref{table:polar_streaming_state}.
 
 \begin{table}[!ht]
@@ -170,7 +170,7 @@ This removes the quadratic \emph{score-matrix storage}. Full-context prefill sti
 
 Stage I contains 120 approximately 370--378M-parameter runs trained for 1,900 steps of 524,288 tokens at sequence length 2,048 on FineWeb-Edu. Stage II contains three matched attention models trained for 18,722 such steps (9.816B tokens). The five promoted checkpoints and ten open-weight controls are evaluated with checkpoint-exact forward paths.
 
-\subsubsection{Raven optimizer control.}
+\subsection{Raven optimizer control}
 The Raven rows use AdamW optimizer because the attempted matched-schedule control did not produce a usable baseline. In the 1B-token Raven Native pilot with the Atma Muon schedule, validation loss decreased from 10.83 to 3.76 nats by step 625, then rose to 6.88 at step 1,125 and ended at 4.62; teacher-forced retrieval was 0\% at every tested length from 2K through 64K. The reported Raven Native and Atma-Raven-Titans checkpoints therefore use AdamW and remain a separate model-family/optimizer group. This is evidence about the tested Muon schedule, not a general claim that Raven cannot converge under any Muon tuning.
 
 Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The primary metric is teacher-forced accuracy over five target tokens. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
@@ -300,7 +300,7 @@ Compiler boundary & Recurrent scan and custom kernels exposed as opaque operatio
 \end{table}
 
 \begin{landscape}
-\subsubsection{Single-sequence scaling.}
+\subsection{Single-sequence scaling}
 Table~\ref{table:serving_detailed_matrix} gives the underlying single-sequence measurements. On one NVIDIA L40S, attention decode increases from approximately 2.3 ms/token at 2K to 16.3--16.5 ms/token at 128K because every step reads a longer KV cache. The recurrent models remain nearly flat because they update fixed-size state. Prefill is less monotonic at short lengths because launch overhead and kernel occupancy dominate before the matrix operations reach their efficient regime. These timings use batch size 1, 32 generated tokens, and one recorded timing sample per cell. They are descriptive measurements, not confidence intervals.
 \begingroup
 \small
@@ -349,7 +349,7 @@ Raven Native & Prefill latency (s) & 0.214 & 0.054 & 0.070 & 0.139 & 0.320 & 0.6
 \endgroup
 \end{landscape}
 
-\subsubsection{Production-framework stress comparison.}
+\subsection{Production-framework stress comparison}
 To test whether the custom kernels introduce an obvious systems bottleneck at a larger shape, we configured ATMA's inference engine with a 9.2B-parameter stress shape and compared it with vLLM 0.25.0 serving Qwen3.5-9B on the same L40S in BF16~\citep{kwon2023vllm}. The models are not weight- or architecture-matched, so Table~\ref{table:vllm_comparison_matrix} is a backend stress comparison rather than a model-quality or universal serving claim. ATMA trails on short homogeneous prefill, is similar on long heterogeneous prefill, and leads the recorded high-batch decode cells.
 
 \begin{table}[!ht]

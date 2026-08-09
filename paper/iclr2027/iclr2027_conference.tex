@@ -100,7 +100,7 @@ Thus $\mu_i\in[0,1)$, while the direction channel removes radial scale. This is 
 
 Each global layer also maintains a per-head recurrent state $M_t\in\mathbb{R}^{d_v\times d_k}$. With unit-normalized keys and queries, retention $\gamma_t$, and write gate $\beta_t$, the decay-first, self-inclusive recurrence is
 \begin{equation}
- M_t=\gamma_tM_{t-1}(I-\beta_tk_tk_t^\top)+\beta_tv_tk_t^\top,qquad r_t=M_tq_t.
+ M_t=\gamma_tM_{t-1}(I-\beta_tk_tk_t^\top)+\beta_tv_tk_t^\top,\qquad r_t=M_tq_t.
 \label{eq:memory}
 \end{equation}
 RMS-normalized $r_t$ is gated, projected, and added to the Polar output. The projection is zero-initialized. Unit $L_2$ normalization is important: RMS-normalized keys have $\lVert k\rVert_2^2=d_k$ and made the tested delta recurrence diverge, whereas unit keys keep the update eigenvalue along $k$ within the gate-controlled range. Under bounded values and a uniformly contractive retention gate, Appendix~\ref{appendix:theory} gives a sequence-length-independent state bound. Our empirical claim is narrower: the implemented state remains stable in the tested length sweep.
@@ -116,10 +116,10 @@ Figure~\ref{fig:machinery} summarizes the two mechanisms and their controlled di
 
 \section{Experimental Design}
 
-\subsubsection{Recipe selection.}
+\subsection{Recipe selection}
 Stage I trains all $3\times5\times2\times2\times2=120$ combinations of attention type (Polar, RoPE, NoPE), regularization, distractor loss, memory, and a sliding window attention (1024 length). Models receive approximately 1B FineWeb-Edu tokens at length 2048 on NVIDIA L4 GPUs. This stage selects promoted recipe, it is not used for headline absolute comparisons.
 
-\subsubsection{Matched comparison.}
+\subsection{Matched comparison}
 Stage II trains 378.16--378.22M-parameter NoPE, RoPE, and Polar models for 9.816B tokens at length 2048 on the same L40S software and hardware environment. All use the same Muon/AdamW split. Raven Native (388.54M) and Atma-Raven-Titans (382.37M) use the same data, tokenizer, budget, and device class, but Raven use AdamW optimizer. This choice follows a 1B-token Raven Native pilot results with the same Atma Muon schedule: validation loss improved to 3.76 nats at step 625, then destabilized and ended at 4.62, with 0\% retrieval through 64K. We therefore retain Raven's AdamW recipe and report both Raven models as a separate baseline group. The single failed pilot does not establish that Raven is incompatible with every Muon configuration.
 
 \paragraph{Evaluation.}
@@ -236,7 +236,7 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \FloatBarrier
 \section{Environment Sensitivity and Open Questions}
 
-\begin{figure}[t]
+\begin{figure}[!ht]
 \centering
 \includegraphics[width=\linewidth]{fig_nope_pretrain_loss.pdf}
 \caption{NoPE 2K validation trajectories are nearly coincident, yet the checkpoints' 256K NLL values are 10.77, 9.90, and 4.07. The two L40S runs differ in microbatch size; the L4 run differs in device class.}
@@ -245,8 +245,8 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 
 Beyond the architectural choice, Figure~\ref{fig:environment} presents an independent empirical contribution: identical short-context training convergence can hide significantly different long-context behavior. Three NoPE training runs finish at 2.8126, 2.8128, and 2.8160 validation nats, but their 256K NLLs respectively are 10.77 (L40S, microbatch 16), 9.90 (L40S, microbatch 4), and 4.07 (L4, microbatch 4).
 
-\subsubsection{Diagnostic journey.}
-The finding emerged unintentionaly through an infrastructure transition rather than a planned device comparison. Stage I and the first Stage II 10B NoPE control ran on L4 with microbatch 4 and produced the 4.07-nat at 256K length. Moving the promoted runs to L40S with microbatch 16 preserved the 2K trajectory but changed the 256K nats to 10.77. Re-evaluation under PyTorch 2.12 and 2.13 left both checkpoints' evaluation scores unchanged; an L40S microbatch-4 retrain still reached 9.90 and deterministic 2K stream fixtures showed no gradient or loss discrepancy. These steps exclude evaluation-version and microbatch-only explanations in the tested runs, but do not isolate a unique hardware or kernel cause. All five headline Stage II models were trained together on L40S, so the main comparison remains environment-matched. Appendix~\ref{appendix:diagnostics} records the full audit sequence.
+\subsection{Diagnostic journey}
+The finding emerged unintentionaly through an infrastructure transition rather than a planned device comparison. Stage I and the first Stage II 10B NoPE control ran on L4 with microbatch 4 and produced the 4.07-nat at 256K length. Moving the promoted runs to L40S with microbatch 16 preserved the 2K trajectory but changed the 256K nats to 10.77. Re-evaluation under PyTorch 2.12 and 2.13 left both checkpoints' evaluation scores unchanged; an L40S microbatch-4 retrain still reached 9.90 and deterministic 2K stream fixtures showed no gradient or loss discrepancy. These steps exclude evaluation-version and microbatch-only explanations in the tested runs, but do not isolate a unique hardware or kernel cause. All five headline Stage II models were trained together on L40S, so the main comparison remains environment-matched. Appendix~\ref{appendix:environment} records the full audit sequence.
 
 \begin{figure}[!ht]
 \centering
@@ -256,9 +256,9 @@ The finding emerged unintentionaly through an infrastructure transition rather t
 \end{figure}
 \FloatBarrier
 
-Figure~\ref{fig:stress} localizes the observed checkpoint change with a sampled block-level stress probe. The evidence establishes sensitivity to the training environment, but it does not uniquely identify CUDA reduction order as the causal mechanism: device class is not randomized or replicated across multiple seeds, and other hardware-dependent kernels may contribute. The defensible conclusion is that short-context convergence did not predict long-context behavior in these runs. Architecture-level extrapolation claims should therefore report seeds, kernels, device classes, and extended-context audits; stronger causal claims require replicated cross-device interventions. Additional diagnostic controls are in Appendix~\ref{appendix:environment}.
+Figure~\ref{fig:stress} localizes the observed checkpoint change with a sampled block-level stress probe. The evidence establishes sensitivity to the training environment, but it does not uniquely identify CUDA reduction order as the causal mechanism: device class is not randomized or replicated across multiple seeds, and other hardware-dependent kernels may contribute. The defensible conclusion is that short-context convergence did not predict long-context behavior in these runs. Architecture-level extrapolation claims should therefore report seeds, kernels, device classes, and extended-context audits; stronger causal claims require replicated cross-device interventions. Additional diagnostic controls are in Appendix~\ref{appendix:diagnostics}.
 
-\subsubsection{What this audit cannot answer.}
+\subsection{What this audit cannot answer}
 The finding opens several concrete questions that the present compute budget and page limit do not resolve:
 \begin{enumerate}
 \setlength{\itemsep}{0.15em}
