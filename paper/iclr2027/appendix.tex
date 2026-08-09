@@ -65,22 +65,127 @@ $I-\beta_tk_tk_t^\top$ has spectral norm at most one and $\lVert\beta_tv_tk_t^\t
 
 The Lean artifact checks the finite-sum, exponential-monotonicity, bounded-channel composition, and invariant-set induction steps. It takes the sub-Gaussian tail, high-probability margin, and one-step contraction as premises. It is therefore a machine-checked proof skeleton, not end-to-end formal verification. The learned conditions $b\geq0$ and $s>c>\sqrt2v$ require an empirical head-wise audit before they can be asserted for a trained checkpoint.
 
+\section{Regularization Modes}
+\label{appendix:reg_modes}
+
+The factorial grid varies a representation regularizer applied to the model's signature stream. For every non-baseline mode, the sweep uses the same weight $\alpha_{\rm sig}=0.01$ and optimizes
+\begin{equation}
+\mathcal L=(1-\alpha_{\rm sig})\mathcal L_{\rm LM}
++\alpha_{\rm sig}\mathcal L_{\rm reg}
++\lambda_{\rm dist}\mathcal L_{\rm dist}.
+\end{equation}
+The weak and strong modes follow the two SIGReg families introduced by Weak-SIGReg~\citep{weak_sigreg2026} and LeJEPA's strong SIGReg objective~\citep{lejepa2025}. The discrete and zipfian modes are local variants that combine those ideas with stronger geometric priors; Table~\ref{table:reg_modes} defines all five sweep settings.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{p{0.17\linewidth}p{0.76\linewidth}}
+\toprule
+\textbf{Mode} & \textbf{Meaning in the sweep} \\
+\midrule
+\texttt{baseline} & No signature-stream regularization; equivalently, $\alpha_{\rm sig}=0$. \\
+\texttt{weak} & Weak SIGReg: center a random sketch of the token representations and match its covariance to the identity, $\lVert\operatorname{Cov}(Sx)-I\rVert_F$. This encourages decorrelated, unit-variance features at low cost. \\
+\texttt{strong} & Strong SIGReg: project representations onto random one-dimensional directions and match their empirical characteristic functions to the standard Gaussian characteristic function over a fixed frequency grid. \\
+\texttt{discrete} & Local variant: normalize each representation to the sphere of radius $\sqrt d$, then apply weak covariance matching. This preserves whitening pressure while encouraging fixed-norm, discrete-code-like directions. \\
+\texttt{zipfian} & Local variant: normalize directions for an orthogonality penalty, then match sorted representation magnitudes to a Zipf profile $r^{-1}$. This biases the signature stream toward heavy-tailed feature use rather than uniform energy allocation. \\
+\bottomrule
+\end{tabular}
+\caption{Regularization modes in the 120-cell factorial sweep. Weak and strong are SIGReg-style covariance and distribution-matching objectives; discrete and zipfian are exploratory local variants.}
+\label{table:reg_modes}
+\end{table}
+\FloatBarrier
+
+\section{Polar Attention Implementation}
+\label{appendix:polar_implementation}
+
+\paragraph{Numerical oracle.}
+The materialized PyTorch path forms the masked real-key logits and virtual null logit in FP32, applies a single softmax, and computes the direction and magnitude channels from the resulting weights. It is used as a numerical oracle for forward and backward tests, not as the production long-context path, because materializing the $T\times T$ score matrix is memory-prohibitive at the evaluated lengths.
+
+\paragraph{Streaming sufficient statistics.}
+The Triton kernel follows the online-max strategy used by FlashAttention-style kernels. For one query row, it streams $K,V$ blocks and retains only four FP32 statistics: the running maximum $M$, real-key exponential sum $L$, squared exponential sum $Q_2$, and unnormalized value sum $S$. If a new block changes the row maximum, $\alpha=\exp(M_{\rm old}-M_{\rm new})$ rescales each statistic as shown in Table~\ref{table:polar_streaming_state}.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{State} & \textbf{Online update} & \textbf{Use after streaming} \\
+\midrule
+$M$ & $M\leftarrow\max(M,\max a)$ & Stable common logit origin \\
+$L$ & $L\leftarrow\alpha L+\sum_jp_j$ & Real-key softmax mass \\
+$Q_2$ & $Q_2\leftarrow\alpha^2Q_2+\sum_jp_j^2$ & $n_{\rm eff}=L^2/Q_2$ \\
+$S$ & $S\leftarrow\alpha S+\sum_jp_jv_j$ & Direction numerator \\
+\bottomrule
+\end{tabular}
+\caption{Streaming state for one Polar query row, where $a$ is the current logit block and $p_j=\exp(a_j-M_{\rm new})$. The squared accumulator must rescale by $\alpha^2$.}
+\label{table:polar_streaming_state}
+\end{table}
+
+After the real keys are consumed, the virtual null is folded in as one additional softmax entry. Let $p_0=\exp(t_i\nu_i-M)$ and $Z=L+p_0$. The kernel obtains
+\begin{equation}
+c_i=\operatorname{normalize}(S+p_0v_{\rm null}),\qquad
+n_{{\rm eff},i}=\frac{L^2}{Q_2},\qquad
+m_{{\rm eff},i}=n_{{\rm eff},i}\frac{L}{Z}.
+\end{equation}
+The common factor $1/Z$ cancels under radial normalization of the direction numerator. The production kernel evaluates the magnitude with $2\sigma(2x)-1=\tanh x$ and saves $(M,L,Q_2,S)$ for the backward pass. Listing~\ref{lst:polar_triton} gives the algorithmic core; pointer arithmetic, launch metadata, and backward code are omitted.
+
+\begin{lstlisting}[language=Python,caption={Schematic core of the block-streamed Triton forward pass.},label={lst:polar_triton}]
+@triton.jit
+def polar_fwd_core(q, K, V, n_i, temp, nullv, beta,
+                   BLOCK_N: tl.constexpr, DK: tl.constexpr):
+    M  = tl.full([BLOCK_M], -1e38, tl.float32)
+    L  = tl.zeros([BLOCK_M], tl.float32)
+    Q2 = tl.zeros([BLOCK_M], tl.float32)
+    S  = tl.zeros([BLOCK_M, DK], tl.float32)
+
+    for start in range(0, n_i, BLOCK_N):
+        k, v, valid = load_kv_block(K, V, start, n_i)
+        a = tl.where(valid, temp[:, None] * dot(q, k), -1e38)
+        M_new = tl.maximum(M, tl.max(a, axis=1))
+        alpha = tl.exp(M - M_new)
+        p = tl.where(valid, tl.exp(a - M_new[:, None]), 0.0)
+        L  = alpha * L + tl.sum(p, axis=1)
+        Q2 = alpha * alpha * Q2 + tl.sum(p * p, axis=1)
+        S  = alpha[:, None] * S + tl.dot(p, v)
+        M = M_new
+
+    # Fold in the learned virtual null as one extra entry.
+    M_new = tl.maximum(M, temp * nullv)
+    alpha = tl.exp(M - M_new)
+    L, Q2, S = alpha * L, alpha * alpha * Q2, alpha[:, None] * S
+    p_null = tl.exp(temp * nullv - M_new)
+    Z = L + p_null
+
+    direction = normalize(S + p_null[:, None] * v_null)
+    n_eff = L * L / tl.maximum(Q2, eps)
+    m_eff = n_eff * L / tl.maximum(Z, eps)
+    magnitude = 2 * tl.sigmoid(2 * beta * tl.log(1 + m_eff)) - 1
+    save_for_backward(M_new, L, Q2, S)
+\end{lstlisting}
+
+This removes the quadratic \emph{score-matrix storage}; full-context prefill still performs quadratic query-key arithmetic. The kernel is cross-checked against the materialized PyTorch oracle in FP32 accumulation before lower-precision outputs are accepted.
+
 \section{Evaluation Protocols}
 \label{appendix:protocol}
 
 Stage I contains 120 approximately 370--378M-parameter runs trained for 1,900 steps of 524,288 tokens at sequence length 2,048 on FineWeb-Edu. Stage II contains three matched attention models trained for 18,722 such steps (9.816B tokens). The five promoted checkpoints and ten open-weight controls are evaluated with checkpoint-exact forward paths.
 
+\paragraph{Raven optimizer control.}
+The Raven rows use Raven's native AdamW recipe because the attempted matched-schedule control did not produce a usable baseline. In the 1B-token Raven Native pilot with the Atma Muon schedule, validation loss decreased from 10.83 to 3.76 nats by step 625, then rose to 6.88 at step 1,125 and ended at 4.62; teacher-forced retrieval was 0\% at every tested length from 2K through 64K. The reported Raven Native and Atma-Raven-Titans checkpoints therefore use AdamW and remain a separate model-family/optimizer group. This is evidence about the tested Muon schedule, not a general claim that Raven cannot converge under any Muon tuning.
+
 Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The primary metric is teacher-forced accuracy over five target tokens. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
 
+\begin{landscape}
 \section{Complete Factorial Sweep}
 \label{appendix:full_ablation}
 
-The complete 120-cell table is retained in the submission source and artifact. The main paper reports only the recipe transitions needed to justify promotion.
+Table~\ref{table:ablation_appendix} retains all 120 factorial cells; the main paper reports only the recipe transitions needed to justify promotion.
 \begingroup
-\fontsize{5}{6}\selectfont
-\setlength{\tabcolsep}{1pt}
+\normalsize
+\setlength{\tabcolsep}{5pt}
 \input{../appendix_table.tex}
 \endgroup
+\end{landscape}
 
 \section{Retrieval Breakdown}
 \label{appendix:retrieval}
@@ -89,6 +194,7 @@ The complete 120-cell table is retained in the submission source and artifact. T
 \centering
 \includegraphics[width=\linewidth]{fig_niah_heatmap.pdf}
 \caption{Retrieval depth sweeps for the five promoted models. Each cell is teacher-forced token accuracy.}
+\label{fig:retrieval_depth_sweeps}
 \end{figure}
 
 \begin{table}[h]
@@ -112,21 +218,40 @@ Raven Native & Synthetic & 55.9 & 57.7 & 51.4 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1
 \bottomrule
 \end{tabular}}
 \caption{Zero-shot retrieval accuracy (\%) by haystack type and context length, averaged over needle depths.}
+\label{table:retrieval_breakdown}
 \end{table}
+
+Figure~\ref{fig:retrieval_depth_sweeps} exposes depth-wise variation, while Table~\ref{table:retrieval_breakdown} aggregates the same retrieval evaluation by haystack and context length.
 
 \section{Short-Context Quality and Systems}
 \label{appendix:quality}
 
-\begin{figure}[h]
+\begin{table}[!ht]
 \centering
-\includegraphics[width=\linewidth]{fig_downstream_candle.pdf}
-\caption{Eight short-context control tasks (22,939 examples per model).}
-\end{figure}
+\scriptsize
+\setlength{\tabcolsep}{2.4pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrrrr}
+\toprule
+\textbf{Group} & \textbf{Model} & \textbf{LAMBADA} & \textbf{HellaSwag} & \textbf{PIQA} & \textbf{WinoGrande} & \textbf{ARC-E} & \textbf{ARC-C} & \textbf{OBQA} & \textbf{BoolQ} & \textbf{Mean} \\
+\midrule
+Matched & NoPE & 30.16 & \textbf{37.88} & 66.27 & \textbf{51.93} & \textbf{50.53} & \textbf{32.44} & 31.60 & 60.37 & \textbf{45.15} \\
+Matched & RoPE & \textbf{30.25} & 37.19 & 66.76 & 50.67 & 49.12 & 29.43 & \textbf{32.40} & \textbf{60.95} & 44.60 \\
+Matched & Polar & 28.47 & 36.19 & \textbf{66.87} & 51.62 & 49.12 & 26.09 & 31.80 & 56.21 & 43.29 \\
+\midrule
+Raven/AdamW & Atma-Raven-Titans & 26.00 & \textbf{34.12} & \textbf{65.56} & \textbf{52.49} & 48.07 & \textbf{27.76} & \textbf{29.00} & 61.41 & \textbf{43.05} \\
+Raven/AdamW & Raven Native & \textbf{27.48} & 33.56 & 64.69 & 51.70 & \textbf{49.12} & 27.09 & 28.80 & \textbf{61.93} & \textbf{43.05} \\
+\bottomrule
+\end{tabular}}
+\caption{Task-level zero-shot accuracy (\%) on the eight short-context controls (22,939 examples per model). LAMBADA, WinoGrande, and BoolQ use standard accuracy; HellaSwag, PIQA, ARC-Easy, ARC-Challenge, and OpenBookQA use length-normalized accuracy. Mean is the unweighted average of the eight displayed metrics; bold is best within each comparison group.}
+\label{table:base_tasks_breakdown}
+\end{table}
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{fig_serving_scaling.pdf}
 \caption{Single-sequence serving on one L40S. Attention decode scales with KV-cache length; recurrent Raven uses fixed state.}
+\label{fig:serving_scaling}
 \end{figure}
 
 \begin{table}[h]
@@ -146,6 +271,109 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \bottomrule
 \end{tabular}}
 \caption{Short-context quality and serving trade-offs. Serving uses one sequence and one timing sample; it is descriptive rather than an uncertainty estimate.}
+\label{table:quality_systems_summary}
+\end{table}
+
+Table~\ref{table:base_tasks_breakdown} gives the exact per-task controls shown in main-text Figure~\ref{fig:short_context_controls}. Figure~\ref{fig:serving_scaling} shows the serving-length trend, and Table~\ref{table:quality_systems_summary} summarizes the quality--systems trade-off.
+
+\section{Systems Implementation and Optimization Breakdown}
+\label{appendix:systems}
+
+The inference stack uses separate kernels for full-context prefill, paged autoregressive decode, and recurrent-state updates. Table~\ref{table:kernel_breakdown} distinguishes what each optimization changes. In particular, streaming removes quadratic score storage but not quadratic prefill arithmetic, while the recurrent Raven path changes the state representation itself and therefore has different scaling.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{p{0.20\linewidth}p{0.34\linewidth}p{0.34\linewidth}}
+\toprule
+\textbf{Path} & \textbf{Optimization} & \textbf{Operational effect} \\
+\midrule
+Polar prefill & Block-streamed $K,V$ tiles with online $(M,L,Q_2,S)$ accumulation & Avoids materializing $T\times T$ scores; retains full-context $O(T^2)$ arithmetic. \\
+Polar decode & Paged KV-cache kernel grouping the four query heads that share each KV head & Reuses KV loads across the GQA group; decode remains $O(T)$ in cache length. \\
+Gated-delta step & Fused in-place decay, prediction, delta write, and readout & Avoids materializing per-step intermediate states and preserves $O(1)$ recurrent state size. \\
+Ragged prefill & Packed prompts with grouped compatible tile shapes & Reduces padding work on heterogeneous prompt batches. \\
+Compiler boundary & Recurrent scan and custom kernels exposed as opaque operations & Prevents compiler graph breaks around the stateful update while retaining explicit numerical tests. \\
+\bottomrule
+\end{tabular}
+\caption{Implementation-level optimization breakdown. Complexity statements describe the sequence-mixing path and exclude shared MLP and embedding costs.}
+\label{table:kernel_breakdown}
+\end{table}
+
+\begin{landscape}
+\paragraph{Single-sequence scaling.}
+Table~\ref{table:serving_detailed_matrix} gives the underlying single-sequence measurements. On one NVIDIA L40S, attention decode increases from approximately 2.3 ms/token at 2K to 16.3--16.5 ms/token at 128K because every step reads a longer KV cache. The recurrent models remain nearly flat because they update fixed-size state. Prefill is less monotonic at short lengths because launch overhead and kernel occupancy dominate before the matrix operations reach their efficient regime. These timings use batch size 1, 32 generated tokens, and one recorded timing sample per cell; they are descriptive measurements, not confidence intervals.
+\begingroup
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{llrrrrrrr}
+\caption{Detailed prefill and decode scaling from 2K to 128K tokens on one NVIDIA L40S GPU (batch size 1, 32 generated tokens).}\label{table:serving_detailed_matrix}\\
+\toprule
+\textbf{Model} & \textbf{Metric} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} \\
+\midrule
+\endfirsthead
+\caption[]{Detailed prefill and decode scaling (continued).}\\
+\toprule
+\textbf{Model} & \textbf{Metric} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{9}{r}{Continued on next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Polar & Prefill latency (s) & 0.131 & 0.031 & 0.051 & 0.101 & 0.248 & 0.601 & 1.619 \\
+& Prefill throughput (tok/s) & 15,640 & 133,884 & 160,145 & 161,551 & 132,091 & 109,050 & 80,959 \\
+& Decode latency (ms/tok) & 2.27 & 2.49 & 2.88 & 3.70 & 5.66 & 9.22 & 16.30 \\
+& Decode throughput (tok/s) & 441.2 & 402.3 & 346.6 & 270.1 & 176.8 & 108.5 & 61.3 \\
+\midrule
+NoPE & Prefill latency (s) & 0.157 & 0.028 & 0.049 & 0.097 & 0.230 & 0.576 & 1.473 \\
+& Prefill throughput (tok/s) & 13,070 & 146,568 & 166,504 & 168,510 & 142,319 & 113,810 & 89,013 \\
+& Decode latency (ms/tok) & 2.22 & 2.45 & 2.83 & 3.68 & 5.62 & 9.22 & 16.40 \\
+& Decode throughput (tok/s) & 450.1 & 408.8 & 353.0 & 271.7 & 177.8 & 108.4 & 61.0 \\
+\midrule
+RoPE & Prefill latency (s) & 0.160 & 0.028 & 0.049 & 0.096 & 0.232 & 0.566 & 1.472 \\
+& Prefill throughput (tok/s) & 12,761 & 147,089 & 168,287 & 170,936 & 141,249 & 115,786 & 89,015 \\
+& Decode latency (ms/tok) & 2.34 & 2.53 & 2.95 & 3.79 & 5.73 & 9.33 & 16.51 \\
+& Decode throughput (tok/s) & 427.4 & 395.3 & 338.7 & 263.7 & 174.5 & 107.2 & 60.6 \\
+\midrule
+Atma-Raven-Titans & Prefill latency (s) & 0.198 & 0.041 & 0.059 & 0.111 & 0.247 & 0.499 & 0.999 \\
+& Prefill throughput (tok/s) & 10,334 & 100,989 & 137,903 & 147,434 & 132,916 & 131,464 & 131,195 \\
+& Decode latency (ms/tok) & 2.24 & 2.25 & 2.24 & 2.24 & 2.26 & 2.25 & 2.27 \\
+& Decode throughput (tok/s) & 446.6 & 445.1 & 446.0 & 447.1 & 442.6 & 444.8 & 440.3 \\
+\midrule
+Raven Native & Prefill latency (s) & 0.214 & 0.054 & 0.070 & 0.139 & 0.320 & 0.672 & 1.357 \\
+& Prefill throughput (tok/s) & 9,558 & 75,738 & 116,378 & 117,605 & 102,354 & 97,527 & 96,559 \\
+& Decode latency (ms/tok) & 3.26 & 3.25 & 3.24 & 3.24 & 3.25 & 3.25 & 3.27 \\
+& Decode throughput (tok/s) & 306.4 & 307.5 & 308.2 & 308.3 & 307.6 & 307.5 & 306.1 \\
+\end{longtable}
+\endgroup
+\end{landscape}
+
+\paragraph{Production-framework stress comparison.}
+To test whether the custom kernels introduce an obvious systems bottleneck at a larger shape, we configured ATMA's engine with a 9.2B-parameter stress shape and compared it with vLLM 0.25.0 serving Qwen3.5-9B on the same L40S in BF16~\citep{kwon2023vllm}. The models are not weight- or architecture-matched, so Table~\ref{table:vllm_comparison_matrix} is a backend stress comparison rather than a model-quality or universal serving claim. ATMA trails on short homogeneous prefill, is similar on long heterogeneous prefill, and leads the recorded high-batch decode cells.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrr}
+\toprule
+\textbf{Phase} & \textbf{Batch/workload} & \textbf{ATMA engine} & \textbf{vLLM/Qwen3.5-9B} & \textbf{Ratio} \\
+\midrule
+Prefill & Homogeneous $B=8,T=512$ (4,096 tok) & 11,947 tok/s & 12,772 tok/s & 0.94$\times$ \\
+& Heterogeneous short-heavy (816 tok) & 5,752 tok/s & 8,002 tok/s & 0.72$\times$ \\
+& Heterogeneous mixed (4,384 tok) & 12,779 tok/s & 11,996 tok/s & 1.07$\times$ \\
+& Heterogeneous long-tail (8,192 tok) & 12,251 tok/s & 11,721 tok/s & 1.05$\times$ \\
+\midrule
+Decode, context 512 & Batch 128 & 2,939 tok/s & 2,247 tok/s & 1.31$\times$ \\
+& Batch 256 & 4,501 tok/s & 2,921 tok/s & 1.54$\times$ \\
+& Batch 512 & 5,919 tok/s & 2,558 tok/s & 2.31$\times$ \\
+& Heterogeneous $B=128$ (context 64--1536) & 2,950 tok/s & 2,403 tok/s & 1.23$\times$ \\
+\bottomrule
+\end{tabular}}
+\caption{Recorded systems-scale throughput for ATMA's 9.2B stress shape and vLLM 0.25.0 serving Qwen3.5-9B on one L40S (BF16, greedy sampling). Ratio is ATMA/vLLM.}
+\label{table:vllm_comparison_matrix}
 \end{table}
 
 \section{Stress and Environment Diagnostics}
@@ -155,13 +383,37 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \centering
 \includegraphics[width=\linewidth]{fig_stress_heatmap.pdf}
 \caption{Block-wise sampled secant gains over 64 nested FinePDFs documents and 64 perturbation directions per document. The probe localizes checkpoint-specific changes but does not estimate a global Lipschitz constant.}
+\label{fig:appendix_stress_heatmap}
 \end{figure}
 
-For each block $f_i$, the diagnostic samples
+Figure~\ref{fig:appendix_stress_heatmap} reports the sampled gains. For each block $f_i$, the diagnostic samples
 \begin{equation}
 G_i=\frac{\lVert f_i(x+\delta x)-f_i(x)\rVert_{\rm rms}}{\lVert\delta x\rVert_{\rm rms}},
 \qquad \lVert\delta x\rVert_{\rm rms}=0.02\lVert x\rVert_{\rm rms}.
 \end{equation}
 The maximum sampled gain is a lower bound on the local operator norm along sampled directions; it is not a tight bound on the block Lipschitz constant. In the observed NoPE collapse, changes first concentrate near blocks 6--7 and later propagate through the residual stream. Polar's sampled gains and activation moments remain comparatively flat through 256K.
 
-The environment diagnostic re-evaluates checkpoints under PyTorch 2.12 and 2.13, compares microbatch 4 and 16 on L40S, and uses deterministic short-context stream fixtures. These controls rule out evaluation-version and microbatch-only explanations in the tested runs. They do not isolate a unique low-level cause, because the L4/L40S intervention was not replicated over multiple training seeds and kernel configurations.
+\subsection{Environment-Sensitivity Diagnostic Journey}
+
+The sensitivity finding emerged sequentially. Stage I used L4 GPUs, followed by the first Stage II 10B NoPE control on L4. The anomaly became visible only after the remaining Stage II training moved to L40S: short-context convergence remained nearly unchanged while the 256K endpoint diverged. Table~\ref{table:environment_diagnostic_journey} records the subsequent elimination sequence.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.34\linewidth}>{\raggedright\arraybackslash}p{0.36\linewidth}}
+\toprule
+\textbf{Step} & \textbf{Observation or intervention} & \textbf{Diagnostic implication} \\
+\midrule
+L4 baseline & Stage I and the first Stage II 10B NoPE control used L4, microbatch 4; 256K NLL was 4.07. & Established the original extrapolation behavior, but not a replicated device-class estimate. \\
+L40S transition & The promoted NoPE run used L40S, microbatch 16; 2K validation ended at 2.8126 versus 2.8160 on L4, but 256K NLL rose to 10.77. & Revealed that nearly coincident short-context curves did not predict the long-context endpoint. \\
+Evaluation replay & L4 and L40S checkpoints were re-evaluated under PyTorch 2.12 and 2.13 with unchanged scores. & Excluded evaluation-version mismatch for these checkpoints. \\
+Microbatch control & NoPE was retrained on L40S with microbatch 4; 2K validation ended at 2.8128 and 256K NLL at 9.90. & Excluded microbatch size alone as the explanation in this comparison. \\
+Deterministic fixtures & Synthetic 2K stream fixtures across the tested versions and microbatches showed no gradient or loss divergence. & Found no short-context execution discrepancy; did not test the full stochastic training trajectory. \\
+\bottomrule
+\end{tabular}
+\caption{Diagnostic journey from the L4 control to the L40S follow-ups. Each implication is limited to the intervention actually performed.}
+\label{table:environment_diagnostic_journey}
+\end{table}
+
+All five headline Stage II models were trained in the same L40S software and hardware environment, so their primary comparison is internally matched. The cross-device observation nevertheless motivates a broader audit principle: long-context extrapolation claims should report device class, kernels, seeds, and extended-context diagnostics rather than infer robustness from short-context loss alone. The present evidence does not identify CUDA reduction order, floating-point accumulation, or any other single mechanism as causal, because the L4/L40S intervention was not randomized or replicated across multiple seeds and kernel configurations.
