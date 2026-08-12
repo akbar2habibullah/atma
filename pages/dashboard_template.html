@@ -3,78 +3,82 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ATMA · Ablation dashboard</title>
-  <meta name="description" content="Interactive ATMA dashboard for the complete 120-cell recipe-selection sweep, with current 9.816B-token experiment context.">
-  <link rel="stylesheet" href="assets/site.css">
-  <link rel="stylesheet" href="assets/dashboard.css">
+  <title>ATMA Ablation Archive | Kreasof AI</title>
+  <meta name="description" content="Interactive evidence archive for the complete 120-cell ATMA recipe-selection sweep and current matched experiment results.">
+  <link rel="stylesheet" href="assets/site.css?v=20260812-3">
+  <link rel="stylesheet" href="assets/dashboard.css?v=20260812-3">
 </head>
 <body>
-  <nav class="site-nav" aria-label="Primary navigation">
-    <div class="nav-inner">
-      <a class="brand" href="index.html">ATMA</a>
-      <div class="nav-links">
-        <a href="index.html#method">Method</a>
-        <a href="index.html#results">Current results</a>
-        <a href="https://github.com/kreasof-ai/atma/blob/main/paper/iclr2027/iclr2027_conference.pdf">Paper</a>
-        <a class="nav-cta" href="https://github.com/kreasof-ai/atma">Code</a>
-      </div>
-    </div>
-  </nav>
-
-  <header class="dashboard-hero wrap">
-    <div class="eyebrow">Stage I · complete 120-cell factorial</div>
-    <h1>Recipe selection, without hiding the grid.</h1>
-    <p class="hero-lead">Filter every 1B-token run, rank metrics at each evaluation length, inspect resolved configurations, and compare validation trajectories. The current 9.816B-token result is shown separately below.</p>
-    <div class="stat-grid">
-      <div class="stat"><strong>+47.8</strong><span>mean 64K points: Polar memory on − off</span></div>
-      <div class="stat"><strong>20 / 20</strong><span>matched Polar cells improved with memory</span></div>
-      <div class="stat"><strong>−25.5</strong><span>mean 64K points from a Polar+memory window</span></div>
-      <div class="stat"><strong>92.5%</strong><span>selected Stage I cell at 64K</span></div>
-    </div>
+  <header class="masthead">
+    <a class="brand" href="https://kreasof.my.id/" aria-label="Kreasof AI home"><img src="logo-white.webp" alt="">Kreasof AI</a>
+    <nav aria-label="Primary navigation">
+      <a href="index.html">Article</a>
+      <a href="#explorer">Ablations</a>
+      <a href="https://github.com/kreasof-ai/atma">Code</a>
+    </nav>
   </header>
 
-  <section class="section">
-    <div class="wrap">
-      <div class="callout"><strong>How to read this dashboard.</strong> Stage I uses 16 teacher-forced trials per cell to select a recipe across nuisance-factor settings. It is not a seed study and its selected-cell number is not interchangeable with the larger Stage II benchmark. “Needle accuracy” here is per-token teacher-forced accuracy, not autoregressive generation.</div>
-    </div>
-  </section>
+  <main class="dashboard-page">
+    <a class="back" href="index.html">← Back to the article</a>
 
-  <section class="section" style="padding-top:34px">
-    <div class="wrap dashboard-shell">
-      <aside class="filters" id="filters"><h2>Filter the grid</h2></aside>
-      <div class="dashboard-main">
-        <div class="toolbar">
-          <label class="control">Metric<select id="metric"></select></label>
-          <label class="control">Group view<select id="group"><option value="">Individual runs</option></select></label>
-          <label class="control">Rows<select id="topn"><option value="10">Top 10</option><option value="20" selected>Top 20</option><option value="all">All</option></select></label>
-          <button id="clearplot" type="button">Clear plot</button>
-          <span class="status" id="status"></span>
+    <header class="dashboard-header">
+      <p class="article-label">Experiment archive · Stage I</p>
+      <h1>ATMA Ablation Archive</h1>
+      <p class="dek">Filter every 1B-token recipe-selection run, rank metrics at each evaluation length, inspect resolved configurations, and compare validation trajectories.</p>
+      <p class="disclosure">This archive supports a research article currently under review. Stage I selects a recipe across nuisance-factor settings; it is not a seed study or a substitute for the larger matched comparison.</p>
+    </header>
+
+    <section class="archive-summary" aria-label="Experiment summary">
+      <div><strong>120 / 120</strong><span>factorial cells complete</span></div>
+      <div><strong>+47.8</strong><span>mean Polar memory effect at 64K</span></div>
+      <div><strong>20 / 20</strong><span>matched Polar cells improved</span></div>
+      <div><strong>92.5%</strong><span>selected Stage I cell at 64K</span></div>
+    </section>
+
+    <aside class="reading-note"><strong>How to read this archive.</strong> Stage I uses 16 teacher-forced trials per cell. “Needle accuracy” is per-token teacher-forced accuracy, not autoregressive generation. The selected-cell result is not interchangeable with the 24,000-trial Stage II benchmark.</aside>
+
+    <section class="explorer" id="explorer">
+      <header class="section-heading">
+        <p class="article-label">Interactive evidence</p>
+        <h2>Explore the factorial</h2>
+        <p>Choose a metric, filter the recipe axes, then select rows to compare validation trajectories.</p>
+      </header>
+
+      <div class="dashboard-shell">
+        <aside class="filters" id="filters"><h2>Filter the grid</h2></aside>
+        <div class="dashboard-main">
+          <div class="toolbar">
+            <label class="control">Metric<select id="metric"></select></label>
+            <label class="control">Group view<select id="group"><option value="">Individual runs</option></select></label>
+            <label class="control">Rows<select id="topn"><option value="10">Top 10</option><option value="20" selected>Top 20</option><option value="all">All</option></select></label>
+            <button id="clearplot" type="button">Clear plot</button>
+            <span class="status" id="status"></span>
+          </div>
+
+          <section class="dashboard-card" aria-labelledby="plot-title">
+            <h2 id="plot-title">Validation trajectory</h2>
+            <p>The top three ranked cells start selected. Use the Compare column below to add or remove trajectories.</p>
+            <div class="plot-legend" id="plot-legend"></div>
+            <canvas id="plot" width="1000" height="300"></canvas>
+          </section>
+
+          <section class="dashboard-card" aria-labelledby="board-title">
+            <h2 id="board-title">Ranked cells</h2>
+            <p>Click a row to inspect its metrics and fully resolved configuration.</p>
+            <div class="board-scroll"><table class="result-table" id="board"><thead></thead><tbody></tbody></table></div>
+          </section>
+
+          <section class="dashboard-card detail" id="detail" aria-live="polite"></section>
         </div>
-
-        <section class="dashboard-card" aria-labelledby="plot-title">
-          <h2 id="plot-title">Validation trajectory</h2>
-          <p>Select run checkboxes in the table to compare loss against wall time.</p>
-          <div class="plot-legend" id="plot-legend"></div>
-          <canvas id="plot" width="1000" height="300"></canvas>
-        </section>
-
-        <section class="dashboard-card" aria-labelledby="board-title">
-          <h2 id="board-title">Ranked cells</h2>
-          <p>Click a row for its metrics and fully resolved configuration.</p>
-          <div class="board-scroll"><table class="result-table" id="board"><thead></thead><tbody></tbody></table></div>
-        </section>
-
-        <section class="dashboard-card detail" id="detail" aria-live="polite"></section>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="section" id="stage-two">
-    <div class="wrap">
-      <div class="section-head">
-        <div><div class="eyebrow">Stage II · current paper result</div><h2>The promoted recipe at 9.816B tokens.</h2></div>
-        <p>The three matched attention variants use memory, no window, no distractor alignment, length-2K training, and the same L40S environment. Raven models are separately optimized comparison points.</p>
-      </div>
+    <section class="stage-two" id="stage-two">
+      <header class="section-heading">
+        <p class="article-label">Stage II · matched comparison</p>
+        <h2>The promoted recipe at 9.816B tokens</h2>
+        <p>The matched attention variants use memory, no local window, no distractor alignment, length-2K training, and the same L40S environment. Raven models are separately optimized comparison points.</p>
+      </header>
       <div class="table-wrap">
         <table class="result-table">
           <thead><tr><th>Group</th><th>Model</th><th>Token @2K</th><th>Token @256K</th><th>Exact @256K</th><th>BABILong @256K</th><th>BPB ratio</th><th>Base mean</th></tr></thead>
@@ -88,18 +92,22 @@
           </tbody>
         </table>
       </div>
-      <p class="fine-print">Retrieval averages tasks, haystack suites, and needle depths. Exact requires all five target tokens under teacher forcing. BPB averages three fixed-target datasets. Base mean averages eight 2K zero-shot tasks. Use the paper for full denominators and uncertainty boundaries.</p>
-    </div>
-  </section>
+      <p class="fine-print">Retrieval averages tasks, haystack suites, and needle depths. Exact requires all five target tokens under teacher forcing. BPB averages three fixed-target datasets. Base mean averages eight 2K zero-shot tasks.</p>
+    </section>
 
-  <div class="wrap notes">
-    <details>
+    <details class="notes">
       <summary>Metric definitions and composite scores</summary>
-      <p>Length-weighted metrics use weight <span class="mono">L / 2048</span>, emphasizing extrapolation endpoints. The performance index averages z-scores for clean perplexity, junk perplexity, and needle accuracy after flipping perplexity so higher is better. The efficiency index adds half a population-standardized MFU score. These composite indices are exploratory dashboard aids and are not paper headline metrics.</p>
+      <p>Length-weighted metrics use weight <span class="mono">L / 2048</span>, emphasizing extrapolation endpoints. Composite indices are exploratory archive aids and are not article headline metrics.</p>
     </details>
-  </div>
+
+    <footer class="dashboard-footer">
+      <a class="brand" href="https://kreasof.my.id/"><img src="logo.webp" alt="">Kreasof AI</a>
+      <p>Independent machine learning research from Jakarta, Indonesia. Open by default.</p>
+      <p>© 2026 Kreasof AI · Experiment archive · pre-peer-review</p>
+    </footer>
+  </main>
 
   <script id="data" type="application/json">/*DATA*/</script>
-  <script src="assets/dashboard.js"></script>
+  <script src="assets/dashboard.js?v=20260812-3"></script>
 </body>
 </html>

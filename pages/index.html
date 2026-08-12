@@ -3,141 +3,236 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ATMA · Long-context language modeling</title>
-  <meta name="description" content="ATMA studies long-context retrieval, likelihood, quality, and serving with Polar Attention and gated-delta memory. Current ICLR 2027 results cover 9.816B-token models evaluated through 256K.">
-  <meta property="og:title" content="ATMA · Long-context language modeling">
-  <meta property="og:description" content="A scoped long-context study of Polar Attention, gated-delta memory, matched attention variants, and recurrent baselines through 256K.">
-  <link rel="stylesheet" href="assets/site.css">
+  <title>ATMA: Long-Context Language Modeling | Kreasof AI</title>
+  <meta name="description" content="A Kreasof AI research article on Polar Attention, gated-delta compression memory, and long-context evaluation through 256K.">
+  <meta property="og:title" content="ATMA: Long-Context Language Modeling via Polar Attention and Gated-Delta Compression Memory">
+  <meta property="og:description" content="Research article and open evidence for ATMA. This work is under review and has not yet been peer reviewed.">
+  <link rel="stylesheet" href="assets/site.css?v=20260812-3">
 </head>
 <body>
-  <nav class="site-nav" aria-label="Primary navigation">
-    <div class="nav-inner">
-      <a class="brand" href="index.html">ATMA</a>
-      <div class="nav-links">
-        <a href="#method">Method</a>
-        <a href="#results">Results</a>
-        <a href="#limits">Limits</a>
-        <a href="https://github.com/kreasof-ai/atma" rel="noopener">Code</a>
-        <a class="nav-cta" href="dashboard.html">Ablation dashboard</a>
-      </div>
-    </div>
-  </nav>
+  <header class="masthead">
+    <a class="brand" href="https://kreasof.my.id/" aria-label="Kreasof AI home"><img src="logo-white.webp" alt="">Kreasof AI</a>
+    <nav aria-label="Primary navigation">
+      <a href="https://kreasof.my.id/research">Research</a>
+      <a href="dashboard.html">Evidence</a>
+      <a href="https://github.com/kreasof-ai/atma">Code</a>
+    </nav>
+  </header>
 
-  <main>
-    <header class="hero wrap">
-      <div class="eyebrow">ICLR 2027 draft · updated August 2026</div>
-      <h1>Long-context modeling is a frontier, not a single score.</h1>
-      <p class="hero-lead">ATMA combines Polar Attention with gated-delta compression memory and evaluates the resulting trade-offs across retrieval, document likelihood, short-context quality, reasoning, and serving cost.</p>
-      <div class="actions">
-        <a class="button primary" href="https://github.com/kreasof-ai/atma/blob/main/paper/iclr2027/iclr2027_conference.pdf">Read the current paper</a>
-        <a class="button" href="dashboard.html">Explore 120 ablations</a>
-        <a class="button" href="https://github.com/kreasof-ai/atma/blob/main/benchmarks/README.md">Evaluation protocol</a>
-      </div>
-      <div class="hero-stats" aria-label="Experiment summary">
-        <div class="stat"><strong>378M</strong><span>matched attention models</span></div>
-        <div class="stat"><strong>9.816B</strong><span>pretraining tokens</span></div>
-        <div class="stat"><strong>2K → 256K</strong><span>train-to-evaluation length</span></div>
-        <div class="stat"><strong>24,000</strong><span>paired retrieval trials</span></div>
-      </div>
-    </header>
+  <div class="page-shell">
+    <aside class="toc" aria-label="Table of contents">
+      <p>Table of contents</p>
+      <a href="#summary">Key results</a>
+      <a href="#introduction">1. Introduction</a>
+      <a class="sub" href="#problem">The problem</a>
+      <a class="sub" href="#approach">The approach</a>
+      <a href="#architecture">2. Architecture</a>
+      <a class="sub" href="#polar">Polar Attention</a>
+      <a class="sub" href="#memory">Compression memory</a>
+      <a href="#experiments">3. Experimental design</a>
+      <a href="#results">4. Results</a>
+      <a class="sub" href="#selection">Recipe selection</a>
+      <a class="sub" href="#matched">Matched comparison</a>
+      <a class="sub" href="#boundary">Where retrieval fails</a>
+      <a href="#tradeoffs">5. The frontier</a>
+      <a href="#audit">6. Checkpoint audit</a>
+      <a href="#limitations">7. Limitations</a>
+      <a href="#conclusion">Conclusion</a>
+    </aside>
 
-    <section class="section" id="method">
-      <div class="wrap">
-        <div class="section-head">
-          <div><div class="eyebrow">Method</div><h2>Bound the read, compress the history.</h2></div>
-          <p>Four global layers sit inside a 16-layer hybrid. Polar Attention separates what matched from how much matched; a gated-delta recurrent state supplies a fixed-size compression channel alongside the attention read.</p>
-        </div>
-        <div class="grid-3">
-          <article class="card"><span class="kicker">Direction</span><h3>Normalized content</h3><p>A count-blind unit-vector channel aggregates signed value evidence without letting output norm grow with the number of keys.</p></article>
-          <article class="card"><span class="kicker">Magnitude</span><h3>Bounded participation</h3><p>A participation-ratio statistic passes through an extreme-value-corrected null sink and bounded magnitude map.</p></article>
-          <article class="card"><span class="kicker">Memory</span><h3>Gated-delta state</h3><p>A per-head recurrent fast-weight store compresses prior tokens into fixed-size state and is added as a third residual channel.</p></article>
-        </div>
-      </div>
-    </section>
+    <main class="article">
+      <a class="back" href="https://kreasof.my.id/research">← Back to research</a>
 
-    <section class="section" id="selection">
-      <div class="wrap">
-        <div class="section-head">
-          <div><div class="eyebrow">Stage I · recipe selection</div><h2>120 cells before the headline run.</h2></div>
-          <p>The 1B-token factorial crosses attention core, five regularizers, distractor alignment, memory, and a training-time local window. It selects a recipe; it is not a set of seed replicates.</p>
+      <header class="article-header">
+        <p class="article-label">Research article · under review</p>
+        <h1>ATMA: Long-Context Language Modeling via Polar Attention and Gated-Delta Compression Memory</h1>
+        <p class="dek">What happens when we judge a long-context model by retrieval, document likelihood, short-context quality, reasoning, and serving—rather than one flattering score?</p>
+        <div class="publication-meta">
+          <div class="publication-author">
+            <img src="logo.webp" width="34" height="34" alt="">
+            <span><small>Research by</small><strong>Kreasof AI</strong></span>
+          </div>
+          <div class="publication-details"><span>12 August 2026</span><span>Preprint</span></div>
         </div>
-        <div class="stat-grid">
-          <div class="stat"><strong>+47.8</strong><span>mean 64K points from memory on Polar</span></div>
-          <div class="stat"><strong>20 / 20</strong><span>matched Polar cells improved by memory</span></div>
-          <div class="stat"><strong>−25.5</strong><span>mean 64K points from adding a window</span></div>
-          <div class="stat"><strong>92.5%</strong><span>selected cell at 64K, teacher-forced token accuracy</span></div>
+        <aside class="disclosure"><i aria-hidden="true"></i><p><strong>Under review.</strong> This article has not yet been peer reviewed; results and wording may change during review.</p></aside>
+        <div class="article-actions">
+          <a href="dashboard.html">Explore all ablations ↗</a>
+          <a href="https://github.com/kreasof-ai/atma">Code ↗</a>
+          <a href="https://arxiv.org/abs/2606.25156">Technical manuscript ↓</a>
         </div>
-        <p class="fine-print">The Stage I selected-cell statistic uses the original 16-trial sweep. Stage II below uses the larger paired benchmark protocol and should be used for current headline comparisons.</p>
-      </div>
-    </section>
+      </header>
 
-    <section class="section" id="results">
-      <div class="wrap">
-        <div class="section-head">
-          <div><div class="eyebrow">Stage II · matched comparison</div><h2>Polar retains signal; the frontier stays multi-objective.</h2></div>
-          <p>NoPE, RoPE, and Polar share scale, token budget, optimizer split, training length, and L40S environment. The Raven rows use the same data and budget but a different model family and AdamW.</p>
-        </div>
+      <section class="tldr" id="summary">
+        <h2>TL;DR</h2>
+        <ul>
+          <li>We introduce <strong>ATMA</strong>, a 378M-parameter hybrid language model that combines Polar Attention with gated-delta recurrent memory.</li>
+          <li>Across a complete 120-cell recipe sweep, memory improves Polar’s teacher-forced 64K retrieval score in all 20 matched cells, by <strong>47.8 percentage points on average</strong>.</li>
+          <li>After matched 9.816B-token pretraining at 2K, Polar retains <strong>34.4% target-token accuracy at 256K</strong>, compared with 0.6% for NoPE and 0.0% for RoPE.</li>
+          <li>The result has a hard boundary: Polar reaches 18.0% exact retrieval on synthetic 256K contexts but <strong>0.0% on FinePDFs</strong>. This is retained signal, not solved real-text retrieval.</li>
+          <li>There is no universal winner. Raven leads adapted BABILong and fixed-state decode; Polar leads retrieval and likelihood among the matched attention variants.</li>
+        </ul>
+      </section>
 
-        <div class="chart" aria-label="Retrieval token accuracy chart">
-          <div class="legend"><span><i style="background:#65e6b7"></i>Polar</span><span><i style="background:#80adff"></i>NoPE</span><span><i style="background:#ee8ea2"></i>RoPE</span></div>
-          <svg viewBox="0 0 900 330" role="img" aria-labelledby="chart-title chart-desc">
-            <title id="chart-title">Teacher-forced target-token retrieval accuracy from 2K to 256K</title>
-            <desc id="chart-desc">Polar declines from 98.9 percent at 2K to 34.4 percent at 256K. NoPE declines to 0.6 percent and RoPE to zero.</desc>
-            <g stroke="#254039" stroke-width="1"><path d="M72 35H870M72 101H870M72 167H870M72 233H870M72 299H870"/><path d="M72 35V299"/></g>
-            <g fill="#718c83" font-family="DM Sans, sans-serif" font-size="12"><text x="30" y="39">100</text><text x="38" y="105">75</text><text x="38" y="171">50</text><text x="38" y="237">25</text><text x="46" y="303">0</text><text x="66" y="322">2K</text><text x="176" y="322">4K</text><text x="287" y="322">8K</text><text x="391" y="322">16K</text><text x="503" y="322">32K</text><text x="614" y="322">64K</text><text x="716" y="322">128K</text><text x="832" y="322">256K</text></g>
-            <polyline points="72,38 183,55 294,66 405,106 516,120 627,156 738,189 849,208" fill="none" stroke="#65e6b7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="72,37 183,99 294,168 405,174 516,206 627,264 738,286 849,297" fill="none" stroke="#80adff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="72,66 183,234 294,255 405,298 516,290 627,299 738,299 849,299" fill="none" stroke="#ee8ea2" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-            <g fill="#65e6b7"><circle cx="72" cy="38" r="4"/><circle cx="183" cy="55" r="4"/><circle cx="294" cy="66" r="4"/><circle cx="405" cy="106" r="4"/><circle cx="516" cy="120" r="4"/><circle cx="627" cy="156" r="4"/><circle cx="738" cy="189" r="4"/><circle cx="849" cy="208" r="4"/></g>
+      <figure class="lead-figure wide-figure">
+        <a href="assets/figures/atma-architecture.svg" title="Open the full-resolution architecture diagram"><img src="assets/figures/atma-architecture.svg" width="1200" height="720" alt="Diagram of the ATMA 3-to-1 layer stack and a Polar Attention block with content, count, and recurrent memory branches." decoding="async"></a>
+        <figcaption><strong>Figure 1.</strong> ATMA interleaves 12 gated-convolution layers with four global Polar Attention layers. Each Polar block combines a normalized content direction, a bounded participation-count channel, and gated-delta compression memory.</figcaption>
+      </figure>
+
+      <section id="introduction">
+        <h2>1. Introduction</h2>
+        <p>Long-context language modeling is often compressed into a single retrieval curve. That curve matters, but it is not the whole problem. A useful model must preserve relevant information as context grows without giving up document likelihood, ordinary short-context quality, reasoning performance, or practical inference cost.</p>
+        <p>These objectives compete. Full attention preserves direct access to tokens, but its compute and cache grow with sequence length and its probability mass can disperse over more keys. Recurrent models keep fixed-size state, but that state must compress the past and can lose detail. We therefore treat long-context modeling as a <em>Pareto problem</em>: an architecture is an operating point on a multi-objective frontier, not a winner by one number.</p>
+
+        <h3 id="problem">The problem with more keys</h3>
+        <p>Standard softmax attention normalizes over every available key. As the sequence grows, irrelevant scores create a larger noise field. Positional schemes such as RoPE change how order enters the score, but they do not by themselves separate the direction of the retrieved value from the amount of evidence that participated in the match.</p>
+        <p>That distinction motivates Polar Attention. We want one channel to represent <em>what matched</em>, without its norm growing simply because more keys were present, and another bounded channel to express <em>how much matched</em>.</p>
+
+        <h3 id="approach">Our approach</h3>
+        <p>ATMA is a 16-layer decoder with 12 gated convolutional layers and four global attention layers. The global layers use Polar Attention and also maintain gated-delta recurrent memory. The attention path can still read the full context; the recurrent path supplies a compressed history whose state size does not grow with the sequence.</p>
+        <p>We test this in two stages. First, a complete factorial sweep chooses the recipe across attention type, regularization, distractor alignment, memory, and local training windows. Second, matched NoPE, RoPE, and Polar models are trained for 9.816B tokens and evaluated from their 2K training length through 256K.</p>
+      </section>
+
+      <section id="architecture">
+        <h2>2. Architecture</h2>
+        <p>The matched attention models contain 378.16–378.22M parameters and share hidden size, heads, tokenizer, data order, optimizer, schedule, and token budget. Only the attention core changes. This keeps the main comparison narrow enough to interpret.</p>
+
+        <h3 id="polar">Polar Attention</h3>
+        <p>Polar Attention decomposes its output into a normalized direction and a bounded magnitude. The direction aggregates values and removes radial scale. The magnitude is derived from an effective participation ratio, then passed through an extreme-value-aware null sink and a bounded map. In plain language: the model records what the matching values point toward separately from how convincing the match appears to be.</p>
+        <div class="equation" aria-label="Polar read equals a projected normalized content direction plus a projected bounded participation magnitude">
+          <span class="equation-label">Polar read</span>
+          <div class="equation-formula"><i>o</i><sub>i</sub><sup>polar</sup> = W<sub>o</sub>c<sub>i</sub> <em>+</em> W<sub>μ</sub>μ<sub>i</sub></div>
+          <div class="equation-definitions">
+            <div><b>c<sub>i</sub></b><span>Normalized value direction<small>what matched</small></span></div>
+            <div><b>μ<sub>i</sub></b><span>Bounded participation magnitude<small>how much matched</small></span></div>
+          </div>
+        </div>
+        <p>This is a channel decomposition, not an independence claim. Changing the match set can still rotate the direction. The design instead prevents the raw number of participating keys from directly controlling output norm.</p>
+        <figure class="wide-figure">
+          <a href="assets/figures/null-floor-calibration.svg" title="Open the full-resolution null-floor diagram"><img src="assets/figures/null-floor-calibration.svg" width="1080" height="620" alt="Extreme-value calibration diagram showing the null floor rising with context length while a fixed threshold is overtaken by the maximum noise score." loading="lazy" decoding="async"></a>
+          <figcaption><strong>Figure 2.</strong> The null floor follows the extreme-value scale of irrelevant scores. A fixed threshold is eventually overtaken as context grows; the adaptive sink absorbs diffuse noise while leaving real-key weights available to the direction and magnitude channels.</figcaption>
+        </figure>
+
+        <h3 id="memory">Gated-delta compression memory</h3>
+        <p>Each global layer also updates a recurrent key-value state. A learned retention gate controls what remains; a delta update writes new information; a zero-initialized projection adds the retrieved memory back to the attention output. Unit-normalized keys keep the tested recurrence stable, while the gate bounds how much the state can change at each step.</p>
+        <aside class="note"><strong>Why use both?</strong> Attention and recurrent memory are complementary. Attention keeps full-resolution access but pays length-dependent cost. Memory keeps fixed-size state but compresses. ATMA does not claim that one makes the other unnecessary.</aside>
+      </section>
+
+      <section id="experiments">
+        <h2>3. Experimental design</h2>
+        <p>The experiment is deliberately divided into recipe selection and matched comparison. Mixing these two stages would overstate what the ablation proves.</p>
+        <div class="stage-grid">
+          <div><span>Stage I</span><h3>120-cell factorial</h3><p>All 3 × 5 × 2 × 2 × 2 combinations receive roughly 1B FineWeb-Edu tokens at length 2K. These are distinct recipe cells, not seed replicates.</p></div>
+          <div><span>Stage II</span><h3>Matched pretraining</h3><p>NoPE, RoPE, and Polar receive 9.816B tokens at length 2K in the same L40S environment and are evaluated through 256K.</p></div>
+        </div>
+        <p>The evaluation contains 24,000 paired retrieval trials over synthetic and FinePDFs haystacks, eight context lengths, three needle depths, and 50 trials per cell. We additionally measure BABILong after adaptation, fixed-target bits per byte, eight short-context tasks, and single-sequence serving on one L40S.</p>
+        <aside class="note warning"><strong>Metric scope.</strong> “Target-token accuracy” teacher-forces a five-token target and measures its tokens. “Exact” requires all five tokens to be correct. Neither is autoregressive generation success.</aside>
+      </section>
+
+      <section id="results">
+        <h2>4. Results</h2>
+
+        <h3 id="selection">Memory consistently helps Polar in the factorial</h3>
+        <p>At 64K, adding memory improves Polar in all 20 matched combinations of regularizer, distractor setting, and window setting. The mean gain is 47.8 percentage points. The corresponding effect on NoPE is small and heterogeneous, while RoPE remains at zero.</p>
+        <div class="key-results" aria-label="Stage I key results">
+          <div><strong>+47.8</strong><span>mean 64K point gain from memory on Polar</span></div>
+          <div><strong>20 / 20</strong><span>matched Polar cells improved with memory</span></div>
+          <div><strong>−25.5</strong><span>mean points from adding a local window</span></div>
+          <div><strong>92.5%</strong><span>selected Stage I cell at 64K</span></div>
+        </div>
+        <p>A local training window reduces Polar with memory by 25.5 points on average. Distractor alignment also has a smaller, nonuniform negative effect. We therefore promote full-context Polar with memory, without a local window or distractor alignment.</p>
+        <p class="figure-link"><a href="dashboard.html">Browse every Stage I cell and validation trajectory in the interactive dashboard →</a></p>
+
+        <h3 id="matched">Polar retains more target signal at 256K</h3>
+        <p>After matched training, NoPE and Polar both approach perfect teacher-forced target-token accuracy at 2K. Their extrapolation is different. At 256K, Polar retains 34.4% averaged across tasks, haystack suites, and depths; NoPE retains 0.6% and RoPE 0.0%.</p>
+        <figure>
+          <div class="legend"><span><i class="polar"></i>Polar</span><span><i class="nope"></i>NoPE</span><span><i class="rope"></i>RoPE</span></div>
+          <svg class="line-chart" viewBox="0 0 760 360" role="img" aria-labelledby="chart-title chart-desc">
+            <title id="chart-title">Teacher-forced target-token accuracy from 2K through 256K</title>
+            <desc id="chart-desc">Polar declines to 34.4 percent at 256K, NoPE to 0.6 percent, and RoPE to zero.</desc>
+            <g stroke="#d8dde5"><path d="M58 24H730M58 96H730M58 168H730M58 240H730M58 312H730"/><path d="M58 24V312"/></g>
+            <g fill="#737985" font-family="ui-monospace,monospace" font-size="11"><text x="15" y="28">100</text><text x="22" y="100">75</text><text x="22" y="172">50</text><text x="22" y="244">25</text><text x="30" y="316">0</text><text x="51" y="340">2K</text><text x="139" y="340">4K</text><text x="230" y="340">8K</text><text x="315" y="340">16K</text><text x="410" y="340">32K</text><text x="505" y="340">64K</text><text x="592" y="340">128K</text><text x="692" y="340">256K</text></g>
+            <polyline points="58,27 151,45 244,58 337,101 430,117 523,157 616,193 709,213" fill="none" stroke="#5275ff" stroke-width="4"/>
+            <polyline points="58,26 151,94 244,169 337,176 430,211 523,274 616,298 709,310" fill="none" stroke="#111318" stroke-width="2.5"/>
+            <polyline points="58,58 151,241 244,264 337,311 430,302 523,312 616,312 709,312" fill="none" stroke="#c2536a" stroke-width="2.5"/>
           </svg>
-          <p class="chart-note">Teacher-forced target-token accuracy averaged across passkey/NIAH tasks, synthetic/FinePDFs suites, and three needle depths. It is not free-generation success.</p>
-        </div>
+          <figcaption><strong>Figure 3.</strong> Teacher-forced target-token retrieval accuracy. All models train at 2K and are evaluated zero-shot through 256K. Values average tasks, suites, and needle depths.</figcaption>
+        </figure>
 
-        <div class="table-wrap" style="margin-top:18px">
-          <table class="result-table">
-            <thead><tr><th>Group</th><th>Model</th><th>Token @2K</th><th>Token @256K</th><th>Exact @256K</th><th>BABILong @256K</th><th>BPB @256K</th></tr></thead>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Comparison</th><th>Model</th><th>Token @2K</th><th>Token @256K</th><th>Exact @256K</th><th>BABILong @256K</th><th>BPB @256K</th></tr></thead>
             <tbody>
               <tr><td>Matched</td><td>NoPE</td><td>99.2%</td><td>0.6%</td><td>0.0%</td><td>0%</td><td>8.097</td></tr>
-              <tr><td>Matched</td><td class="good">Polar</td><td>98.9%</td><td class="good">34.4%</td><td class="good">9.0%</td><td class="good">28%</td><td class="good">1.825</td></tr>
+              <tr><td>Matched</td><td><strong>Polar</strong></td><td>98.9%</td><td><strong>34.4%</strong></td><td><strong>9.0%</strong></td><td>28%</td><td><strong>1.825</strong></td></tr>
               <tr><td>Matched</td><td>RoPE</td><td>88.2%</td><td>0.0%</td><td>0.0%</td><td>14%</td><td>2.512</td></tr>
-              <tr class="group-row"><td colspan="7">Separately optimized recurrent family</td></tr>
-              <tr><td>Raven / AdamW</td><td>Atma-Raven-Titans</td><td>43.1%</td><td>10.0%</td><td>0.0%</td><td>38%</td><td class="good">1.551</td></tr>
-              <tr><td>Raven / AdamW</td><td>Raven Native</td><td>41.1%</td><td class="good">20.3%</td><td>0.0%</td><td class="good">46%</td><td>1.597</td></tr>
+              <tr class="separator"><td colspan="7">Separately optimized recurrent family</td></tr>
+              <tr><td>Raven / AdamW</td><td>Atma-Raven-Titans</td><td>43.1%</td><td>10.0%</td><td>0.0%</td><td>38%</td><td>1.551</td></tr>
+              <tr><td>Raven / AdamW</td><td>Raven Native</td><td>41.1%</td><td>20.3%</td><td>0.0%</td><td><strong>46%</strong></td><td>1.597</td></tr>
             </tbody>
           </table>
         </div>
-      </div>
-    </section>
 
-    <section class="section" id="limits">
-      <div class="wrap">
-        <div class="section-head">
-          <div><div class="eyebrow">The important boundary</div><h2>Synthetic retrieval is not real-text retrieval.</h2></div>
-          <p>Aggregate scores conceal a sharp haystack split. At 256K, Polar retains substantial synthetic signal but nearly none on FinePDFs, and exact FinePDFs retrieval is zero.</p>
-        </div>
-        <div class="boundary">
-          <article class="card synthetic"><span class="kicker">Synthetic · 256K</span><strong class="big">68.4%</strong><p>teacher-forced token accuracy · 18.0% exact five-token accuracy</p></article>
-          <article class="card real"><span class="kicker">FinePDFs · 256K</span><strong class="big">0.3%</strong><p>teacher-forced token accuracy · 0.0% exact five-token accuracy</p></article>
-        </div>
-        <div class="callout" style="margin-top:18px"><strong>Other costs matter.</strong> Polar averages 43.29% on eight 2K zero-shot controls versus 45.15% for NoPE. At 128K, its attention decode is 16.3 ms/token on one L40S, while Atma-Raven-Titans records 2.27 ms/token with fixed recurrent state. The paper therefore reports a Pareto frontier, not general dominance.</div>
-      </div>
-    </section>
+        <h3 id="boundary">Where retrieval fails</h3>
+        <p>The aggregate masks the most important boundary in the result. At 256K, Polar retains 68.4% target-token accuracy on synthetic haystacks, but only 0.3% on FinePDFs. Exact five-token accuracy is 18.0% on synthetic contexts and zero on FinePDFs.</p>
+        <figure class="split-figure">
+          <div><span>Synthetic · 256K</span><strong>68.4%</strong><p>target-token accuracy</p><small>18.0% exact</small></div>
+          <div><span>FinePDFs · 256K</span><strong>0.3%</strong><p>target-token accuracy</p><small>0.0% exact</small></div>
+          <figcaption><strong>Figure 4.</strong> The synthetic-to-natural retrieval gap is large enough that the aggregate should never be read as successful real-text retrieval.</figcaption>
+        </figure>
+      </section>
 
-    <section class="section" id="artifacts">
-      <div class="wrap">
-        <div class="section-head">
-          <div><div class="eyebrow">Reproducibility</div><h2>Follow the data, not the screenshot.</h2></div>
-          <p>Tables and figures are derived from committed experiment payloads. The manuscript records protocol boundaries, denominators, limitations, and the post-hoc checkpoint variability audit.</p>
-        </div>
-        <div class="grid-3">
-          <article class="card"><span class="kicker">Stage I</span><h3><a href="dashboard.html">Interactive dashboard</a></h3><p>Filter all 120 factorial cells, inspect configurations, and compare validation trajectories.</p></article>
-          <article class="card"><span class="kicker">Stage II</span><h3><a href="https://github.com/kreasof-ai/atma/blob/main/benchmarks/logs/atma_10b/benchmark_matrix.json">Benchmark matrix</a></h3><p>Archived retrieval, short-context, long-document, and serving rows used by the paper.</p></article>
-          <article class="card"><span class="kicker">Implementation</span><h3><a href="https://github.com/kreasof-ai/atma/blob/main/docs/README.md">Documentation hub</a></h3><p>Architecture, training, evaluation, inference, kernels, runbooks, and research notes.</p></article>
-        </div>
-      </div>
-    </section>
-  </main>
+      <section id="tradeoffs">
+        <h2>5. The multi-objective frontier</h2>
+        <p>Polar improves retrieval and long-document likelihood among the matched attention models, but it pays elsewhere. Its mean accuracy over eight 2K controls is 43.29%, compared with 45.15% for NoPE. At 128K, Polar attention decodes at 16.3 ms/token on one L40S; Atma-Raven-Titans records 2.27 ms/token with fixed recurrent state.</p>
+        <p>Raven Native reaches 46% BABILong at 256K and keeps likelihood nearly flat. Because Raven changes both model family and optimizer, it is not an attention ablation. It represents another practical point on the frontier: stronger adapted reasoning and cheaper decode, with lower direct retrieval.</p>
+        <figure class="wide-figure">
+          <a href="assets/figures/pareto-frontier.svg" title="Open the full-resolution Pareto plot"><img src="assets/figures/pareto-frontier.svg" width="1050" height="650" alt="Bubble plot of 256K retrieval accuracy against 128K decode latency, with bubble size representing BABILong performance." loading="lazy" decoding="async"></a>
+          <figcaption><strong>Figure 5.</strong> A practical long-context frontier at 256K. Polar offers the strongest target-token retrieval among the matched attention variants; Raven occupies the low-latency, higher-BABILong region. Bubble area represents adapted BABILong performance.</figcaption>
+        </figure>
+        <blockquote>There is no single “long-context score.” Retrieval, likelihood, adapted reasoning, short-context quality, memory growth, and latency answer different questions.</blockquote>
+      </section>
 
-  <footer><div class="wrap">ATMA research artifact · current draft in <a href="https://github.com/kreasof-ai/atma/tree/main/paper/iclr2027">paper/iclr2027</a> · results updated from the 9.816B-token evaluation.</div></footer>
+      <section id="audit">
+        <h2>6. What a checkpoint audit revealed</h2>
+        <p>A post-hoc audit found that three NoPE checkpoints could have nearly identical 2K validation curves while differing by 6.70 nats at 256K. The divergence appeared around blocks 6–7 in sampled secant-gain probes.</p>
+        <p>The finding emerged during an infrastructure transition, not a randomized hardware experiment. Re-evaluation excluded an evaluation-version mismatch, and a microbatch-4 retrain excluded microbatch size alone in the tested runs. It did not distinguish initialization, data order, device-dependent kernels, or their interactions.</p>
+        <aside class="note"><strong>The useful lesson is narrower than a hardware claim.</strong> Short-context convergence did not predict length extrapolation. Long-context work needs evaluation beyond the training window and enough run metadata to audit surprising failures.</aside>
+      </section>
+
+      <section id="limitations">
+        <h2>7. Limitations</h2>
+        <ul>
+          <li>The study uses one model scale and one 2K pretraining regime.</li>
+          <li>Stage I demonstrates robustness across nuisance-factor settings, not across random seeds.</li>
+          <li>Polar has zero exact FinePDFs retrieval at 64K and 256K.</li>
+          <li>Teacher-forced retrieval is not autoregressive generation.</li>
+          <li>Raven is a separately optimized family comparison, not an optimizer-matched ablation.</li>
+          <li>Serving measurements are single-sequence measurements on one L40S and should be treated as descriptive.</li>
+        </ul>
+      </section>
+
+      <section id="conclusion">
+        <h2>Conclusion</h2>
+        <p>ATMA establishes a reproducible operating point for bounded full-context attention plus recurrent memory. Polar materially extends target-token signal, preserves exact synthetic retrieval, and stabilizes long-document likelihood. The result does not solve natural-text retrieval at extreme length, and it does not dominate recurrent alternatives on reasoning or serving.</p>
+        <p>That mixed result is the point. Long-context systems should be compared as trade-offs, with metrics kept distinct and failure boundaries made visible.</p>
+      </section>
+
+      <section class="artifact">
+        <p class="article-label">Open research artifact</p>
+        <h2>Inspect the evidence</h2>
+        <p>The dashboard exposes all 120 recipe cells, validation trajectories, grouped contrasts, and the current Stage II endpoints.</p>
+        <div class="article-actions">
+          <a class="primary" href="dashboard.html">Open the ablation dashboard ↗</a>
+          <a href="https://github.com/kreasof-ai/atma">Browse the repository ↗</a>
+        </div>
+      </section>
+
+      <footer class="article-footer">
+        <a class="brand" href="https://kreasof.my.id/"><img src="logo.webp" alt="">Kreasof AI</a>
+        <p>Independent machine learning research from Jakarta, Indonesia. Open by default.</p>
+        <p>© 2026 Kreasof AI · Research article · pre-peer-review</p>
+      </footer>
+    </main>
+  </div>
 </body>
 </html>

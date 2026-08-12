@@ -6,7 +6,7 @@
   const catalog = payload.catalog;
   const axes = payload.axes;
   const byId = Object.fromEntries(records.map((record) => [record.run_id, record]));
-  const colors = ["#65e6b7", "#80adff", "#ee8ea2", "#f2c878", "#9a8cff", "#6fd6d0"];
+  const colors = ["#16866d", "#5275ff", "#b74d64", "#a67222", "#7657bd", "#17838a"];
   const headlineColumns = ["needle_acc_65536", "clean_ppl_65536", "final_val_loss", "mfu_final", "train_elapsed_s"];
   const state = {
     metric: catalog.some((item) => item.name === "needle_acc_65536") ? "needle_acc_65536" : catalog[0].name,
@@ -14,6 +14,7 @@
     topn: "20",
     filters: {},
     plotted: new Set(),
+    autoSeedPlot: true,
   };
 
   axes.forEach((axis) => {
@@ -146,7 +147,7 @@
     }
     group.addEventListener("change", (event) => { state.group = event.target.value; render(); });
     document.getElementById("topn").addEventListener("change", (event) => { state.topn = event.target.value; render(); });
-    document.getElementById("clearplot").addEventListener("click", () => { state.plotted.clear(); render(); });
+    document.getElementById("clearplot").addEventListener("click", () => { state.autoSeedPlot = false; state.plotted.clear(); render(); });
   }
 
   function passes(record) {
@@ -167,18 +168,24 @@
   function renderRuns(rows, item) {
     rows = rows.slice().sort(compare(item.dir));
     if (state.topn !== "all") rows = rows.slice(0, Number(state.topn));
+    if (state.autoSeedPlot && !state.plotted.size) {
+      rows.filter((record) => record.curve?.length).slice(0, 3).forEach((record) => state.plotted.add(record.run_id));
+      state.autoSeedPlot = false;
+    }
     const visibleColumns = headlineColumns.filter((name) => name !== state.metric);
     const head = document.querySelector("#board thead");
     const body = document.querySelector("#board tbody");
-    head.innerHTML = `<tr><th>Plot</th><th>#</th><th>Run</th><th>${item.label}</th>${visibleColumns.map((name) => `<th>${name.replaceAll("_", " ")}</th>`).join("")}</tr>`;
+    head.innerHTML = `<tr><th>Compare</th><th>#</th><th>Run</th><th>${item.label}</th>${visibleColumns.map((name) => `<th>${name.replaceAll("_", " ")}</th>`).join("")}</tr>`;
     body.innerHTML = "";
     rows.forEach((record, index) => {
       const row = document.createElement("tr");
-      row.innerHTML = `<td><input aria-label="Plot ${record.run_id}" type="checkbox" ${state.plotted.has(record.run_id) ? "checked" : ""}></td><td>${index + 1}</td><td>${axes.map((axis) => chip(axis, record[axis])).join("")}<div class="run-id">${record.run_id}</div></td><td class="selected-metric">${format(metricValue(record))}</td>${visibleColumns.map((name) => `<td>${format(metricValue(record, name))}</td>`).join("")}`;
+      if (state.plotted.has(record.run_id)) row.classList.add("is-plotted");
+      row.innerHTML = `<td class="plot-cell"><input aria-label="Compare ${record.run_id}" type="checkbox" ${state.plotted.has(record.run_id) ? "checked" : ""}></td><td>${index + 1}</td><td>${axes.map((axis) => chip(axis, record[axis])).join("")}<div class="run-id">${record.run_id}</div></td><td class="selected-metric">${format(metricValue(record))}</td>${visibleColumns.map((name) => `<td>${format(metricValue(record, name))}</td>`).join("")}`;
       row.querySelector("input").addEventListener("click", (event) => {
         event.stopPropagation();
         if (event.target.checked) state.plotted.add(record.run_id);
         else state.plotted.delete(record.run_id);
+        row.classList.toggle("is-plotted", event.target.checked);
         drawPlot();
       });
       row.addEventListener("click", () => showDetail(record));
@@ -226,9 +233,9 @@
     context.clearRect(0, 0, canvas.width, canvas.height);
     legend.innerHTML = "";
     if (!series.length) {
-      context.fillStyle = "#718c83";
-      context.font = "13px DM Sans, sans-serif";
-      context.fillText("Select runs in the table to compare validation trajectories.", 24, 30);
+      context.fillStyle = "#737985";
+      context.font = "13px Inter, sans-serif";
+      context.fillText("No trajectories selected. Use the Compare column below to add runs.", 24, 34);
       return;
     }
 
@@ -246,14 +253,16 @@
     const height = canvas.height - top - 36;
     const x = (value) => left + (maxX ? value / maxX : 0) * width;
     const y = (value) => top + (1 - (value - minY) / ((maxY - minY) || 1)) * height;
-    context.strokeStyle = "#254039";
-    context.beginPath();
-    context.moveTo(left, top);
-    context.lineTo(left, top + height);
-    context.lineTo(left + width, top + height);
-    context.stroke();
-    context.fillStyle = "#718c83";
-    context.font = "11px DM Sans, sans-serif";
+    context.strokeStyle = "#e1e4e9";
+    context.lineWidth = 1;
+    for (let tick = 0; tick <= 4; tick += 1) {
+      const gy = top + (height * tick / 4);
+      context.beginPath(); context.moveTo(left, gy); context.lineTo(left + width, gy); context.stroke();
+    }
+    context.strokeStyle = "#9da3ad";
+    context.beginPath(); context.moveTo(left, top); context.lineTo(left, top + height); context.lineTo(left + width, top + height); context.stroke();
+    context.fillStyle = "#737985";
+    context.font = "11px Inter, sans-serif";
     context.fillText(maxY.toFixed(2), 8, top + 5);
     context.fillText(minY.toFixed(2), 8, top + height);
     context.fillText(`${Math.round(maxX / 3600)}h`, left + width - 15, top + height + 20);
@@ -269,7 +278,7 @@
       });
       context.stroke();
       const label = document.createElement("span");
-      label.innerHTML = `<i style="background:${color}"></i>${record.run_id}`;
+      label.innerHTML = `<i style="background:${color}"></i>${record.attn_type} · ${record.reg_mode} · mem ${record.memory ? "on" : "off"} · win ${record.window ? "on" : "off"}`;
       legend.appendChild(label);
     });
   }

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 620" role="img" aria-labelledby="title desc">
+  <title id="title">Extreme-value calibration of the Polar Attention null floor</title>
+  <desc id="desc">As context length grows, the adaptive null floor tracks the maximum noise score while a fixed threshold is overtaken. An inset compares diffuse softmax mass with a Polar null sink.</desc>
+  <defs>
+    <style>.sans{font-family:Inter,Arial,sans-serif}.serif{font-family:Georgia,'Times New Roman',serif}.mono{font-family:'SFMono-Regular',Consolas,monospace}.muted{fill:#6e7480}.grid{stroke:#dde1e7;stroke-width:1}.axis{stroke:#111318;stroke-width:1.5}.small{font-size:11px}.label{font-size:13px}</style>
+  </defs>
+  <rect width="1080" height="620" fill="#f7f7f5"/>
+  <text x="52" y="42" class="sans" font-size="11" font-weight="700" letter-spacing="1.8" fill="#5275ff">FIGURE 02 · NULL-FLOOR CALIBRATION</text>
+  <text x="52" y="79" class="serif" font-size="28" fill="#111318">A fixed threshold fails as the noise field grows</text>
+  <text x="52" y="104" class="sans muted label">The adaptive sink follows the extreme-value scale without erasing real-key direction.</text>
+
+  <g>
+    <line x1="84" y1="150" x2="784" y2="150" class="grid"/><line x1="84" y1="230" x2="784" y2="230" class="grid"/><line x1="84" y1="310" x2="784" y2="310" class="grid"/><line x1="84" y1="390" x2="784" y2="390" class="grid"/><line x1="84" y1="470" x2="784" y2="470" class="grid"/>
+    <line x1="84" y1="145" x2="84" y2="490" class="axis"/><line x1="84" y1="490" x2="784" y2="490" class="axis"/>
+    <text x="36" y="330" class="sans muted small" transform="rotate(-90 36 330)">logit scale</text>
+    <g class="mono muted small"><text x="78" y="516">2K</text><text x="246" y="516">8K</text><text x="418" y="516">32K</text><text x="590" y="516">128K</text><text x="754" y="516">256K</text></g>
+    <text x="433" y="548" text-anchor="middle" class="sans muted small">context length · logarithmic scale</text>
+
+    <rect x="84" y="158" width="700" height="24" fill="#e3f1e4" stroke="#65a66d"/>
+    <text x="100" y="175" class="sans small" fill="#347342">matched-key score · signal band</text>
+
+    <path d="M84 386 C220 350 335 302 448 270 C565 237 674 219 784 206 L784 238 C675 253 570 275 448 302 C328 330 216 367 84 406Z" fill="#dfe8ff" opacity=".8"/>
+    <path d="M84 386 C220 350 335 302 448 270 C565 237 674 219 784 206" fill="none" stroke="#5275ff" stroke-width="4"/>
+    <path d="M84 406 C216 367 328 330 448 302 C570 275 675 253 784 238" fill="none" stroke="#c84b60" stroke-width="3" stroke-dasharray="8 7"/>
+    <line x1="84" y1="390" x2="784" y2="390" stroke="#d57a28" stroke-width="3"/>
+    <circle cx="84" cy="390" r="7" fill="#fff" stroke="#d57a28" stroke-width="3"/>
+    <circle cx="132" cy="390" r="7" fill="#fff" stroke="#d57a28" stroke-width="3"/>
+
+    <text x="520" y="233" class="sans label" fill="#3458df">adaptive null floor · b + s√log(n+1)</text>
+    <text x="548" y="291" class="sans label" fill="#a83e56">maximum noise score · ≈ √(2 log n)</text>
+    <text x="162" y="374" class="sans label" fill="#b56a20">fixed threshold</text>
+    <text x="157" y="416" class="sans small" fill="#b56a20">overtaken early</text>
+    <text x="391" y="335" class="sans small" fill="#5275ff">noise margin grows with n</text>
+  </g>
+
+  <g>
+    <rect x="820" y="145" width="218" height="345" rx="8" fill="#fff" stroke="#cfd4dc"/>
+    <text x="842" y="176" class="sans" font-size="11" font-weight="700" letter-spacing="1.2" fill="#5275ff">ATTENTION MASS · 256K</text>
+    <text x="842" y="207" class="serif" font-size="17" fill="#111318">Vanilla softmax</text>
+    <line x1="842" y1="276" x2="1016" y2="276" class="axis"/>
+    <g fill="#f0b5be" stroke="#c84b60"><rect x="846" y="239" width="13" height="37"/><rect x="864" y="247" width="13" height="29"/><rect x="882" y="241" width="13" height="35"/><rect x="900" y="250" width="13" height="26"/><rect x="918" y="238" width="13" height="38"/><rect x="936" y="245" width="13" height="31"/><rect x="954" y="243" width="13" height="33"/><rect x="972" y="239" width="13" height="37"/><rect x="990" y="247" width="13" height="29"/></g>
+    <text x="842" y="296" class="sans muted small">mass diffuses over noise keys</text>
+
+    <text x="842" y="337" class="serif" font-size="17" fill="#111318">Polar with null sink</text>
+    <line x1="842" y1="425" x2="1016" y2="425" class="axis"/>
+    <g fill="#a9d7ae" stroke="#4f9458"><rect x="846" y="366" width="15" height="59"/><rect x="866" y="377" width="15" height="48"/><rect x="886" y="370" width="15" height="55"/></g>
+    <g fill="#f0b5be" stroke="#c84b60"><rect x="913" y="411" width="10" height="14"/><rect x="927" y="414" width="10" height="11"/><rect x="941" y="412" width="10" height="13"/><rect x="955" y="415" width="10" height="10"/><rect x="969" y="413" width="10" height="12"/></g>
+    <rect x="992" y="346" width="18" height="79" fill="#a9c1ff" stroke="#5275ff"/>
+    <text x="867" y="445" text-anchor="middle" class="mono muted" font-size="9">REAL</text><text x="1001" y="445" text-anchor="middle" class="mono" font-size="9" fill="#3458df">NULL</text>
+    <text x="842" y="468" class="sans muted small">noise is absorbed; real keys remain</text>
+  </g>
+  <text x="52" y="588" class="sans muted small">Conceptual calibration diagram. It explains the mechanism; it is not an empirical measurement of a trained head.</text>
+</svg>
