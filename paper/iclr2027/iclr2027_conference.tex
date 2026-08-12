@@ -45,35 +45,35 @@
 \maketitle
 
 \begin{abstract}
-Native length extrapolation remain a weakly solvable problem in language modeling due to trade-off balancing between exact retrieval fidelity, long-document likelihood, and inference efficiency. We present \textbf{ATMA} as a disciplined diagnostic for this specific problem. \textbf{ATMA} is a hybrid architecture recipe with modified Polar Attention that separates two stream of normalized direction channel and bounded participation-ratio magnitude channel, augmented with third recurrence channel which derived from gated-deltanet. We frame long-context modeling as Pareto problem than claiming general architectural dominance. We run 120-cell industrial ablation sweep for the first 1B-token training run to select promoted recipe, then continue with 10B-token training run for the second phase for more complete evaluation. We test 378M-parameter model from three attention variant (NoPE, RoPE, Polar) and Raven as external baselines from SSM-derived family for up to 256K length evaluation. Polar attention extends real-text retrieval to 64K length at 16.3\% while both NoPE and RoPE variant collapse to 0.0\%. Polar attention variant also limits 256K bits-per-byte likelihood degradation to $1.26\times$, with a 1.5-point mean penalty on downstream task evaluation. Raven instead leads at 256K length BABILong test and provide constant latency during decoding regardless of sequence length. Lastly, our independent environment audit finds a striking evidence that NoPE variant checkpoints with identical validation curve, significantly degrade 256K nats by 6.70 points across GPU device classes. This exposes unresolved interactions among execution environment, optimization, and extrapolation. Motivating multi-objective and multi-environment audits for long-context architectural claims.
+Length extrapolation in language models involves competing objectives: retrieval fidelity, long-document likelihood, short-context quality, and inference cost. We present \textbf{ATMA}, a 378M-parameter hybrid recipe that combines Polar Attention with gated-delta recurrent memory, and study these objectives as a Pareto problem rather than claiming general architectural dominance. Polar Attention separates a normalized direction channel from a bounded participation-ratio magnitude channel. We select the recipe with a complete 120-cell, 1B-token factorial sweep, then train matched NoPE, RoPE, and Polar variants for 9.816B tokens at length 2K and evaluate them through 256K. Across the factorial, memory improves Polar's 64K retrieval score in all 20 matched cells (mean $+47.8$ points), whereas its effect on NoPE is small and inconsistent. At 256K, Polar retains 34.4\% teacher-forced target-token accuracy and 9.0\% exact five-token accuracy; exact retrieval is 18.0\% on synthetic contexts but 0.0\% on FinePDFs contexts. Polar also limits mean fixed-target bits-per-byte degradation to $1.26\times$, at a 1.9-point mean cost on eight short-context tasks. Raven baselines lead BABILong and have length-independent decode state, illustrating a different point on the frontier. Finally, a post-hoc checkpoint audit shows that nearly identical 2K validation curves can conceal a 6.70-nat difference at 256K. Because those runs were neither seed-paired nor randomized across devices, we interpret this as checkpoint variability associated with an infrastructure transition, not a causal hardware effect.
 \end{abstract}
 
 \section{Introduction}
 
-Large language model increasingly handle code repositories, books, legal documents, and scientific papers that easily extends the length beyond native pretraining sequences. Softmax attention technically have full fidelity to access previous token, but the mathematical formulation in practice can dilute and disperse the probability mass as the number of key grows~\citep{nakanishi2025scalable,velickovic2025softmax,barbero2024glasses}. Technique like sliding window can bound the number of previous token attended, but completely remove it as retrievable element. Recent advancement in recurrent-style sequence model can keep the same state size across length, but it compress the previous information into lossy gist. Therefore, long-context language modeling is a multi-objectives trade-off between retrieval fidelity, local sequence likelihood, reasoning, short-context quality, and system serving cost.
+Large language models increasingly process code repositories, books, legal documents, and scientific papers that exceed their pretraining sequence length. Full softmax attention preserves token-level access in principle, but its probability mass can disperse as the key set grows~\citep{nakanishi2025scalable,velickovic2025softmax,barbero2024glasses}. Sliding windows bound cost by removing older tokens from direct access. Recurrent sequence models instead keep fixed-size state but compress history. Long-context modeling therefore exposes a multi-objective trade-off among retrieval fidelity, sequence likelihood, reasoning, short-context quality, and serving cost.
 
-In this paper we present \textbf{ATMA}, a 378M-parameter hybrid architecture recipe that combine short gated convolutions with \textbf{Polar Attention} layers as global sequence mixers. Polar attention, unlike softmax, separate two streams of ``what matched'' and ``how much''. Formulated with extreme-value scale and null sink that act as a garbage collector for irrelevant token, radial normalization that bound matched value sum, and controlling count of how much content matched with a bounded participation-ratio channel. Each global attention layer is also supported with a gated-delta memory, as compressed history of previous sequence (Appendix~\ref{appendix:theory}).
+We present \textbf{ATMA}, a hybrid architecture that combines short gated convolutions with four \textbf{Polar Attention} layers as global mixers. Polar Attention represents ``what matched'' with a normalized direction and ``how much matched'' with a bounded participation-ratio channel. A learned null sink follows the extreme-value scale of irrelevant scores. Each global layer also contains gated-delta memory, providing a compressed recurrent history alongside full-context attention (Appendix~\ref{appendix:theory}).
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{fig_main_results.pdf}
-\caption{10B-token pretraining results. \textbf{Left:} teacher-forced retrieval accuracy, averaged over retrieval tasks, haystack suites, and needle depths. \textbf{Right:} BABILong exact match after finetuning adaptation. Polar improve attention variants at longer lengths, Raven win long-context reasoning but come from different architecture family.}
+\caption{Results after 9.816B-token pretraining. \textbf{Left:} teacher-forced target-token retrieval accuracy, averaged over tasks, haystack suites, and needle depths. \textbf{Right:} BABILong exact match after adaptation. Polar retains more retrieval signal than the matched attention variants, whereas the separately optimized Raven family leads long-context BABILong.}
 \label{fig:main_results}
 \end{figure}
 
-Our study at least produce three contributions. First, an ablation sweep over 120-cell for 1B-token each, isolates the interaction between controlled variable (attention core, recurrent memory, local window, distractor alignment and regularization). Second, the chosen configuration from the first ablation is promoted to 10B-token pretraining runs, compared with Raven as strong contender from SSM-related family~\citep{raven2026}. The second pretraining is evaluated with a more complete coverage, such as retrieval, BABILong, sequence likelihood, language modeling downstream tasks, and system serving. Figure~\ref{fig:main_results} show the resulting trade-off: Polar attention win over other attention variants in long-context and stability, but Raven still show advantage in BABILong and decode efficiency, while softmax attention still kept short-context advantage. Third, our independent diagnostic finds a striking evidence for environment sensitivity during pretraining that move a significant extrapolation property difference between pretraining checkpoints, despite showing identical pretraining curves and gradients. We report this finding as unresolved environment sensitivity evidence during long-context extrapolation without settled proof regarding why this happen yet, and call for multi-device audit before concluding architectural contribution for length extrapolation.
+Our contributions are threefold. First, a complete 120-cell, 1B-token factorial sweep measures interactions among attention core, recurrent memory, training-time local windows, distractor alignment, and representation regularization. Second, we promote one recipe to matched 9.816B-token NoPE, RoPE, and Polar runs and evaluate retrieval, BABILong, fixed-target likelihood, short-context tasks, and serving. Raven models provide a strong but separately optimized recurrent-family comparison~\citep{raven2026}. Figure~\ref{fig:main_results} summarizes the resulting frontier: Polar improves long-context retrieval and likelihood among the matched attention variants, while Raven favors BABILong and decode efficiency. Third, a post-hoc audit demonstrates that short-context convergence alone did not predict extrapolation for three NoPE checkpoints. This audit motivates reporting extended-context behavior and execution metadata, but does not identify the device transition as causal.
 
 \section{Related Work}
 
-Softmax attention~\citep{Vaswani+2017} has quadratic compute cost and practically lose sharpness as the number of element increases. RoPE~\citep{rope2021} and ALiBi~\citep{alibi2021} alter positional encoding but not changing the nature of softmax as dense simplex normalization. Scalable-Softmax, adaptive-temperature analyses, and sparse alternatives explicitly tackle dispersion or length-dependent sharpness~\citep{nakanishi2025scalable,velickovic2025softmax,vasylenko2026sparse}. Threshold Differential Attention (TDA) instead uses a $\sqrt{\log n}$ threshold motivated by maxima of noise scores~\citep{huang2026threshold}. Polar attention adapts unique combination of those technique but uses a differentiable null sink rather than hard sparse selection.
+Softmax attention~\citep{Vaswani+2017} has quadratic compute and can lose selectivity as the number of keys grows. RoPE~\citep{rope2021} and ALiBi~\citep{alibi2021} alter positional information while retaining dense simplex normalization. Scalable-Softmax, adaptive-temperature analyses, and sparse alternatives address dispersion or length-dependent sharpness~\citep{nakanishi2025scalable,velickovic2025softmax,vasylenko2026sparse}. Threshold Differential Attention (TDA) uses a $\sqrt{\log n}$ threshold motivated by maxima of noise scores~\citep{huang2026threshold}. Polar combines length-dependent temperature and extreme-value scaling with a differentiable null sink and bounded magnitude channel. We compare Polar with matched NoPE and RoPE controls; comparisons with these other methods are conceptual rather than empirical.
 
-Linear attention, state-space models, and gated recurrences exchange full-resolution element access with compressed history as fixed state~\citep{mamba2023,deltanet2024,yang2024gated,titans2025}. Raven as newer variant combines routed sparse memory, decay dynamics, and gated-delta recurrence~\citep{raven2026}, we treat Raven as a strong sub-quadratic baseline, but not as an attention variant because its optimizer and model family is radically different. Hybrid models like LFM2 combine local and global mixers to increase efficiency~\citep{lfm2_2025,physics_lms_2025}. ATMA follows this hybrid recipe while changing the global mixer and add a recurrent memory stream.
+Linear attention, state-space models, and gated recurrences exchange full-resolution token access for compressed fixed-size history~\citep{mamba2023,deltanet2024,yang2024gated,titans2025}. Raven combines routed sparse memory, decay dynamics, and gated-delta recurrence~\citep{raven2026}. We treat it as a strong sub-quadratic baseline, but not as an attention ablation because it uses a different model family and optimizer. Hybrid models such as LFM2 combine local and global mixers for efficiency~\citep{lfm2_2025,physics_lms_2025}. ATMA follows this hybrid pattern while changing the global mixer and adding a recurrent memory stream.
 
 \section{Method}
 
 \subsection{Hybrid architecture}
 
-ATMA is a 16-layer decoder with 12 LFM2-style gated convolutional layers and interleaved with four global attention layers. All blocks use pre-normalization and squared-ReLU MLPs. All attention variants share hidden size 1024, eight query heads, two key-value heads, head dimension 128, tokenizer, data order, optimizer, schedule, and training budget, only the attention core changes (NoPE, RoPE, and Polar). Canon depthwise causal convolutions are applied to $q$, $k$, and $v$ before attention calculation~\citep{physics_lms_2025}.
+ATMA is a 16-layer decoder with 12 LFM2-style gated convolutional layers interleaved with four global attention layers. All blocks use pre-normalization and squared-ReLU MLPs. The attention variants share hidden size 1024, eight query heads, two key-value heads, head dimension 128, tokenizer, data order, optimizer, schedule, and training budget; only the attention core changes among NoPE, RoPE, and Polar. Canon depthwise causal convolutions are applied to $q$, $k$, and $v$ before attention~\citep{physics_lms_2025}.
 
 \subsection{Polar attention}
 
@@ -94,7 +94,7 @@ The \emph{direction} channel is $c_i=s_i/\max(\lVert s_i\rVert_2,\varepsilon)$, 
  m_{{\rm eff},i}=n_{{\rm eff},i}(1-w_{iN}),\quad
  \mu_i=\tanh\!\left(\operatorname{softplus}(\beta)\log(1+m_{{\rm eff},i})\right).
 \end{equation}
-Thus $\mu_i\in[0,1)$, while the direction channel removes radial scale. This is a channel decomposition, not an independence claim: changing the match set can rotate $c_i$. The Polar output is a gated projection of $c_i$ plus a learned projection of $\mu_i$. A distractor-alignment auxiliary loss was tested but is disabled in the selected recipe because the factorial sweep shows worse retrieval.
+Thus $\mu_i\in[0,1)$, while the direction channel removes radial scale. This is a channel decomposition, not an independence claim: changing the match set can rotate $c_i$. The Polar output is a gated projection of $c_i$ plus a learned projection of $\mu_i$. These choices were selected through pre-integration falsification tests: additive soft counts accumulated leakage with length, fixed or relative floors were overtaken by noise tails, and an unbounded $\log m$ channel left the training range. The standalone prototype was not retained; Appendix~\ref{appendix:polar_implementation} distinguishes this design provenance from the reproducible integrated oracle and kernel tests. A distractor-alignment auxiliary loss was tested in the factorial but is disabled in the promoted recipe.
 
 \subsection{Gated-delta memory}
 
@@ -117,64 +117,64 @@ Figure~\ref{fig:machinery} summarizes the two mechanisms and their controlled di
 \section{Experimental Design}
 
 \subsection{Recipe selection}
-Stage I trains all $3\times5\times2\times2\times2=120$ combinations of attention type (Polar, RoPE, NoPE), regularization, distractor loss, memory, and a sliding window attention (1024 length). Models receive approximately 1B FineWeb-Edu tokens at length 2048 on NVIDIA L4 GPUs. This stage selects promoted recipe, it is not used for headline absolute comparisons.
+Stage I trains all $3\times5\times2\times2\times2=120$ combinations of attention type (Polar, RoPE, NoPE), regularization, distractor loss, memory, and a 1024-token training window. Every model receives approximately 1B FineWeb-Edu tokens at length 2048 on an NVIDIA L4, and every evaluation uses full context. These are distinct factorial cells rather than seed replicates; Stage I selects the promoted recipe and is not used for headline absolute comparisons.
 
 \subsection{Matched comparison}
-Stage II trains 378.16--378.22M-parameter NoPE, RoPE, and Polar models for 9.816B tokens at length 2048 on the same L40S software and hardware environment. All use the same Muon/AdamW split. Raven Native (388.54M) and Atma-Raven-Titans (382.37M) use the same data, tokenizer, budget, and device class, but Raven use AdamW optimizer. This choice follows a 1B-token Raven Native pilot results with the same Atma Muon schedule: validation loss improved to 3.76 nats at step 625, then destabilized and ended at 4.62, with 0\% retrieval through 64K. We therefore retain Raven's AdamW recipe and report both Raven models as a separate baseline group. The single failed pilot does not establish that Raven is incompatible with every Muon configuration.
+Stage II trains 378.16--378.22M-parameter NoPE, RoPE, and Polar models for 9.816B tokens at length 2048 in the same L40S software and hardware environment. All three use the same Muon/AdamW parameter split. Raven Native (388.54M) and Atma-Raven-Titans (382.37M) use the same data, tokenizer, token budget, and device class, but use AdamW. This follows a 1B-token Raven Native pilot with the ATMA Muon schedule: validation loss improved to 3.76 nats at step 625, then destabilized and ended at 4.62, with 0\% retrieval through 64K. We therefore report the stable Raven models as a separate model-family/optimizer group. The single failed pilot does not establish incompatibility with every Muon configuration.
 
 \paragraph{Evaluation.}
-The evaluation contains 24,000 paired retrieval trials over synthetic and FinePDFs haystacks, lengths 2K--256K, depths 10/50/90\%, and 50 trials per cell, BABILong adaptation and exact match~\citep{babilong2024}, fixed-target bits per byte (BPB) on FinePDFs, PG-19, and Proof-Pile, eight likelihood-scored on dowstream language modeling tasks (22,939 examples per model), and single-sequence prefill/decode on one L40S. Retrieval is teacher-forced five-token accuracy, which is less brittle than exact-value match but should not be interpreted as text generation success. BABILong uses a custom split and prompts, so its absolute scores are internally comparable rather than leaderboard replications. Protocol details and complete matrices appear in Appendix~\ref{appendix:protocol}.
+The evaluation contains 24,000 paired retrieval trials over synthetic and FinePDFs haystacks, lengths 2K--256K, depths 10/50/90\%, and 50 trials per cell; BABILong adaptation and exact match~\citep{babilong2024}; fixed-target bits per byte (BPB) on FinePDFs, PG-19, and Proof-Pile; eight likelihood-scored downstream tasks (22,939 examples per model); and single-sequence prefill/decode on one L40S. Retrieval teacher-forces the five-token target and reports both token accuracy and exact five-token accuracy. Neither metric is autoregressive generation success. BABILong uses custom splits and prompts, so its absolute scores are internally comparable rather than leaderboard replications. Protocols, denominators, and complete matrices appear in Appendix~\ref{appendix:protocol}.
 
 \section{Results}
 
 \subsection{Component selection}
 
-Table~\ref{tab:ablation} shows the first ablation key results. Neither Polar-only nor memory-augmented softmax retrieves reliably at 64K. Combining Polar with gated-delta memory raises per-digit retrieval from 0.0\% to 92.5\%, a local window or distractor alignment then reduces it. We therefore promote global Polar attention plus memory without the auxiliary distractor loss. The complete 120-cell matrix is in Appendix~\ref{appendix:full_ablation}.
+Table~\ref{tab:ablation} summarizes matched contrasts from the full factorial rather than selecting individual cells. At 64K, adding memory improves Polar in all 20 combinations of regularizer, distractor setting, and window setting, by 47.8 points on average. The corresponding NoPE effect is small and heterogeneous, and RoPE remains at zero. Among memory-enabled cells, Polar is never worse than NoPE and exceeds RoPE in all 20 comparisons. A training window reduces Polar+memory by 25.5 points on average and is harmful in 8/10 matched cells; distractor alignment has a smaller, nonuniform effect (mean $-6.0$ points; harmful in 6/10). We therefore promote full-context Polar plus memory without distractor alignment. The selected baseline cell reaches 92.5\% token accuracy at 64K; the complete matrix is in Appendix~\ref{appendix:full_ablation}.
 
 \begin{table}[t]
 \centering
 \small
-\setlength{\tabcolsep}{3.8pt}
-\begin{tabular}{lccc}
+\setlength{\tabcolsep}{3.4pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrr}
 \toprule
-\textbf{1B recipe} & \textbf{NLL 2K} & \textbf{NLL 64K} & \textbf{Needle 64K} \\
+\textbf{64K matched contrast} & \textbf{Mean $\Delta$} & \textbf{Median $\Delta$} & \textbf{Range} & \textbf{Positive} \\
 \midrule
-NoPE + memory & 2.665 & 2.342 & 16.3\% \\
-RoPE + memory & 2.808 & 2.857 & 0.0\% \\
-Polar, no memory & 2.826 & 3.604 & 0.0\% \\
-\textbf{Polar + memory} & \textbf{2.703} & \textbf{1.960} & \textbf{92.5\%} \\
-Polar + memory + distractor & 2.725 & 1.975 & 58.8\% \\
-Polar + memory + window & 2.712 & 2.006 & 30.0\% \\
+Polar: memory on $-$ off & +47.8 & +51.3 & $[+7.5,+92.5]$ & 20/20 \\
+NoPE: memory on $-$ off & +4.6 & +1.9 & $[-15.0,+21.3]$ & 11/20 \\
+RoPE: memory on $-$ off & 0.0 & 0.0 & $[0.0,0.0]$ & 0/20 \\
+Polar+memory $-$ NoPE+memory & +41.7 & +41.9 & $[0.0,+77.5]$ & 19/20 (+1 tie) \\
+Polar+memory $-$ RoPE+memory & +50.3 & +51.9 & $[+18.8,+92.5]$ & 20/20 \\
 \bottomrule
-\end{tabular}
-\caption{Illustrative 1B-token recipe selection. NLL is nats/token; Needle is greedy per-digit accuracy over 16 five-digit trials.}
+\end{tabular}}
+\caption{Matched contrasts across the 120-cell, 1B-token factorial. Values are percentage-point changes in teacher-forced five-token accuracy at 64K. Each row holds all other factorial axes fixed. ``Positive'' excludes one numerical tie in the Polar--NoPE comparison.}
 \label{tab:ablation}
 \end{table}
 
 \subsection{A multi-objective frontier}
 
-Table~\ref{tab:endpoints} reports extrapolation evaluation results. At 2K length, both NoPE and Polar both retrieve almost perfectly. By 256K length, both softmax attention variant (NoPE and RoPE) fall to 0.6\% and 0.0\%, while Polar attention retains 34.4\% averaged across tasks, suites, and depths. The aggregate hides an important boundary: on natural text sequence (FinePDFs) haystacks, Polar attention retains 16.3\% at 64K versus 0.0\% for NoPE and RoPE, but falls to 0.3\% anyway at 256K. On synthetic text sequence it retains 68.4\%. We therefore claim a substantially extended effective window, not solved arbitrary-length retrieval. Full depth and haystack matrices are in Appendix~\ref{appendix:retrieval}.
+Table~\ref{tab:endpoints} reports extrapolation endpoints. At 2K, NoPE and Polar achieve nearly perfect target-token accuracy. At 256K, NoPE and RoPE fall to 0.6\% and 0.0\%, while Polar retains 34.4\% averaged across tasks, suites, and depths. Exact five-token accuracy gives a stricter boundary: Polar reaches 9.0\% overall at 256K, entirely from synthetic haystacks (18.0\% synthetic; 0.0\% FinePDFs). At 64K, Polar obtains 65.7\% exact accuracy on synthetic contexts but 0.0\% on FinePDFs, despite 16.3\% target-token accuracy there. We therefore claim retained target signal and exact synthetic retrieval, not successful real-text retrieval at those lengths. Full token, exact, depth, and haystack matrices are in Appendix~\ref{appendix:retrieval}.
 
 \begin{table}[t]
 \centering
 \small
 \setlength{\tabcolsep}{3.2pt}
 \resizebox{\linewidth}{!}{%
-\begin{tabular}{llrrrrrrr}
+\begin{tabular}{llrrrrrrrr}
 \toprule
-\textbf{Group} & \textbf{Model} & \multicolumn{2}{c}{\textbf{Retrieval (\%)}} & \multicolumn{2}{c}{\textbf{BABILong (\%)}} & \multicolumn{3}{c}{\textbf{BPB}} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-9}
-& & \textbf{2K} & \textbf{256K} & \textbf{2K} & \textbf{256K} & \textbf{2K} & \textbf{256K} & \textbf{ratio} \\
+\textbf{Group} & \textbf{Model} & \multicolumn{3}{c}{\textbf{Retrieval (\%)}} & \multicolumn{2}{c}{\textbf{BABILong (\%)}} & \multicolumn{3}{c}{\textbf{BPB}} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-7}\cmidrule(lr){8-10}
+& & \textbf{Tok. 2K} & \textbf{Tok. 256K} & \textbf{Exact 256K} & \textbf{2K} & \textbf{256K} & \textbf{2K} & \textbf{256K} & \textbf{ratio} \\
 \midrule
-Matched & NoPE & 99.2 & 0.6 & 55 & 0 & \textbf{1.432} & 8.097 & 5.65$\times$ \\
-Matched & \textbf{Polar} & 98.9 & \textbf{34.4} & 52 & \textbf{28} & 1.451 & \textbf{1.825} & \textbf{1.26$\times$} \\
-Matched & RoPE & 88.2 & 0.0 & \textbf{64} & 14 & 1.439 & 2.512 & 1.75$\times$ \\
+Matched & NoPE & 99.2 & 0.6 & 0.0 & 55 & 0 & \textbf{1.432} & 8.097 & 5.65$\times$ \\
+Matched & \textbf{Polar} & 98.9 & \textbf{34.4} & \textbf{9.0} & 52 & \textbf{28} & 1.451 & \textbf{1.825} & \textbf{1.26$\times$} \\
+Matched & RoPE & 88.2 & 0.0 & 0.0 & \textbf{64} & 14 & 1.439 & 2.512 & 1.75$\times$ \\
 \midrule
-Raven/AdamW & Atma-Raven-Titans & 43.1 & 10.0 & 56 & 38 & \textbf{1.525} & \textbf{1.551} & 1.02$\times$ \\
-Raven/AdamW & \textbf{Raven Native} & 41.1 & \textbf{20.3} & \textbf{58} & \textbf{46} & 1.581 & 1.597 & \textbf{1.01$\times$} \\
+Raven/AdamW & Atma-Raven-Titans & 43.1 & 10.0 & 0.0 & 56 & 38 & \textbf{1.525} & \textbf{1.551} & 1.02$\times$ \\
+Raven/AdamW & \textbf{Raven Native} & 41.1 & \textbf{20.3} & 0.0 & \textbf{58} & \textbf{46} & 1.581 & 1.597 & \textbf{1.01$\times$} \\
 \bottomrule
 \end{tabular}}
-\caption{Long-context endpoints. Retrieval averages tasks, suites, and depths. BABILong is macro exact match. BPB averages three fixed-target datasets; lower is better. Bold is best within each comparison group.}
+\caption{Long-context endpoints. Retrieval averages tasks, suites, and depths; ``Tok.'' is teacher-forced target-token accuracy and ``Exact'' requires all five target tokens to be correct. BABILong is macro exact match. BPB averages three fixed-target datasets; lower is better. Bold is best within each comparison group.}
 \label{tab:endpoints}
 \end{table}
 
@@ -201,7 +201,7 @@ Raven Native & Synthetic & 55.9 & 57.7 & 51.4 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1
 \label{tab:haystack}
 \end{table}
 
-Table~\ref{tab:haystack} separates the retrieval results by haystack and length. Polar also limits mean BPB degradation to $1.26\times$ at 256K, compared with $5.65\times$ for NoPE and $1.75\times$ for RoPE. This stability accompanies a short-context cost: mean accuracy over eight 2K controls is 43.29\% for Polar, 45.15\% for NoPE, and 44.60\% for RoPE. Figure~\ref{fig:short_context_controls} shows that the gap is task-dependent rather than uniform. The 1.86-point mean gap to NoPE variant prevents a blanket quality claim. Exact per-task values are in Appendix~\ref{appendix:quality}.
+Table~\ref{tab:haystack} separates target-token accuracy by haystack and length; Appendix~\ref{appendix:retrieval} reports the corresponding exact-sequence values. Polar also limits mean BPB degradation to $1.26\times$ at 256K, compared with $5.65\times$ for NoPE and $1.75\times$ for RoPE. This stability accompanies a short-context cost: mean accuracy over eight 2K controls is 43.29\% for Polar, 45.15\% for NoPE, and 44.60\% for RoPE. Figure~\ref{fig:short_context_controls} shows that the gap is task-dependent rather than uniform. The 1.86-point mean gap to NoPE prevents a blanket quality claim. Exact per-task values are in Appendix~\ref{appendix:quality}.
 
 \begin{figure}[t]
 \centering
@@ -210,7 +210,7 @@ Table~\ref{tab:haystack} separates the retrieval results by haystack and length.
 \label{fig:short_context_controls}
 \end{figure}
 
-Table~\ref{tab:systems} makes the short-context quality and systems trade-off explicit. Raven reaches 46\% BABILong at 256K and keeps BPB almost flat, while its fixed recurrent state avoids KV-cache that scales with sequence length. At 128K, Atma-Raven-Titans decodes at 2.27 ms/token versus 16.3 ms/token for Polar, but Polar has higher synthetic retrieval and higher training MFU. Because the stable reported Raven training runs require the AdamW recipe rather than the failed Muon optimizer like attention variant, these results indicate different causal factor rather than isolate one mechanism.
+Table~\ref{tab:systems} makes the quality--systems trade-off explicit. Raven Native reaches 46\% BABILong at 256K and keeps BPB nearly flat, while its fixed recurrent state avoids a sequence-length-dependent KV cache. At 128K, Atma-Raven-Titans decodes at 2.27 ms/token versus 16.3 ms/token for Polar; Polar instead has higher synthetic retrieval and training MFU. The BABILong samples are small: simple Wilson intervals at 256K are 20.1--37.5\% for Polar (28/100) and 36.6--55.7\% for Raven Native (46/100). Because Raven also changes model family and optimizer, these rows locate practical operating points rather than isolate one causal mechanism.
 
 \begin{table}[t]
 \centering
@@ -234,7 +234,7 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \end{table}
 
 \FloatBarrier
-\section{Environment Sensitivity and Open Questions}
+\section{Checkpoint Variability Audit}
 
 \begin{figure}[!ht]
 \centering
@@ -243,10 +243,10 @@ Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \label{fig:environment}
 \end{figure}
 
-Beyond the architectural choice, Figure~\ref{fig:environment} presents an independent empirical contribution: identical short-context training convergence can hide significantly different long-context behavior. Three NoPE training runs finish at 2.8126, 2.8128, and 2.8160 validation nats, but their 256K NLLs respectively are 10.77 (L40S, microbatch 16), 9.90 (L40S, microbatch 4), and 4.07 (L4, microbatch 4).
+Figure~\ref{fig:environment} presents a post-hoc audit: nearly identical short-context convergence can hide substantially different long-context behavior. Three NoPE runs finish at 2.8126, 2.8128, and 2.8160 validation nats, but their 256K NLLs are respectively 10.77 (L40S, microbatch 16), 9.90 (L40S, microbatch 4), and 4.07 (L4, microbatch 4). The runs were not initialized from a recorded common seed, so this comparison measures checkpoint-to-checkpoint variability, not a device-class treatment effect.
 
 \subsection{Diagnostic journey}
-The finding emerged unintentionaly through an infrastructure transition rather than a planned device comparison. Stage I and the first Stage II 10B NoPE control ran on L4 with microbatch 4 and produced the 4.07-nat at 256K length. Moving the promoted runs to L40S with microbatch 16 preserved the 2K trajectory but changed the 256K nats to 10.77. Re-evaluation under PyTorch 2.12 and 2.13 left both checkpoints' evaluation scores unchanged; an L40S microbatch-4 retrain still reached 9.90 and deterministic 2K stream fixtures showed no gradient or loss discrepancy. These steps exclude evaluation-version and microbatch-only explanations in the tested runs, but do not isolate a unique hardware or kernel cause. All five headline Stage II models were trained together on L40S, so the main comparison remains environment-matched. Appendix~\ref{appendix:environment} records the full audit sequence.
+The finding emerged unintentionally during an infrastructure transition rather than a planned device comparison. Stage I and the first 10B NoPE control ran on an L4 with microbatch 4 and produced 4.07 nats at 256K. Moving the promoted runs to L40S with microbatch 16 preserved the 2K trajectory but yielded 10.77 nats at 256K. Re-evaluation under PyTorch 2.12 and 2.13 left both checkpoints unchanged; an L40S microbatch-4 retrain still reached 9.90, and deterministic 2K fixtures showed no gradient or loss discrepancy. These checks exclude evaluation-version mismatch and microbatch size alone in the tested runs. They cannot distinguish random initialization, data-order effects, hardware-dependent kernels, or their interactions. All five headline models were trained in the same L40S environment, so the main model comparison remains environment-matched. Appendix~\ref{appendix:environment} records the audit sequence.
 
 \begin{figure}[!ht]
 \centering
@@ -256,7 +256,7 @@ The finding emerged unintentionaly through an infrastructure transition rather t
 \end{figure}
 \FloatBarrier
 
-Figure~\ref{fig:stress} localizes the observed checkpoint change with a sampled block-level stress probe. The evidence establishes sensitivity to the training environment, but it does not uniquely identify CUDA reduction order as the causal mechanism: device class is not randomized or replicated across multiple seeds, and other hardware-dependent kernels may contribute. The defensible conclusion is that short-context convergence did not predict long-context behavior in these runs. Architecture-level extrapolation claims should therefore report seeds, kernels, device classes, and extended-context audits; stronger causal claims require replicated cross-device interventions. Additional diagnostic controls are in Appendix~\ref{appendix:diagnostics}.
+Figure~\ref{fig:stress} localizes the checkpoint difference with a sampled block-level stress probe. The L40S NoPE checkpoint first amplifies the perturbations around blocks 6--7, whereas the L4 checkpoint redistributes them more weakly downstream. This shows that the difference is stored in the trained checkpoints rather than introduced by the evaluation runtime. It does not establish why the training trajectories diverged. The defensible conclusion is that short-context convergence did not predict long-context behavior in these runs. Extrapolation studies should therefore report seeds, kernels, device classes, and extended-context audits; causal hardware claims require replicated, seed-paired interventions. Additional diagnostics are in Appendix~\ref{appendix:diagnostics}.
 
 \subsection{What this audit cannot answer}
 The finding opens several concrete questions that the present compute budget and page limit do not resolve:
@@ -264,7 +264,7 @@ The finding opens several concrete questions that the present compute budget and
 \setlength{\itemsep}{0.15em}
 \setlength{\parskip}{0pt}
 \setlength{\parsep}{0pt}
-\item Does the device-class divergence replicate across seeds, software stacks, and models at 7B scale and above, or is it specific to this 378M setup?
+\item Does the checkpoint divergence replicate under seed-paired device interventions, across software stacks, and at larger model scales?
 \item Which training-level numerical difference---kernel selection, reduction or accumulation order, or optimizer-state evolution---is amplified into the divergent checkpoint, and can an early diagnostic predict it?
 \item Does Polar's 0.3\% natural-text retrieval at 256K improve with longer or mixed-domain training, or reflect a synthetic-to-natural induction bias?
 \item How much of Raven's 256K BABILong lead comes from recurrent state, sparse routing, or AdamW, given that the Muon schedule did not converge?
@@ -273,17 +273,17 @@ These questions delimit the current evidence rather than extend its claims. Reso
 
 \section{Limitations and Conclusion}
 
-This study uses one model scale, one 2K pretraining regime, and fewer independent training replicates than needed for population-level uncertainty. Teacher-forced retrieval, custom BABILong adaptation, and single-sample serving measurements answer different questions and should not be collapsed into one score. Polar still fails on natural-text retrieval at 256K, its theoretical bounds require learned-margin assumptions that are not yet empirically certified for every head, and Raven is not an optimizer-matched ablation.
+This study uses one model scale, one 2K pretraining regime, and no seed replication sufficient for population-level architectural uncertainty. The Stage I factorial demonstrates robustness across nuisance-factor settings, not across random seeds. Teacher-forced retrieval, custom BABILong adaptation, and single-sample serving measurements answer different questions and should not be collapsed into one score. Polar has zero exact FinePDFs retrieval at 64K and 256K despite retaining partial target-token signal, its theoretical bounds require learned-margin assumptions not yet certified for every head, and Raven is not an optimizer-matched ablation. The documented pre-integration Polar design tests are not a substitute for network-level component ablations, and the present comparisons do not cover every contemporary length-scaling method.
 
-Within those limits, ATMA demonstrates that bounded full-context attention plus recurrent memory can move the long-context Pareto frontier. Polar materially extends soft retrieval and stabilizes long-document likelihood while retaining competitive short-context quality while Raven illustrates the reasoning and serving advantages of compressed state. The environment diagnostic further shows why long-context claims need evaluation well beyond the training window and, where feasible, across hardware environments. We release configurations, logs, checkpoint manifests, benchmark matrices, and proof artifacts to make each reported comparison auditable.
+Within those limits, ATMA establishes a reproducible operating point for bounded full-context attention plus recurrent memory. Polar materially extends target-token signal, preserves exact synthetic retrieval, and stabilizes long-document likelihood while remaining competitive on short-context tasks. Raven illustrates the BABILong and serving advantages of compressed recurrent state. The checkpoint audit further shows why length-extrapolation claims require evaluation far beyond the training window and careful reporting of run metadata. We release configurations, logs, checkpoint manifests, benchmark matrices, and numerical proof artifacts so that each reported comparison can be audited.
 
-\clearpage
 \subsection*{AI Use Statement}
-Generative AI tools were used in this revision to edit and shorten the manuscript, condense the presentation of existing mathematical claims and proofs, improve readability, and suggest document structure. They were not used to generate experimental datasets or execute experiments in this revision. The authors manually compare all AI-assisted mathematical text with the original derivations and proof artifacts, verify retained empirical claims against source logs and cited work, and take responsibility for every claim and artifact in the submission. This statement describes the present version as required by the ICLR 2027 policy.
+Generative AI tools were used in this revision to edit and shorten the manuscript, improve document structure, and reaggregate existing archived results. They were not used to generate experimental datasets, train models, or run new evaluations in this revision. The authors manually compare all AI-assisted mathematical text with the original derivations and proof artifacts, verify empirical values against source logs, and take responsibility for every claim and artifact in the submission. This statement describes the present version as required by the ICLR 2027 policy.
 
 \subsection*{Reproducibility Statement}
 Model definitions and training settings are described in Sections 3--4. Appendix~\ref{appendix:protocol} specifies evaluation protocols and denominators, Appendices~\ref{appendix:full_ablation}--\ref{appendix:diagnostics} provide detailed tables and diagnostics. The anonymous artifact at \url{https://anonymous.4open.science/r/atma} contains configurations, logs, checkpoint manifests, benchmark payloads, and machine-checked proof skeletons.
 
+\clearpage
 \bibliography{../colm2026_conference,iclr2027_additions}
 \bibliographystyle{iclr2027_conference}
 

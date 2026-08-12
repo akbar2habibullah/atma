@@ -98,6 +98,9 @@ The weak and strong modes follow the two SIGReg families introduced by Weak-SIGR
 \section{Polar Attention Implementation}
 \label{appendix:polar_implementation}
 
+\subsection{Design provenance and scope}
+Before integration, the Polar choices were developed by falsifying simpler alternatives in a standalone synthetic sandbox. Additive soft counts accumulated small per-key leakage with sequence length; thresholds based on a fixed number of standard deviations retained a constant fraction of noise keys; a fixed null logit was eventually overtaken by the maximum noise score; and an unbounded $\log m$ magnitude exposed the output projection to values beyond its training range. These failures motivated participation ratio, the $\sqrt{\log n}$ null floor, and the bounded $\tanh(\beta\log(1+m))$ map. The standalone prototype was subsequently removed and is not part of the released artifact. We therefore use these tests as design provenance, not as model-scale component ablations or independently reproducible benchmark evidence. The integrated equations, materialized oracle, streaming implementation, and parity tests described below are retained.
+
 \subsection{Numerical oracle}
 The materialized PyTorch path forms the masked real-key logits and virtual null logit in FP32, applies a single softmax, and computes the direction and magnitude channels from the resulting weights. It is used as a numerical oracle for forward and backward tests, not as the production long-context path, because materializing the $T\times T$ score matrix is memory-prohibitive at the evaluated lengths.
 
@@ -168,12 +171,14 @@ This removes the quadratic \emph{score-matrix storage}. Full-context prefill sti
 \section{Evaluation Protocols}
 \label{appendix:protocol}
 
-Stage I contains 120 approximately 370--378M-parameter runs trained for 1,900 steps of 524,288 tokens at sequence length 2,048 on FineWeb-Edu. Stage II contains three matched attention models trained for 18,722 such steps (9.816B tokens). The five promoted checkpoints and ten open-weight controls are evaluated with checkpoint-exact forward paths.
+Stage I contains 120 approximately 370--378M-parameter runs trained for 1,900 steps of 524,288 tokens at sequence length 2,048 on FineWeb-Edu. Stage II contains three matched attention models trained for 18,722 such steps (9.816B tokens). The five promoted checkpoints and ten open-weight controls are evaluated with checkpoint-exact forward paths. Stage I cells vary factorial settings and are not independent seed replicates.
 
 \subsection{Raven optimizer control}
 The Raven rows use AdamW optimizer because the attempted matched-schedule control did not produce a usable baseline. In the 1B-token Raven Native pilot with the Atma Muon schedule, validation loss decreased from 10.83 to 3.76 nats by step 625, then rose to 6.88 at step 1,125 and ended at 4.62; teacher-forced retrieval was 0\% at every tested length from 2K through 64K. The reported Raven Native and Atma-Raven-Titans checkpoints therefore use AdamW and remain a separate model-family/optimizer group. This is evidence about the tested Muon schedule, not a general claim that Raven cannot converge under any Muon tuning.
 
-Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The primary metric is teacher-forced accuracy over five target tokens. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
+Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The scorer appends the complete five-token target and evaluates each position conditioned on the preceding ground-truth target tokens. Token accuracy is the fraction of correct per-position argmax predictions; exact accuracy requires all five positions to be correct. Both are teacher-forced diagnostics, not autoregressive generation. An older free-generation protocol was retired because all base checkpoints scored uniformly zero. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
+
+For proportions we report simple Wilson intervals where they aid interpretation. These intervals treat trials as binomial observations and do not exploit the paired design or account for correlations induced by shared templates. The archived retrieval payloads retain aggregate cell counts but the BABILong payloads do not retain per-model correctness vectors, so paired bootstrap or McNemar tests cannot be reconstructed without rerunning or recovering the original predictions.
 
 \begin{landscape}
 \section{Complete Factorial Sweep}
@@ -221,7 +226,61 @@ Raven Native & Synthetic & 55.9 & 57.7 & 51.4 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1
 \label{table:retrieval_breakdown}
 \end{table}
 
-Figure~\ref{fig:retrieval_depth_sweeps} exposes depth-wise variation, while Table~\ref{table:retrieval_breakdown} aggregates the same retrieval evaluation by haystack and context length.
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+\textbf{Model} & \textbf{Haystack} & \multicolumn{3}{c}{\textbf{Token accuracy (\%)}} & \multicolumn{3}{c}{\textbf{Exact five-token accuracy (\%)}} \\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+& & \textbf{2K} & \textbf{64K} & \textbf{256K} & \textbf{2K} & \textbf{64K} & \textbf{256K} \\
+\midrule
+Polar & Synthetic & 99.6 & 92.3 & 68.4 & 96.3 & 65.7 & 18.0 \\
+& FinePDFs & 98.6 & 16.3 & 0.3 & 93.0 & 0.0 & 0.0 \\
+NoPE & Synthetic & 99.5 & 26.5 & 1.2 & 95.3 & 4.7 & 0.0 \\
+& FinePDFs & 99.3 & 0.0 & 0.0 & 96.7 & 0.0 & 0.0 \\
+RoPE & Synthetic & 81.7 & 0.1 & 0.0 & 42.3 & 0.0 & 0.0 \\
+& FinePDFs & 94.8 & 0.0 & 0.0 & 77.3 & 0.0 & 0.0 \\
+Atma-Raven-Titans & Synthetic & 64.8 & 35.8 & 19.3 & 8.0 & 0.3 & 0.0 \\
+& FinePDFs & 23.2 & 0.5 & 0.7 & 4.7 & 0.0 & 0.0 \\
+Raven Native & Synthetic & 55.9 & 40.9 & 35.1 & 2.0 & 0.0 & 0.0 \\
+& FinePDFs & 22.1 & 2.9 & 5.4 & 0.0 & 0.0 & 0.0 \\
+\bottomrule
+\end{tabular}}
+\caption{Teacher-forced retrieval under the two archived metrics. Token accuracy can expose partial target signal, whereas exact accuracy requires the entire five-token value to be predicted correctly under teacher forcing. Each haystack--length entry averages 300 sequences (two tasks, three depths, 50 trials).}
+\label{table:retrieval_exact_breakdown}
+\end{table}
+
+Figure~\ref{fig:retrieval_depth_sweeps} exposes depth-wise variation. Tables~\ref{table:retrieval_breakdown} and~\ref{table:retrieval_exact_breakdown} separate partial target signal from exact five-token success. For Polar, the 64K exact rate is 65.7\% on synthetic contexts (95\% Wilson interval 60.1--70.8\%) and 0/300 on FinePDFs (upper Wilson endpoint 1.3\%). At 256K the corresponding exact rates are 18.0\% (14.1--22.7\%) and 0/300. These results support exact synthetic extrapolation and teacher-forced real-text signal, but not exact real-text retrieval.
+
+\subsection{Open-weight context}
+Table~\ref{table:open_weight_controls} reports the ten archived open-weight controls. They differ in training data, tokenizer, architecture, parameter count, and native context length; several were trained at lengths beyond 2K. They are therefore practical context, not matched length-extrapolation baselines and not evidence of a Polar advantage over the corresponding model families.
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.4pt}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Open-weight model} & \textbf{NLL 2K} & \textbf{NLL 64K} & \textbf{Needle 2K} & \textbf{Needle 64K} \\
+\midrule
+SmolLM2-360M & 1.99 & 6.04 & 100.0 & 8.1 \\
+LFM2.5-230M & 3.01 & 6.69 & 38.1 & 19.4 \\
+LFM2.5-350M & 3.18 & 6.63 & 45.6 & 46.3 \\
+Qwen2.5-0.5B & 2.03 & 1.53 & 100.0 & 38.1 \\
+Qwen3-0.6B-Base & 1.95 & 1.40 & 100.0 & 95.0 \\
+Qwen3.5-0.8B-Base & 1.94 & 1.33 & 100.0 & 100.0 \\
+Gemma-3-270M & 2.48 & 1.90 & 96.2 & 24.4 \\
+Granite-4.0-350M & 2.52 & 3.02 & 40.6 & 8.8 \\
+Granite-4.0-H-350M & 2.22 & 2.06 & 75.0 & 54.4 \\
+Falcon-H1-0.5B & 1.99 & 2.54 & 92.5 & 19.4 \\
+\bottomrule
+\end{tabular}
+\caption{Open-weight controls evaluated through 64K. NLL is fixed-target FinePDFs nats/token; Needle is teacher-forced target-token accuracy over 16 trials. These checkpoints are not matched for data, tokenizer, native context, or training budget.}
+\label{table:open_weight_controls}
+\end{table}
 
 \section{Short-Context Quality and Systems}
 \label{appendix:quality}
@@ -393,10 +452,10 @@ G_i=\frac{\lVert f_i(x+\delta x)-f_i(x)\rVert_{\rm rms}}{\lVert\delta x\rVert_{\
 \end{equation}
 The maximum sampled gain is a lower bound on the local operator norm along sampled directions. It is not a tight bound on the block Lipschitz constant. In the observed NoPE collapse, changes first concentrate near blocks 6--7 and later propagate through the residual stream. Polar's sampled gains and activation moments remain comparatively flat through 256K.
 
-\section{Environment-Sensitivity Diagnostic Journey}
+\section{Checkpoint-Variability Diagnostic Journey}
 \label{appendix:environment}
 
-The sensitivity finding emerged sequentially. Stage I used L4 GPUs, followed by the first Stage II 10B NoPE control on L4. The anomaly became visible only after the remaining Stage II training moved to L40S: short-context convergence remained nearly unchanged while the 256K extrapolation results diverged. Table~\ref{table:environment_diagnostic_journey} records the subsequent elimination sequence.
+The variability finding emerged sequentially. Stage I used L4 GPUs, followed by the first 10B NoPE control on an L4. The anomaly became visible only after the remaining training moved to L40S: short-context convergence remained nearly unchanged while the 256K extrapolation results diverged. Table~\ref{table:environment_diagnostic_journey} records the subsequent elimination sequence. The recorded run configurations do not provide a paired controlled seed, so random initialization and the resulting stochastic trajectory remain confounded with the infrastructure transition.
 
 \begin{table}[!ht]
 \centering
@@ -406,7 +465,7 @@ The sensitivity finding emerged sequentially. Stage I used L4 GPUs, followed by 
 \toprule
 \textbf{Step} & \textbf{Observation or intervention} & \textbf{Diagnostic implication} \\
 \midrule
-L4 baseline & Stage I and the first Stage II 10B NoPE control used L4, microbatch 4; 256K NLL was 4.07. & Established the original extrapolation behavior, but not a replicated device-class estimate. \\
+L4 baseline & Stage I and the first 10B NoPE control used L4, microbatch 4; 256K NLL was 4.07. & Established the original extrapolation behavior, but not a replicated device-class estimate. \\
 L40S transition & The promoted NoPE run used L40S, microbatch 16; 2K validation ended at 2.8126 versus 2.8160 on L4, but 256K NLL rose to 10.77. & Revealed that nearly coincident short-context curves did not predict the long-context endpoint. \\
 Evaluation replay & L4 and L40S checkpoints were re-evaluated under PyTorch 2.12 and 2.13 with unchanged scores. & Excluded evaluation-version mismatch for these checkpoints. \\
 Microbatch control & NoPE was retrained on L40S with microbatch 4; 2K validation ended at 2.8128 and 256K NLL at 9.90. & Excluded microbatch size alone as the explanation in this comparison. \\
@@ -417,4 +476,4 @@ Deterministic fixtures & Synthetic 2K stream fixtures across the tested versions
 \label{table:environment_diagnostic_journey}
 \end{table}
 
-All five headline Stage II models were trained in the same L40S software and hardware environment, so their primary comparison is internally matched. The cross-device observation nevertheless motivates a broader audit principle: long-context extrapolation claims should report device class, kernels, seeds, and extended-context diagnostics rather than infer robustness from short-context loss alone. The present evidence does not identify CUDA reduction order, floating-point accumulation, or any other single mechanism as causal, because the L4/L40S intervention was not randomized or replicated across multiple seeds and kernel configurations.
+All five headline models were trained in the same L40S software and hardware environment, so their primary comparison is internally matched. The earlier L4 checkpoint is retained only as a post-hoc case study. It motivates a broader audit principle: long-context extrapolation claims should report device class, kernels, seeds, and extended-context diagnostics rather than infer robustness from short-context loss alone. The present evidence does not identify CUDA reduction order, floating-point accumulation, device class, or any other single mechanism as causal because the L4/L40S runs were neither initialized from a recorded common state nor replicated across seeds and kernel configurations.
