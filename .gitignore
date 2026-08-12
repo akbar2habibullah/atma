@@ -11,3 +11,19 @@ scaled_ablation/cross_eval_*.json
 /tmp/training_artifact_diag/
 paper/arxiv
 /checkpoints/babilong_2k_ft/
+
+# LaTeX build products (compiled manuscript PDFs are tracked explicitly).
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.fdb_latexmk
+paper/**/*.fls
+paper/**/*.log
+paper/**/*.out
+paper/**/*.synctex.gz
+paper/**/*.toc
+
+# Local editor and OS artifacts.
+.DS_Store
+Thumbs.db
+.vscode/

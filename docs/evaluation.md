@@ -1,126 +1,95 @@
-# Length Extrapolation & Long-Range Retrieval
+# Evaluation and current results
 
-For the post-training 2K-to-256K activation and randomized modal analysis of
-five pretrained 10B-token checkpoints, see
-[Pretrained checkpoint stress sweep to 256K](CHECKPOINT_STRESS.md).
+ATMA is evaluated as a multi-objective long-context system. The current result set covers recipe selection, matched long-context comparisons, retrieval, fixed-target likelihood, short-context controls, adapted BABILong, and serving. The ICLR 2027 draft in [`paper/iclr2027/`](../paper/iclr2027/) is the source of truth for paper claims.
 
-Polar Attention is designed to **train short, infer long**. All numbers below come from the **120-cell ablation** — identical 370M models, `seq_len=2048`, ~1B tokens, evaluated at full context from 2K to 64K (32× train length) on a single 24 GB L4. The full grid is browsable in [pages/dashboard.html](../pages/dashboard.html); the probes themselves are produced by [eval.py](../eval.py) (reference at the bottom). See [POLAR_ATTENTION.md](POLAR_ATTENTION.md) for the mechanism.
+## Experimental stages
 
-## 1. Attention alone does not extrapolate — with or without polar/RoPE
+### Stage I: recipe selection
 
-Memoryless cores (baseline regularizer, no distractor, no window). They collapse on retrieval and degrade on perplexity within a few × of the training length:
+The full factorial trains 120 approximately 370–378M-parameter models for 1,900 optimizer steps, or about 1B FineWeb-Edu tokens, at sequence length 2,048 on NVIDIA L4 GPUs.
 
-| Length (× train) | softmax clean ppl | polar clean ppl | rope clean ppl | softmax needle | polar needle | rope needle |
-|---|---|---|---|---|---|---|
-| 2,048 (1×) | 2.76 | 2.83 | 2.85 | 98 % | 96 % | 43 % |
-| 8,192 (4×) | 2.67 | 3.32 | 2.78 | 28 % | 15 % | 4 % |
-| 32,768 (16×) | 3.38 | 3.60 | 3.07 | 3 % | 3 % | 0 % |
-| 65,536 (32×) | 3.71 | 3.60 | 3.36 | 1 % | 0 % | 0 % |
+The grid crosses:
 
-Softmax dilutes as keys accumulate; polar's attention *pool* grows out-of-distribution (the participation ratio `n_eff` blows up past the training length). RoPE suffers from position-shifting out-of-distribution and fails to retrieve at long ranges. None of these cores retrieve far on their own. Polar degrades a little more gracefully on the raw stream at long range (junk-stream ppl `5.68` vs softmax `6.68` and RoPE `5.21` @ 32×), but all are far from usable — the fix is not in the attention core alone.
+- attention core: Polar, NoPE, or RoPE;
+- representation regularizer: five settings;
+- distractor alignment: on or off;
+- gated-delta memory: on or off;
+- 1,024-token training window: on or off.
 
-> The distractor loss (`num_random_keys > 0`) calibrates the null floor against random keys. On the **memoryless** polar core in this sweep it does **not** rescue retrieval — it collapses the needle (`85 % → 0 %`). The lever that works is the memory.
+At 64K, adding memory improves Polar in all 20 matched nuisance-factor settings by **47.8 percentage points on average**. Among memory-enabled cells, Polar is never worse than NoPE and exceeds RoPE in all 20 comparisons. A training window reduces Polar+memory by **25.5 points on average**; distractor alignment has a smaller, nonuniform **−6.0-point** mean effect. The promoted recipe is therefore full-context Polar + memory without distractor alignment.
 
-## 2. The Titans memory is the unlock
+The selected baseline cell reaches **92.5% teacher-forced five-token accuracy at 64K**. This Stage I value comes from 16 trials in the original sweep and is a recipe-selection statistic, not the paper's final headline evaluation.
 
-Adding the [Titans compression memory](TITANS_MEMORY.md) to **full polar, with no window and no distractor** (`mem_enabled=True`, `attn_window=None`, `num_random_keys=0`) — the ablation winner — holds **both** properties at once:
+Browse all cells in the [interactive dashboard](../pages/dashboard.html) or rebuild it from [`ablation/results.json`](../ablation/results.json):
 
-- **Perplexity reverses and improves monotonically.** Clean-document perplexity (coherent finepdfs documents) *falls* with length, `2.70 → 1.96` across the 2K→64K sweep, where the memoryless polar core was the **worst** option (blowing up past `3.6`). The gain is the memory, not a window: the polar core trains at the same `N ≤ 1024` operating point either way.
-- **Retrieval stays flat above 90 % to 32× train length.** The induction needle holds `91–98 %` across the whole sweep (length-weighted `94 %`).
+```bash
+python -m ablation.build_dashboard \
+  --results ablation/results.json \
+  --out pages/dashboard.html
+```
 
-| Needle distance | polar, no memory (§1) | softmax + memory | rope + memory | **polar + memory** |
-|---|---|---|---|---|
-| 2,048 (1×) | 96 % | 98 % | 74 % | **91 %** |
-| 4,096 (2×) | 40 % | 98 % | 55 % | **95 %** |
-| 8,192 (4×) | 15 % | 94 % | 29 % | **93 %** |
-| 16,384 (8×) | 8 % | 85 % | 9 % | **98 %** |
-| 32,768 (16×) | 3 % | 48 % | 0 % | **96 %** |
-| 65,536 (32×) | 0 % | 16 % | 0 % | **93 %** |
+### Stage II: matched 9.816B-token comparison
 
-**Polar earns its keep at extreme length.** Softmax + the *same* memory holds early but collapses past ~16× (the `n_eff` blow-up reappears in its readout); RoPE + memory collapses even faster. Only **polar + memory** stays flat to 32× — and its perplexity is best and monotonic (`1.96` vs softmax-memory `2.34 @ 64×`, and RoPE-memory `2.86 @ 64×`). Convergence and quality rank **Polar+Titans > Softmax+Titans > RoPE+Titans > polar-only**.
+NoPE, RoPE, and Polar models are trained for 18,722 optimizer steps—**9.816B tokens**—at length 2K in the same L40S software and hardware environment. Their sizes range from 378.16M to 378.22M parameters and all use the selected memory-enabled recipe.
 
-## 3. With the memory, the distractor and window only hurt
+Atma-Raven-Titans (382.37M) and Raven Native (388.54M) use the same data, tokenizer, token budget, and device class, but use a different model family and AdamW optimizer. They are useful operating points, not optimizer-matched architectural ablations.
 
-Starting from the winner and adding back the two levers that "helped" the *memoryless* core makes retrieval **worse**, not better (needle accuracy):
+## Long-context endpoints
 
-| Needle distance | polar + memory (winner) | + distractor | + window (1024) |
-|---|---|---|---|
-| 2,048 (1×) | 91 % | 74 % | 51 % |
-| 16,384 (8×) | **98 %** | 76 % | 53 % |
-| 65,536 (32×) | **93 %** | 59 % | 30 % |
+| Group | Model | Retrieval token 2K | Retrieval token 256K | Exact 256K | BABILong 256K | Mean BPB 2K | Mean BPB 256K |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Matched | NoPE | 99.2% | 0.6% | 0.0% | 0% | **1.432** | 8.097 |
+| Matched | Polar | 98.9% | **34.4%** | **9.0%** | **28%** | 1.451 | **1.825** |
+| Matched | RoPE | 88.2% | 0.0% | 0.0% | 14% | 1.439 | 2.512 |
+| Raven / AdamW | Atma-Raven-Titans | 43.1% | 10.0% | 0.0% | 38% | **1.525** | **1.551** |
+| Raven / AdamW | Raven Native | 41.1% | **20.3%** | 0.0% | **46%** | 1.581 | 1.597 |
 
-The window is retrieval-blind past its width (it never trains attention on distance-`1024`+ keys); the distractor over-sharpens the null floor and fights the memory's diffuse readout. Clean-document perplexity is essentially unchanged across the three (`1.96 – 2.01 @ 64×`), so the cleanest recipe is strictly best — it wins on retrieval at no perplexity cost.
+Retrieval values average passkey and NIAH tasks, synthetic and FinePDFs haystacks, three needle depths, and paired trials. BABILong is macro exact match after task adaptation. BPB averages FinePDFs, PG-19, and Proof-Pile fixed-target evaluations.
 
-**Ablation — `--no_mem` confirms the memory is load-bearing.** Stripping the memory from a trained checkpoint breaks it globally (loss `2.8 → 5.7` at 1×, needle `0 %` everywhere): the model uses the memory at *all* lengths, not just long context. See [TITANS_MEMORY.md §7](TITANS_MEMORY.md#7-empirical-results) for the gated-delta math and the ~6–9 % MFU overhead.
+## Retrieval boundary
 
-## 4. Open-weight pretrained baselines
+The retrieval scorer appends the complete five-token target and evaluates each target position conditioned on preceding ground-truth target tokens.
 
-The open-model runs in [ablation/open_logs](../ablation/open_logs) use the same clean-doc,
-junk-stream, and induction-needle probes. Because every pretrained model uses its own
-tokenizer, the table reports **bits per GPT-2 token** (`bits/GPT2tok`) instead of native-token
-nats; lower is better. The weighted averages use the same length weights as the dashboard
-(`L / 2048`), so 64K dominates the summary. Needle values are greedy per-value-token accuracy.
+- **Token accuracy** measures per-position argmax accuracy under teacher forcing.
+- **Exact accuracy** requires all five target tokens to be correct under teacher forcing.
+- Neither metric is autoregressive free-generation success.
 
-For orientation, the main Atma rows converted from nats/token to bits/GPT2tok:
+Polar's result depends strongly on haystack type:
 
-| Model / recipe | Params | Clean bits/GPT2tok wavg | Clean @64K | Junk @64K | Needle wavg | Needle @64K |
-|---|---:|---:|---:|---:|---:|---:|
-| Atma polar + Titans memory | 378M | 3.04 | 2.83 | 4.51 | 94.1% | 92.5% |
-| Atma softmax + Titans memory | 378M | 3.37 | 3.38 | 4.66 | 41.7% | 16.3% |
-| Atma rope + Titans memory | 378M | 4.08 | 4.12 | 5.16 | 5.9% | 0.0% |
-| Atma polar, no memory | 370M | 5.11 | 5.20 | 8.19 | 5.3% | 0.0% |
-| Atma softmax, no memory | 370M | 4.93 | 5.35 | 9.63 | 7.9% | 1.3% |
-| Atma rope, no memory | 370M | 4.55 | 4.84 | 7.51 | 1.2% | 0.0% |
+| Haystack | Metric | 2K | 64K | 256K |
+|---|---|---:|---:|---:|
+| Synthetic | Token accuracy | 99.6% | 92.3% | 68.4% |
+| Synthetic | Exact five-token accuracy | 96.3% | 65.7% | 18.0% |
+| FinePDFs | Token accuracy | 98.6% | 16.3% | 0.3% |
+| FinePDFs | Exact five-token accuracy | 93.0% | 0.0% | 0.0% |
 
-Open-weight pretrained baselines:
+The defensible claim is retained target signal and exact synthetic retrieval. The current checkpoints do **not** demonstrate exact real-text retrieval at 64K or 256K.
 
-| Model | Params | Clean bits/GPT2tok wavg | Clean @2K | Clean @64K | Junk @64K | Needle wavg | Needle @2K | Needle @64K |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `Qwen/Qwen3.5-0.8B-Base` | 752M | 1.70 | 2.23 | 1.54 | 3.80 | 100.0% | 100.0% | 100.0% |
-| `Qwen/Qwen3-0.6B-Base` | 596M | 1.72 | 2.21 | 1.60 | 3.84 | 97.5% | 100.0% | 95.0% |
-| `Qwen/Qwen2.5-0.5B` | 494M | 1.84 | 2.30 | 1.74 | 3.87 | 68.4% | 100.0% | 38.1% |
-| `ibm-granite/granite-4.0-h-350m-base` | 340M | 2.20 | 2.25 | 2.11 | 3.98 | 56.9% | 75.0% | 54.4% |
-| `google/gemma-3-270m` | 268M | 2.22 | 2.89 | 2.18 | 4.54 | 53.2% | 96.2% | 24.4% |
-| `ibm-granite/granite-4.0-350m-base` | 352M | 2.69 | 2.56 | 3.10 | 5.65 | 25.6% | 40.6% | 8.8% |
-| `tiiuae/Falcon-H1-0.5B-Base` | 521M | 3.03 | 2.57 | 3.05 | 5.65 | 28.6% | 92.5% | 19.4% |
-| `HuggingFaceTB/SmolLM2-360M` | 362M | 5.57 | 2.43 | 6.72 | 10.37 | 16.9% | 100.0% | 8.1% |
-| `LiquidAI/LFM2.5-230M-Base` | 230M | 6.93 | 3.59 | 6.96 | 11.01 | 29.0% | 38.1% | 19.4% |
-| `LiquidAI/LFM2.5-350M-Base` | 354M | 6.96 | 3.79 | 6.90 | 11.11 | 44.6% | 45.6% | 46.3% |
+## Short-context and systems trade-offs
 
-The pretrained Qwen baselines are much stronger language models at this scale and also solve
-the synthetic induction probe out to 64K. Atma's claim is narrower: with only ~1B training
-tokens, the polar+memory recipe keeps retrieval flat where matched Atma softmax/memory and
-memoryless variants collapse.
+Mean zero-shot accuracy across eight 2K controls is 45.15% for NoPE, 44.60% for RoPE, and 43.29% for Polar. Polar's 1.86-point gap to NoPE prevents a blanket quality claim.
 
-## Choosing an attention mode
+On one L40S at 128K, the attention variants decode at about 16.3–16.5 ms/token and allocate about 39.4 GiB. The recurrent variants keep fixed-size state: Atma-Raven-Titans records 2.27 ms/token and 8.62 GiB, while Raven Native records 3.27 ms/token and 6.46 GiB. These are single-sequence, single-sample descriptive measurements rather than confidence intervals.
 
-The ablation collapses the earlier per-workload guidance into one default:
+## Archived result payloads
 
-- **Just use full polar + the Titans memory — no window, no distractor** (`mem_enabled=True`, `attn_window=None`, `num_random_keys=0`). It is the best recipe for in-distribution perplexity *and* distant retrieval at once, at ~6–9 % MFU overhead.
-- A sliding window (`attn_window ≈ train length`) remains an option only for pure **local** language modeling, where distant recall is irrelevant and you want the lowest cost — but it is retrieval-blind past its width.
+| Artifact | Contents |
+|---|---|
+| [`ablation/results.json`](../ablation/results.json) | Complete Stage I grid |
+| [`benchmarks/logs/atma_10b/benchmark_matrix.json`](../benchmarks/logs/atma_10b/benchmark_matrix.json) | Stage II retrieval, base-task, long-document, and serving rows |
+| [`benchmarks/logs/babilong_2k_ft/benchmark_matrix.json`](../benchmarks/logs/babilong_2k_ft/benchmark_matrix.json) | Adapted BABILong rows |
+| [`scaled_ablation/logs_stress/checkpoint_stress.json`](../scaled_ablation/logs_stress/checkpoint_stress.json) | Checkpoint stress diagnostics |
+
+For protocol details and commands, see [`benchmarks/README.md`](../benchmarks/README.md). For the post-hoc checkpoint audit, see [checkpoint variability](research/checkpoint-variability.md).
 
 ## `eval.py` reference
 
+The lightweight evaluation entry point supports loss extrapolation and induction-needle probes against local checkpoints:
+
 ```bash
-# loss-only extrapolation sweep
-python eval.py --multipliers 1 2 4 8 16 32 64
-
-# perplexity vs sliding window, on single coherent long docs, with per-position L(t)
-python eval.py --hf_dataset codelion/finepdfs-100M --windows 128 512 2048 full --per_position
-
-# induction needle-in-haystack retrieval vs distance
-python eval.py --needle --hf_dataset codelion/finepdfs-100M \
-  --needle_distances 2048 4096 8192 16384 32768 65536
+python eval.py --checkpoint checkpoints
+python eval.py --checkpoint checkpoints --needle
+python eval.py --checkpoint checkpoints --no_mem
 ```
 
-| Flag | What it does |
-|---|---|
-| *(none)* | loss-only extrapolation sweep at context multipliers |
-| `--diagnose` | per-layer activation distribution + polar internals (`n_eff`, `w_null`, `mag`) vs N |
-| `--window W` | eval-only causal sliding window of width `W` |
-| `--windows … --per_position` | multi-window + full comparison in one run, with `L(t)` curves |
-| `--hf_dataset ID` | single coherent long documents (nested prefixes) instead of the concatenated stream |
-| `--needle` | induction needle-in-haystack: retrieval accuracy vs needle→query distance |
-| `--no_mem` | strip the Titans memory branch from the checkpoint (sets `attn.mem = None`) to isolate its contribution |
-
-All probe modes run `embed → blocks` eager with a time-chunked LM head (fits 24 GB at 64×) and force the streaming/Triton polar path (the materialized `O(T²)` path OOMs past ~16×).
+For paper-scale reproduction, use the checkpoint-exact harness in [`benchmarks/`](../benchmarks/) rather than treating this convenience script as the complete published protocol.

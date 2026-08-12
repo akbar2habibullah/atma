@@ -59,7 +59,7 @@ FLA_CUSTOM_OP=1 ATMA_WALL_CUSTOM_OP=1 python -m ablation.run_worker \
 
 Wall keeps canon, so it was the matched comparison to `nope` and isolates per-channel gating. On
 CUDA, training requires the Wall Triton kernel and defaults to `ATMA_WALL_CUSTOM_OP=1`. Keep Wall
-results in diagnostic/appendix material only. See [FUTURE.md section 4](../docs/FUTURE.md).
+results in diagnostic/appendix material only. See [future directions](../docs/research/future-directions.md).
 
 ## Outsider Baseline: Raven
 

@@ -9,6 +9,8 @@ on:
     branches: [main]
     paths:
       - "pages/**"
+      - "ablation/build_dashboard.py"
+      - "ablation/results.json"
       - ".github/workflows/pages.yml"
   # Manually trigger from the Actions tab (e.g. to deploy from a non-main branch).
   workflow_dispatch:
@@ -37,8 +39,10 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      # The site is fully static (HTML + webp + the self-contained dashboard),
-      # so there is no build step — just upload the pages/ directory as-is.
+      - name: Build ablation dashboard
+        run: python -m ablation.build_dashboard --results ablation/results.json --out pages/dashboard.html
+
+      # The generated dashboard remains a self-contained static artifact.
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:

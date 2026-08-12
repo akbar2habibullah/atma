@@ -1,7 +1,7 @@
 # Pretrained checkpoint stress sweep to 256K
 
 This report interprets the completed long-context stress sweep in
-[`scaled_ablation/logs_stress/checkpoint_stress.json`](../scaled_ablation/logs_stress/checkpoint_stress.json).
+[`scaled_ablation/logs_stress/checkpoint_stress.json`](../../scaled_ablation/logs_stress/checkpoint_stress.json).
 It is a post-training comparison of five 10B-token checkpoints trained at a
 2,048-token context length. The sweep extends them to 262,144 tokens (128x the
 training length).
@@ -236,4 +236,4 @@ sweep:
    hardware or microbatch.
 
 The implementation and metric definitions are in
-[`scaled_ablation/stress.py`](../scaled_ablation/stress.py).
+[`scaled_ablation/stress.py`](../../scaled_ablation/stress.py).

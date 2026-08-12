@@ -1,12 +1,17 @@
-# Future Directions
+# Future directions (research notes)
+
+> Status: exploratory planning notes preserved for research provenance. Some sequencing language
+> and pilot numbers predate the completed ICLR 2027 experiments; use the
+> [evaluation guide](../evaluation.md) for current results.
 
 Tracking doc for potential development beyond the current architecture
-([Polar Attention](POLAR_ATTENTION.md) + [Titans MAG memory](TITANS_MEMORY.md)). These are
+([Polar Attention](../POLAR_ATTENTION.md) + [Titans MAG memory](../TITANS_MEMORY.md)). These are
 **not committed work** — they are ideas, framings, and falsifiable experiments parked here so
 they survive until there's bandwidth to pursue them.
 
 > Most of the experimental items are **blocked on the 120-way ablation sweep** (5×2×2×2×3,
-> see [ablation/README.md](../ablation/README.md)) currently running (~2–3 weeks). Do not start
+> see [ablation/README.md](../../ablation/README.md)) is complete. Treat the sequencing below as
+> historical planning rather than current run status. Do not start
 > new diagnostic interventions until that grid lands — they are *post-sweep* candidates.
 
 ---
@@ -88,7 +93,7 @@ Dense equal-length and grouped heterogeneous fresh-prefill routes are implemente
 engine. Both retain the paged K/V cache and recurrent state tables; chunked/prefix prefill remains
 on the exact per-sequence fallback, and decode remains CUDA-graph captured. Implementation,
 measurements, rejected fusion experiments, and remaining systems work are maintained in
-[kernel.md](kernel.md).
+[kernel.md](../kernel.md).
 
 ---
 
@@ -110,7 +115,7 @@ A framing that unifies the diagnosis and points at the open work.
     `exp` of the order-2 Rényi (collision) entropy. The conditioning of the soft-argmin.
   - `1 − w_null` — a **significance test** of the best match against an EV noise floor.
 
-**Candidate failure mode** ([polar extrapolation diagnosis](POLAR_ATTENTION.md)): a
+**Candidate failure mode** ([polar extrapolation diagnosis](../POLAR_ATTENTION.md)): a
 fixed-bandwidth smoother can over-smooth when a growing context contributes mostly irrelevant
 keys. Polar's `1 + softplus(g)·log N` temperature is an **open-loop** bandwidth schedule, so its
 operating point can still move with length and leak downstream through branch-energy,
@@ -140,7 +145,7 @@ form of kernel regression.
   solve-then-straight-through).
 - This can make the chosen anchor-local statistic **length-controlled by construction** rather
   than by meta-learned approximation. It folds into the existing `polar_temp_null` in
-  [model/blocks.py](../model/blocks.py).
+  [model/blocks.py](../../model/blocks.py).
 
 **Falsifiable prediction.** Under a paired extension containing known-irrelevant keys, the
 controller should preserve the aligned query's useful read, final margin, and downstream branch
@@ -169,7 +174,7 @@ length even with full (un-windowed) polar attention** (`full` reversed from wors
   geometry so the attention branch itself remains inside its paired short-context operating tube.
   This repair need not make pooled `n_eff` flat.
 
-**Test (deferred — needs the memory-trained checkpoints + GPU).** Run [eval.py](../eval.py)
+**Test (deferred — needs the memory-trained checkpoints + GPU).** Run [eval.py](../../eval.py)
 `--diagnose --no_mem`, but compare paired projected-attention drift, attention/memory energy,
 normalized pre-MLP drift, and raw pre-cap margin in addition to `n_eff`:
 
@@ -202,8 +207,8 @@ length; it is a reproducible chain from an answer-preserving extension to a sour
 downstream amplification, and task-margin erosion.
 
 **Pilot observation (2026-07-19; provisional).** The
-[checkpoint stress driver](../scaled_ablation/eval_hf_checkpoints.py) and
-[streaming probe](../scaled_ablation/stress.py) evaluated three 378M-class checkpoints on the same
+[checkpoint stress driver](../../scaled_ablation/eval_hf_checkpoints.py) and
+[streaming probe](../../scaled_ablation/stress.py) evaluated three 378M-class checkpoints on the same
 eight coherent documents from 2K through 131K. Every passive run completed without OOM or
 non-finite activations. The checkpoints were almost tied at 2K but separated sharply at length.
 Because the lengths double and the completed document sets are identical, disjoint late-shell
@@ -580,9 +585,9 @@ proofs directly certify Atma or PLMT.
 | Huang, LeCun, and Balestriero, [*Semantic Tube Prediction: Beating LLM Data Efficiency with JEPA*](https://arxiv.org/abs/2602.22617v1) | Ordered hidden-state bending exposes angular/transverse deviation under a local-linearity hypothesis. | PLMT penalizes only short-to-long **excess** bending on aligned local windows, retains a curvature tolerance, and keeps full-vector drift and output margin. Unlike STP's view-free default, PLMT deliberately uses controlled two-view pairs because length itself is the intervention. |
 | Tarvainen and Valpola, [*Mean teachers are better role models: Weight-averaged consistency targets improve semi-supervised deep learning results*](https://arxiv.org/abs/1703.01780) | An EMA-weight teacher can provide a slower detached consistency target. | Same-model stop-gradient is the PLMT default so the contrast isolates length. EMA is an ablation for stability, applied only to the sufficient short view and gated by correctness; ordinary NTP remains the target anchor. |
 | Zhang and Sennrich, [*Root Mean Square Layer Normalization*](https://arxiv.org/abs/1910.07467) | RMS scaling motivates a dimensionless `norm(delta_q) / sqrt(d)` diagnostic. | PLMT does not discard learned-gain radial drift; the exact radius-angle decomposition above determines when the metric is genuinely angular. |
-| Current four non-baseline [SIGReg modes](../train/reg.py) | `weak` and `discrete` expose covariance/whitening geometry; `strong` matches projected characteristic functions to a Gaussian; `zipfian` separates angular decorrelation from norm-rank structure. | SIGReg pools the unpaired `B x T` marginal and has no event alignment, length contrast, target identity, or decision boundary. PLMT is paired, anchor-aligned, one-sided, and margin-aware; it is complementary, not a fifth SIGReg mode. |
-| [Polar Attention](POLAR_ATTENTION.md) | Its content/direction, effective-count/magnitude, and null decomposition supplies branch-resolved diagnostic sites. | PLMT constrains only a causally validated source, provisionally projected content before count and memory. It does not clamp `n_eff`, count, or null merely because they change with length. |
-| [Titans MAG memory](TITANS_MEMORY.md) | Its additive branch makes upstream repair versus downstream compensation testable. | PLMT places the source tube before Titans and uses memory on/off patching as a causal test. It does not regularize memory by default, and Atma's gated-delta memory must not be conflated with Garcia et al.'s constructed Hebbian MLP. |
+| Current four non-baseline [SIGReg modes](../../train/reg.py) | `weak` and `discrete` expose covariance/whitening geometry; `strong` matches projected characteristic functions to a Gaussian; `zipfian` separates angular decorrelation from norm-rank structure. | SIGReg pools the unpaired `B x T` marginal and has no event alignment, length contrast, target identity, or decision boundary. PLMT is paired, anchor-aligned, one-sided, and margin-aware; it is complementary, not a fifth SIGReg mode. |
+| [Polar Attention](../POLAR_ATTENTION.md) | Its content/direction, effective-count/magnitude, and null decomposition supplies branch-resolved diagnostic sites. | PLMT constrains only a causally validated source, provisionally projected content before count and memory. It does not clamp `n_eff`, count, or null merely because they change with length. |
+| [Titans MAG memory](../TITANS_MEMORY.md) | Its additive branch makes upstream repair versus downstream compensation testable. | PLMT places the source tube before Titans and uses memory on/off patching as a causal test. It does not regularize memory by default, and Atma's gated-delta memory must not be conflated with Garcia et al.'s constructed Hebbian MLP. |
 
 Keep the epistemic labels explicit: the fixed linear-head boundary relation and the RMS/STP
 algebra are exact; the internal noisy-query transfer is theorem-inspired; the causally validated
@@ -609,7 +614,7 @@ split, the baseline Wall cell improved early and then regressed badly; the compa
 Muon control shows the same qualitative instability. Treat this as a protocol incompatibility, not
 as a general negative result on Wall, because the official Wall recipe uses per-head Muon/MuonSplit
 and Aurora-style training details. Raven now replaces Wall as the stronger outsider baseline through
-[raven_baseline](../raven_baseline/), with the protocol difference stated explicitly.
+[raven_baseline](../../raven_baseline/), with the protocol difference stated explicitly.
 
 [Blog](https://blog.tilderesearch.com/blog/wall-attn) ·
 [Code](https://github.com/tilde-research/wall-attention-release). Data-dependent **diagonal
@@ -632,7 +637,7 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
    finding — channels split into **static memory** (retention=1.0, full-attention, distant
    recall) and **dynamic forgetting** (snap shut at semantic boundaries, recency) — solves
    *inside attention, per-channel* the exact tradeoff that motivated the Titans memory. It is
-   also **independent confirmation of Titans [Finding 2](TITANS_MEMORY.md)** (per-head γ as a
+   also **independent confirmation of Titans [Finding 2](../TITANS_MEMORY.md)** (per-head γ as a
    learned retention spectrum), at finer (per-channel, in-read) granularity.
 2. **A concrete adaptive-bandwidth kernel.** In the regression lens (§1), Wall is a
    **non-stationary kernel** whose bandwidth shrinks along the time axis at a learned,
@@ -641,7 +646,7 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
    (static channels still ramp). Complementary to entropy-targeting (§2), not a substitute.
 3. **FlashAttention compatibility.** Wall is a pre-softmax q/k rescale → keeps the easy
    inference path, where polar's null column + weight-level reductions sacrifice it (root of the
-   deferred [inference port](POLAR_ATTENTION.md) pain). If the port stays painful, "Wall-NoPE
+   deferred [inference port](../POLAR_ATTENTION.md) pain). If the port stays painful, "Wall-NoPE
    alone" is an attractive FA-compatible baseline.
 
 **Historical candidate cells, now superseded by the incompatibility verdict:**
@@ -654,7 +659,7 @@ Generalizes RoPE/FoX/PaTH; 4k→160k+ zero-shot; FA-compatible Triton kernels (W
   memory partially redundant *for quality*, while the memory still wins on compute/KV-cache?
 
 **Diagnostic status.** `attn_type="wall"` is implemented in
-[train/model.py](../train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
+[train/model.py](../../train/model.py) (`CausalSelfAttention`, `pos="wall"`): **keeps canon** (so it's
 the matched comparison to `nope` - isolates the gating; all params used -> no Muon issue), adds a
 bias-free per-channel gate-logit projection `l = W_g*x + b` initialized with `b=6`, maps it through
 `logsigmoid` and Tilde's soft clamp into a bounded log-decay `g in [-0.87, 0]`, then applies Wall's

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATMA · Ablation dashboard</title>
+  <meta name="description" content="Interactive ATMA dashboard for the complete 120-cell recipe-selection sweep, with current 9.816B-token experiment context.">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/dashboard.css">
+</head>
+<body>
+  <nav class="site-nav" aria-label="Primary navigation">
+    <div class="nav-inner">
+      <a class="brand" href="index.html">ATMA</a>
+      <div class="nav-links">
+        <a href="index.html#method">Method</a>
+        <a href="index.html#results">Current results</a>
+        <a href="https://github.com/kreasof-ai/atma/blob/main/paper/iclr2027/iclr2027_conference.pdf">Paper</a>
+        <a class="nav-cta" href="https://github.com/kreasof-ai/atma">Code</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="dashboard-hero wrap">
+    <div class="eyebrow">Stage I · complete 120-cell factorial</div>
+    <h1>Recipe selection, without hiding the grid.</h1>
+    <p class="hero-lead">Filter every 1B-token run, rank metrics at each evaluation length, inspect resolved configurations, and compare validation trajectories. The current 9.816B-token result is shown separately below.</p>
+    <div class="stat-grid">
+      <div class="stat"><strong>+47.8</strong><span>mean 64K points: Polar memory on − off</span></div>
+      <div class="stat"><strong>20 / 20</strong><span>matched Polar cells improved with memory</span></div>
+      <div class="stat"><strong>−25.5</strong><span>mean 64K points from a Polar+memory window</span></div>
+      <div class="stat"><strong>92.5%</strong><span>selected Stage I cell at 64K</span></div>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="callout"><strong>How to read this dashboard.</strong> Stage I uses 16 teacher-forced trials per cell to select a recipe across nuisance-factor settings. It is not a seed study and its selected-cell number is not interchangeable with the larger Stage II benchmark. “Needle accuracy” here is per-token teacher-forced accuracy, not autoregressive generation.</div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:34px">
+    <div class="wrap dashboard-shell">
+      <aside class="filters" id="filters"><h2>Filter the grid</h2></aside>
+      <div class="dashboard-main">
+        <div class="toolbar">
+          <label class="control">Metric<select id="metric"></select></label>
+          <label class="control">Group view<select id="group"><option value="">Individual runs</option></select></label>
+          <label class="control">Rows<select id="topn"><option value="10">Top 10</option><option value="20" selected>Top 20</option><option value="all">All</option></select></label>
+          <button id="clearplot" type="button">Clear plot</button>
+          <span class="status" id="status"></span>
+        </div>
+
+        <section class="dashboard-card" aria-labelledby="plot-title">
+          <h2 id="plot-title">Validation trajectory</h2>
+          <p>Select run checkboxes in the table to compare loss against wall time.</p>
+          <div class="plot-legend" id="plot-legend"></div>
+          <canvas id="plot" width="1000" height="300"></canvas>
+        </section>
+
+        <section class="dashboard-card" aria-labelledby="board-title">
+          <h2 id="board-title">Ranked cells</h2>
+          <p>Click a row for its metrics and fully resolved configuration.</p>
+          <div class="board-scroll"><table class="result-table" id="board"><thead></thead><tbody></tbody></table></div>
+        </section>
+
+        <section class="dashboard-card detail" id="detail" aria-live="polite"></section>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="stage-two">
+    <div class="wrap">
+      <div class="section-head">
+        <div><div class="eyebrow">Stage II · current paper result</div><h2>The promoted recipe at 9.816B tokens.</h2></div>
+        <p>The three matched attention variants use memory, no window, no distractor alignment, length-2K training, and the same L40S environment. Raven models are separately optimized comparison points.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="result-table">
+          <thead><tr><th>Group</th><th>Model</th><th>Token @2K</th><th>Token @256K</th><th>Exact @256K</th><th>BABILong @256K</th><th>BPB ratio</th><th>Base mean</th></tr></thead>
+          <tbody>
+            <tr><td>Matched</td><td>NoPE</td><td>99.2%</td><td>0.6%</td><td>0.0%</td><td>0%</td><td>5.65×</td><td class="good">45.15%</td></tr>
+            <tr><td>Matched</td><td class="good">Polar</td><td>98.9%</td><td class="good">34.4%</td><td class="good">9.0%</td><td class="good">28%</td><td class="good">1.26×</td><td>43.29%</td></tr>
+            <tr><td>Matched</td><td>RoPE</td><td>88.2%</td><td>0.0%</td><td>0.0%</td><td>14%</td><td>1.75×</td><td>44.60%</td></tr>
+            <tr class="group-row"><td colspan="8">Separately optimized recurrent family</td></tr>
+            <tr><td>Raven / AdamW</td><td>Atma-Raven-Titans</td><td>43.1%</td><td>10.0%</td><td>0.0%</td><td>38%</td><td>1.02×</td><td>43.05%</td></tr>
+            <tr><td>Raven / AdamW</td><td>Raven Native</td><td>41.1%</td><td class="good">20.3%</td><td>0.0%</td><td class="good">46%</td><td class="good">1.01×</td><td>43.05%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine-print">Retrieval averages tasks, haystack suites, and needle depths. Exact requires all five target tokens under teacher forcing. BPB averages three fixed-target datasets. Base mean averages eight 2K zero-shot tasks. Use the paper for full denominators and uncertainty boundaries.</p>
+    </div>
+  </section>
+
+  <div class="wrap notes">
+    <details>
+      <summary>Metric definitions and composite scores</summary>
+      <p>Length-weighted metrics use weight <span class="mono">L / 2048</span>, emphasizing extrapolation endpoints. The performance index averages z-scores for clean perplexity, junk perplexity, and needle accuracy after flipping perplexity so higher is better. The efficiency index adds half a population-standardized MFU score. These composite indices are exploratory dashboard aids and are not paper headline metrics.</p>
+    </details>
+  </div>
+
+  <script id="data" type="application/json">/*DATA*/</script>
+  <script src="assets/dashboard.js"></script>
+</body>
+</html>

@@ -24,7 +24,7 @@ The benchmark permits and labels the compiled PyTorch causal-convolution fallbac
 PyTorch Titans fallback. Pass `--require-optimized-conv` or `--require-fla` only when those
 compatible optional kernels are expected.
 
-See [blackwell_profiling.md](blackwell_profiling.md#training-mfu) for the B200/B300 sweep protocol
+See the [B200/B300 profiling runbook](runbooks/blackwell-profiling.md#training-mfu) for the sweep protocol
 and the MFU counting conventions.
 
 Downloads FineWebEdu-10B (GPT-2 tokenized), memory-maps the shards, and trains with microbatch gradient accumulation (`mbs` microbatches per `batch_size` step). `train_steps` is derived from the tokens actually present — one 100M shard → ~190 steps, the full 1B-token set → 1900 steps. The `CHECKPOINT_DIR` and `TOKENIZER_NAME` constants at the top of `train.py` control where the checkpoint lands and which tokenizer is recorded.
@@ -42,7 +42,7 @@ Measured on **NVIDIA L4** for the current architecture — Polar attention + Tit
 | Polar + memory | 32.49 s | 35.6% | ~17.14 h | 3.169 |
 | Polar + memory + distractor (`num_random_keys=2048`) | 36.39 s | 31.8% | ~19.18 h | 3.178 |
 
-> Per the [120-cell ablation](evaluation.md), it is **no longer recommended**: once the Titans memory is present, the distractor (and the sliding window) *hurt* long-range retrieval. The winning recipe is full polar + memory with neither — see [evaluation.md](evaluation.md).
+> Per the [120-cell recipe sweep](evaluation.md#stage-i-recipe-selection), distractor alignment and a training window are not part of the promoted recipe. This is a Stage I selection result; the matched 9.816B-token results are reported separately.
 
 ## Loading a checkpoint for inference
 
