@@ -77,6 +77,7 @@ def wrap_foveal(model: Model, config: FovealConfig) -> Model:
             teacher_query_blocks=config.teacher_query_blocks,
             teacher_interval=config.teacher_interval,
             teacher_mean_weight=config.teacher_mean_weight,
+            adaptation_mode=config.adaptation_mode,
             compile_flex=config.flex_compile,
             flex_kernel_options=config.flex_kernel_options,
         )

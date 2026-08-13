@@ -1197,7 +1197,7 @@ NoPE failure alone as falsification of Foveal retrieval.
 sequence length             = 32768
 local exact window          = 512 tokens
 KV page / query block       = 64 / 64 tokens
-index                       = 16D MQA key-only
+index                       = 16D MQA q/k routing, optional 16D value output
 train top-P                 = 0.95 after warm-up
 remote K_min / K_max        = 0 / 32 pages
 maximum remote support      = 2048 tokens
@@ -1213,10 +1213,11 @@ or carry an explicit end-of-document reset mask through attention and Titans mem
 index can look successful by learning recency and document-boundary artifacts rather than remote
 semantic retrieval.
 
-A direct `hidden_size -> 16` query/key pair adds only about 32.8K weights per attention layer, or
-131K across ATMA's four attention layers before biases. At 32K, a BF16 key-only index is 1 MiB per
-layer and sequence. The index is therefore not the capacity risk; sparse gather/reduction kernels,
-activation memory, and the Titans backward are the items to profile.
+A direct `hidden_size -> 16` query/key pair adds only about 32.8K weights per attention layer. The
+LM-output conditions add a matching 16D value projection and `16 -> hidden_size` output projection,
+for about 65.5K weights per layer, or 262K across ATMA's four attention layers. At 32K, a BF16
+16D stream is 1 MiB per layer and sequence. The index is therefore not the capacity risk; sparse
+gather/reduction kernels, activation memory, and the Titans backward are the items to profile.
 
 Share one remote page set across each 64-token query block during prefill. Per-token selection is
 appropriate for decode but makes 32K training irregular and difficult to fuse. Use the block's
@@ -1243,12 +1244,17 @@ log-sum-exp target and retain head-wise recall as a diagnostic. Initialize each 
 independently. RoPE should give the index its own trained positional treatment; do not assume that
 post-RoPE full-rank keys can be projected to 16D without changing their ranking.
 
-During 32K CPT, keep the auxiliary teacher alive on a small sample of query blocks. For example,
-sample four blocks per sequence and attention layer and use the first query in each block as a
-causal routing anchor. Stream those four queries against all 32K keys and update the index with
-`L_index` while the LM path remains sparse for all tokens. Using future queries in the block to
+During 32K CPT, the KL conditions keep the auxiliary objective on a rotating sample of query
+blocks. Use the first query in each block as a causal routing anchor and gather only the selected
+local/remote pages for the full-rank page-mass target. The LM path remains sparse for all tokens;
+there is no dense full-attention teacher in the 32K loop. Using future queries in the block to
 choose support for its first query would leak information through the sparsity pattern. This
-first-query rule avoids that leak and avoids constructing a full `32768 x 32768` teacher matrix.
+first-query rule avoids that leak.
+
+Separately test the simpler end-to-end gradient path: add a 16D MQA value projection, use the soft
+causal index distribution to read page values, project the result back to model width, and add it
+to the attention residual. This gives index q/k/v/output parameters ordinary LM gradients even
+though the hard top-P page indices passed to the sparse kernel remain detached.
 
 Use a conservative sparsity handoff to avoid changing full attention to `SWA=512` in one step:
 
@@ -1276,14 +1282,19 @@ nor a memory-safe sparse experiment. Add explicit checkpoint loading, index-only
 validation, the block-sparse local-plus-remote kernel, sampled-teacher loss, and restartable CPT
 state before launching the budgeted runs.
 
-**Minimal run matrix.** Preserve one matched control without turning the pilot into another grid:
+**Complete run matrix.** Run the full Cartesian product, with 1B-token 32K CPT in every cell:
 
-1. Polar `SWA=512 + Titans`, 1B-token 32K CPT control with no remote read.
-2. Polar Foveal, 1B-token 32K CPT: primary result.
-3. RoPE Foveal, 100M-token screen; promote to 1B only if retrieval recall and clean loss pass.
-4. NoPE Foveal, 100M-token diagnostic; promote only if the known 32K activation/loss failure does
-   not reappear.
-5. Add matched 1B SWA controls for RoPE/NoPE only when their Foveal screens are promoted.
+| attention core | SWA-512 local only | LM index output | index KL | LM output + KL |
+| --- | --- | --- | --- | --- |
+| Polar | 1B | 1B | 1B | 1B |
+| RoPE | 1B | 1B | 1B | 1B |
+| NoPE | 1B | 1B | 1B | 1B |
+
+This is 12 CPT runs, 12B total training tokens, and 22,896 optimizer steps. The two KL conditions
+for each attention core may share one 20M-token frozen-backbone index calibration; calibration is
+not part of the 1B CPT budget. At the existing dense run's measured 9 seconds per step, the CPT
+matrix alone is a 57.2 L40S GPU-hour baseline estimate. Use the mandatory two-step CUDA smoke to
+replace that estimate with measured sparse/kernel overhead before scheduling the full sweep.
 
 The control is scientifically necessary: without it, improvements after 32K CPT could come from
 long-sequence adaptation or Titans rather than remote sparse retrieval. Evaluate the untouched

@@ -44,18 +44,41 @@ class FovealCPTModel(nn.Module):
         for layer in foveal_layers(self.base):
             params.extend(layer.index_q.parameters())
             params.extend(layer.index_k.parameters())
+            params.extend(layer.index_v.parameters())
+            params.extend(layer.index_out.parameters())
+            if layer.index_rotary is not None:
+                params.extend(layer.index_rotary.parameters())
+        return params
+
+    def routing_parameters(self) -> list[nn.Parameter]:
+        params = []
+        for layer in foveal_layers(self.base):
+            params.extend(layer.index_q.parameters())
+            params.extend(layer.index_k.parameters())
             if layer.index_rotary is not None:
                 params.extend(layer.index_rotary.parameters())
         return params
 
     def freeze_except_index(self) -> None:
-        index = {id(param) for param in self.index_parameters()}
+        index = {id(param) for param in self.routing_parameters()}
         for param in self.parameters():
             param.requires_grad_(id(param) in index)
 
     def unfreeze_all(self) -> None:
         for param in self.parameters():
             param.requires_grad_(True)
+
+    def configure_adaptation(self) -> None:
+        """Enable only parameters exercised by the selected sweep cell."""
+
+        self.unfreeze_all()
+        if self.config.adaptation_mode == "local":
+            for parameter in self.index_parameters():
+                parameter.requires_grad_(False)
+        elif not self.config.uses_lm_output:
+            for layer in foveal_layers(self.base):
+                for parameter in (*layer.index_v.parameters(), *layer.index_out.parameters()):
+                    parameter.requires_grad_(False)
 
     def _block(self, block: nn.Module, x: Tensor):
         if self.config.activation_checkpointing and self.training and x.requires_grad:

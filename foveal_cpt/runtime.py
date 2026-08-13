@@ -167,6 +167,7 @@ def validate_resume_config(payload: dict, config: FovealConfig) -> None:
     saved = payload.get("config") or {}
     structural = (
         "checkpoint",
+        "adaptation_mode",
         "sequence_length",
         "batch_tokens",
         "microbatch_sequences",

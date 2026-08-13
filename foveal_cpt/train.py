@@ -24,11 +24,12 @@ from .runtime import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run 32K Foveal continual pretraining")
-    parser.add_argument("--config", default="foveal_cpt/pilot.json")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--index-checkpoint", help="completed calibration .pt file")
     parser.add_argument("--resume", help="restartable CPT checkpoint")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--smoke-steps", type=int)
+    parser.add_argument("--output-dir", help="override config output_dir (used for isolated smoke runs)")
     parser.add_argument("--allow-uncalibrated-index", action="store_true")
     return parser.parse_args()
 
@@ -39,8 +40,16 @@ def main() -> None:
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA CPT requested but CUDA is unavailable")
-    if not args.index_checkpoint and not args.resume and not args.allow_uncalibrated_index:
-        raise ValueError("pass --index-checkpoint, --resume, or explicitly --allow-uncalibrated-index")
+    if (
+        config.requires_calibration
+        and not args.index_checkpoint
+        and not args.resume
+        and not args.allow_uncalibrated_index
+    ):
+        raise ValueError(
+            f"{config.adaptation_mode} requires --index-checkpoint or --resume; "
+            "use --allow-uncalibrated-index only for an intentional control"
+        )
     seed_everything(config.seed)
 
     base, atma_config, checkpoint_dir = load_pretrained(config, device)
@@ -56,7 +65,7 @@ def main() -> None:
         payload = load_foveal_weights(model.base, args.index_checkpoint)
         if payload.get("stage") != "calibration":
             raise ValueError("--index-checkpoint must be produced by foveal_cpt.calibrate")
-    model.unfreeze_all()
+    model.configure_adaptation()
     model.set_mode("sparse")
     model.train()
     optimizers = cpt_optimizers(model, config)
@@ -77,7 +86,8 @@ def main() -> None:
     if args.smoke_steps is not None:
         total_steps = min(total_steps, start_step + args.smoke_steps)
     print(
-        f"[cpt] source={checkpoint_dir} steps={total_steps} seq={config.sequence_length} "
+        f"[cpt] mode={config.adaptation_mode} source={checkpoint_dir} "
+        f"steps={total_steps} seq={config.sequence_length} "
         f"global_sequences={config.global_sequences} accumulation={config.accumulation_steps}"
     )
 
@@ -120,7 +130,7 @@ def main() -> None:
             )
         if (step + 1) % config.save_every == 0 or step + 1 == total_steps:
             path = save_run(
-                Path(config.output_dir) / "cpt",
+                Path(args.output_dir or config.output_dir) / "cpt",
                 model=model,
                 config=config,
                 step=step + 1,

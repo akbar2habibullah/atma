@@ -15,7 +15,7 @@ from .model import FovealCPTModel, foveal_layers
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate Foveal loss and routing budgets")
-    parser.add_argument("--config", default="foveal_cpt/pilot.json")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--val-glob", default="finewebedu10B/finewebedu_val_*.bin")
     parser.add_argument("--lengths", type=int, nargs="+", default=[2048, 8192, 32768])

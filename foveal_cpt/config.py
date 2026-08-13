@@ -21,6 +21,7 @@ class FovealConfig:
     train_glob: str = "finewebedu10B/finewebedu_train_*.bin"
     output_dir: str = "foveal_cpt/output/polar"
     hf_cache: str | None = None
+    adaptation_mode: str = "lm_output_kl"
 
     sequence_length: int = 32768
     batch_tokens: int = 524288
@@ -72,6 +73,11 @@ class FovealConfig:
     calibration_lr: float = 1e-3
 
     def validate(self) -> None:
+        modes = {"local", "lm_output", "kl", "lm_output_kl"}
+        if self.adaptation_mode not in modes:
+            raise ValueError(
+                f"adaptation_mode must be one of {sorted(modes)}, got {self.adaptation_mode!r}"
+            )
         positive = {
             "sequence_length": self.sequence_length,
             "batch_tokens": self.batch_tokens,
@@ -114,6 +120,22 @@ class FovealConfig:
             raise ValueError("handoff token boundaries are invalid")
         if not 0.0 <= self.cooldown_fraction <= 1.0:
             raise ValueError("cooldown_fraction must lie in [0, 1]")
+
+    @property
+    def uses_index(self) -> bool:
+        return self.adaptation_mode != "local"
+
+    @property
+    def uses_lm_output(self) -> bool:
+        return self.adaptation_mode in {"lm_output", "lm_output_kl"}
+
+    @property
+    def uses_kl(self) -> bool:
+        return self.adaptation_mode in {"kl", "lm_output_kl"}
+
+    @property
+    def requires_calibration(self) -> bool:
+        return self.uses_kl
 
     @property
     def global_sequences(self) -> int:

@@ -220,6 +220,7 @@ class FovealAttention(nn.Module):
         teacher_query_blocks: int,
         teacher_interval: int,
         teacher_mean_weight: float,
+        adaptation_mode: str,
         compile_flex: bool,
         flex_kernel_options: dict | None = None,
     ):
@@ -229,8 +230,14 @@ class FovealAttention(nn.Module):
         self.base = base
         self.index_q = LinearNoBias(hidden_size, index_dim)
         self.index_k = LinearNoBias(hidden_size, index_dim)
+        self.index_v = LinearNoBias(hidden_size, index_dim)
+        self.index_out = LinearNoBias(index_dim, hidden_size)
         nn.init.normal_(self.index_q.weight, std=hidden_size ** -0.5)
         nn.init.normal_(self.index_k.weight, std=hidden_size ** -0.5)
+        nn.init.normal_(self.index_v.weight, std=hidden_size ** -0.5)
+        # Start as a small residual, while keeping a non-zero first-step gradient
+        # for the 16D q/k/v stream in the LM-output ablations.
+        nn.init.normal_(self.index_out.weight, std=1e-3)
         self.index_rotary = Rotary(index_dim) if getattr(base, "pos", None) == "rope" else None
 
         self.hidden_size = hidden_size
@@ -244,6 +251,7 @@ class FovealAttention(nn.Module):
         self.teacher_query_blocks = teacher_query_blocks
         self.teacher_interval = teacher_interval
         self.teacher_mean_weight = teacher_mean_weight
+        self.adaptation_mode = adaptation_mode
         self.compile_flex = compile_flex
         self.flex_kernel_options = flex_kernel_options
         self.mode = "sparse"
@@ -285,7 +293,15 @@ class FovealAttention(nn.Module):
         self.min_remote_pages = int(min_remote_pages)
         self.max_remote_pages = int(max_remote_pages)
 
-    def _index(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    @property
+    def uses_lm_output(self) -> bool:
+        return self.adaptation_mode in {"lm_output", "lm_output_kl"}
+
+    @property
+    def uses_kl(self) -> bool:
+        return self.adaptation_mode in {"kl", "lm_output_kl"}
+
+    def _index(self, x: Tensor) -> tuple[Tensor, Tensor]:
         batch, tokens, _ = x.shape
         if tokens % self.page_size:
             raise ValueError(f"token length {tokens} must be divisible by page_size={self.page_size}")
@@ -295,6 +311,7 @@ class FovealAttention(nn.Module):
         source = x.detach()
         qi = F.rms_norm(self.index_q(source), (self.index_dim,))
         ki = F.rms_norm(self.index_k(source), (self.index_dim,))
+        vi = self.index_v(source)
         if self.index_rotary is not None:
             qi = self.index_rotary(qi[:, :, None, :]).squeeze(2)
             ki = self.index_rotary(ki[:, :, None, :]).squeeze(2)
@@ -305,7 +322,28 @@ class FovealAttention(nn.Module):
         q_block = F.normalize(q_block.float(), dim=-1)
         k_page = F.normalize(k_page.float(), dim=-1)
         scores = torch.einsum("bqr,bpr->bqp", q_block, k_page) / math.sqrt(self.index_dim)
-        return scores, qi, ki
+        v_page = vi.view(batch, pages, self.page_size, self.index_dim).mean(dim=2)
+        return scores, v_page
+
+    def _index_output(self, page_scores: Tensor, v_page: Tensor) -> Tensor:
+        """Return the causal 16D MQA index stream in model width.
+
+        Page selection remains discrete for the sparse attention kernel, while
+        this soft page read makes q/k/v and the output projection trainable from
+        the ordinary LM objective.
+        """
+
+        _, query_blocks, pages = page_scores.shape
+        q_page = torch.arange(query_blocks, device=page_scores.device)
+        k_page = torch.arange(pages, device=page_scores.device)
+        complete = k_page[None, :] < q_page[:, None]
+        probs = _masked_softmax(
+            page_scores,
+            complete[None].expand(page_scores.shape[0], -1, -1),
+        ).to(v_page.dtype)
+        context = torch.einsum("bqp,bpr->bqr", probs, v_page)
+        context = context.repeat_interleave(self.page_size, dim=1)
+        return self.index_out(context)
 
     def _route(self, page_scores: Tensor) -> Route:
         # Page selection itself is discrete; the differentiable score tensor is
@@ -509,7 +547,20 @@ class FovealAttention(nn.Module):
         blocks = stride + offset + torch.arange(count, device=device) * stride
         return blocks.clamp_max(query_blocks - 1).unique()
 
-    def _teacher_loss(self, page_scores: Tensor, q: Tensor, k: Tensor) -> Tensor:
+    def _teacher_loss(
+        self,
+        page_scores: Tensor,
+        q: Tensor,
+        k: Tensor,
+        route: Route | None = None,
+    ) -> Tensor:
+        """Distill page mass at rotating query-block anchors.
+
+        Calibration (``route is None``) uses all completed pages. Sparse CPT
+        only gathers the selected local and remote pages, so it never executes
+        a dense full-attention teacher in the training loop.
+        """
+
         if self.teacher_query_blocks <= 0 or self.step % self.teacher_interval:
             self._last_teacher_stats = {}
             return page_scores.sum() * 0.0
@@ -521,78 +572,137 @@ class FovealAttention(nn.Module):
         groups = self.num_heads // self.num_kv_heads
         k_full = k.repeat_interleave(groups, dim=2).detach()
         q = q.detach()
-        losses = []
-        recalls = []
-        captured_masses = []
-        head_recalls = []
-        worst_head_recalls = []
-        page_ids = torch.arange(pages, device=page_scores.device)
-        for block in anchors.tolist():
-            query_pos = block * self.page_size
-            q_anchor = q[:, query_pos]  # (B,H,D)
-            keys = k_full[:, :query_pos]  # completed pages only
-            raw = torch.einsum("bhd,bthd->bht", q_anchor, keys) / math.sqrt(self.head_dim)
-            if isinstance(self.base, CausalSelfAttention):
-                if self.base.sdpa_scale is not None:
-                    raw = raw * (self.base.sdpa_scale * math.sqrt(self.head_dim))
-                teacher = torch.softmax(raw.float(), dim=-1)
-            else:
-                n = raw.new_tensor([float(query_pos + 1)])
-                temp, null = polar_temp_null(
-                    n,
-                    self.base.len_gain_raw.detach(),
-                    self.base.null_base.detach(),
-                    self.base.null_slope_raw.detach(),
-                )
-                real = raw.float() * temp[..., 0, 0].unsqueeze(-1)
-                null_logit = (null * temp)[..., 0, 0].expand(batch, -1).unsqueeze(-1)
-                weights = torch.softmax(torch.cat([real, null_logit], dim=-1), dim=-1)
-                teacher = weights[..., :-1]
-                teacher = teacher / teacher.sum(dim=-1, keepdim=True).clamp_min(1e-20)
-            page_mass = teacher.view(batch, self.num_heads, block, self.page_size).sum(dim=-1)
-            mean_mass = page_mass.mean(dim=1)
-            max_mass = page_mass.amax(dim=1)
-            target = self.teacher_mean_weight * mean_mass + (1.0 - self.teacher_mean_weight) * max_mass
-            target = target / target.sum(dim=-1, keepdim=True).clamp_min(1e-20)
-            valid = page_ids < block
-            student = page_scores[:, block].masked_fill(~valid[None], -torch.inf)
-            losses.append(-(target.detach() * torch.log_softmax(student.float(), dim=-1)[:, :block]).sum(dim=-1).mean())
-            topk = min(self.max_remote_pages, block)
-            if topk > 0:
-                student_top = student[:, :block].topk(topk, dim=-1).indices
-                oracle_top = target.topk(topk, dim=-1).indices
-                overlap = (student_top[:, :, None] == oracle_top[:, None, :]).any(dim=-1).float().mean()
-                recalls.append(overlap)
-                captured_masses.append(target.gather(1, student_top).sum(dim=-1).mean())
-                head_oracle = page_mass.topk(topk, dim=-1).indices
-                per_head = (
-                    student_top[:, None, :, None] == head_oracle[:, :, None, :]
-                ).any(dim=-1).float().mean(dim=-1)
-                head_recalls.append(per_head.mean())
-                worst_head_recalls.append(per_head.amin(dim=1).mean())
+        anchor_count = anchors.numel()
+        if route is None:
+            selected = torch.arange(pages, device=page_scores.device).view(1, 1, pages)
+            selected = selected.expand(batch, anchor_count, -1)
+            selected_valid = selected < anchors.view(1, anchor_count, 1)
+        else:
+            local = route.local_indices[:, anchors].long()
+            remote = route.page_indices[:, anchors].long()
+            local_slots = torch.arange(local.shape[-1], device=page_scores.device)
+            remote_slots = torch.arange(remote.shape[-1], device=page_scores.device)
+            local_valid = local_slots.view(1, 1, -1) < route.local_counts[:, anchors, None]
+            remote_valid = remote_slots.view(1, 1, -1) < route.page_counts[:, anchors, None]
+            selected = torch.cat((local, remote), dim=-1)
+            selected_valid = torch.cat((local_valid, remote_valid), dim=-1)
+            selected_valid &= selected < anchors.view(1, anchor_count, 1)
+
+        safe_selected = selected.clamp(min=0, max=pages - 1)
+        offsets = torch.arange(self.page_size, device=page_scores.device)
+        token_ids = safe_selected[..., None] * self.page_size + offsets
+        batch_ids = torch.arange(batch, device=page_scores.device).view(batch, 1, 1, 1)
+        keys = k_full[batch_ids, token_ids]  # (B,A,S,page,H,D)
+        query_pos = anchors * self.page_size
+        q_anchor = q[:, :, query_pos].permute(0, 2, 1, 3)
+        raw = torch.einsum("bahd,basthd->bahst", q_anchor, keys) / math.sqrt(self.head_dim)
+        token_valid = selected_valid[:, :, None, :, None]
+        raw = raw.masked_fill(~token_valid, -torch.inf)
+        flat_raw = raw.flatten(start_dim=-2)
+
+        if isinstance(self.base, CausalSelfAttention):
+            if self.base.sdpa_scale is not None:
+                flat_raw = flat_raw * (self.base.sdpa_scale * math.sqrt(self.head_dim))
+            teacher = torch.softmax(flat_raw.float(), dim=-1)
+        else:
+            n = (query_pos + 1).to(dtype=torch.float32)
+            temp, null = polar_temp_null(
+                n,
+                self.base.len_gain_raw.detach(),
+                self.base.null_base.detach(),
+                self.base.null_slope_raw.detach(),
+            )
+            null_logit = (null * temp).permute(0, 2, 1, 3)
+            temp = temp.permute(0, 2, 1, 3)
+            real = flat_raw.float() * temp
+            weights = torch.softmax(
+                torch.cat((real, null_logit.expand(batch, -1, -1, -1)), dim=-1),
+                dim=-1,
+            )
+            teacher = weights[..., :-1]
+            teacher = teacher / teacher.sum(dim=-1, keepdim=True).clamp_min(1e-20)
+
+        selected_count = selected.shape[-1]
+        page_mass = teacher.view(
+            batch, anchor_count, self.num_heads, selected_count, self.page_size
+        ).sum(dim=-1)
+        mean_mass = page_mass.mean(dim=2)
+        max_mass = page_mass.amax(dim=2)
+        target = self.teacher_mean_weight * mean_mass + (
+            1.0 - self.teacher_mean_weight
+        ) * max_mass
+        target = target.masked_fill(~selected_valid, 0.0)
+        target = target / target.sum(dim=-1, keepdim=True).clamp_min(1e-20)
+
+        student = page_scores[:, anchors].gather(2, safe_selected)
+        student = student.masked_fill(~selected_valid, -torch.inf)
+        log_student = torch.log_softmax(student.float(), dim=-1)
+        log_student = torch.where(selected_valid, log_student, torch.zeros_like(log_student))
+        loss = -(target.detach() * log_student).sum(dim=-1).mean()
+
+        topk = min(self.max_remote_pages, selected_count)
         self._last_teacher_stats = {}
-        if recalls:
-            self._last_teacher_stats["teacher_topk_recall"] = torch.stack(recalls).mean().detach()
-            self._last_teacher_stats["teacher_mass_at_k"] = torch.stack(captured_masses).mean().detach()
-            self._last_teacher_stats["teacher_head_recall"] = torch.stack(head_recalls).mean().detach()
-            self._last_teacher_stats["teacher_worst_head_recall"] = torch.stack(worst_head_recalls).mean().detach()
-        return torch.stack(losses).mean()
+        if topk:
+            student_top = student.topk(topk, dim=-1).indices
+            oracle_top = target.topk(topk, dim=-1).indices
+            chosen_valid = selected_valid.gather(2, student_top)
+            matches = (
+                student_top[..., :, None] == oracle_top[..., None, :]
+            ).any(dim=-1)
+            denominator = chosen_valid.sum().clamp_min(1)
+            recall = (matches & chosen_valid).sum().float() / denominator
+            captured = target.gather(2, student_top).sum(dim=-1).mean()
+            head_oracle = page_mass.topk(topk, dim=-1).indices
+            head_matches = (
+                student_top[:, :, None, :, None] == head_oracle[:, :, :, None, :]
+            ).any(dim=-1)
+            head_denominator = chosen_valid.sum(dim=-1, keepdim=True).clamp_min(1)
+            head_recall = (
+                (head_matches & chosen_valid[:, :, None]).sum(dim=-1).float()
+                / head_denominator
+            )
+            self._last_teacher_stats = {
+                "teacher_topk_recall": recall.detach(),
+                "teacher_mass_at_k": captured.detach(),
+                "teacher_head_recall": head_recall.mean().detach(),
+                "teacher_worst_head_recall": head_recall.amin(dim=2).mean().detach(),
+            }
+        return loss
 
     def forward(self, x: Tensor):
-        page_scores, _, _ = self._index(x)
         if self.mode == "dense_teacher":
+            page_scores, _ = self._index(x)
             out, _ = self.base(x)
             _, q_attn, k_attn, _, _, _, _ = self._project_qkv(x)
             index_loss = self._teacher_loss(page_scores, q_attn.transpose(1, 2), k_attn)
             self.last_stats = {"index_loss": index_loss.detach(), **self._last_teacher_stats}
             return out, index_loss
 
-        route = self._route(page_scores)
+        if self.adaptation_mode == "local":
+            pages = x.shape[1] // self.page_size
+            page_scores = x.new_zeros((x.shape[0], pages, pages), dtype=torch.float32)
+            route = select_pages(
+                page_scores,
+                page_size=self.page_size,
+                local_window=self.local_window,
+                top_p=1.0,
+                min_remote_pages=0,
+                max_remote_pages=0,
+                remote_capacity=self.remote_capacity,
+            )
+            index_values = None
+        else:
+            page_scores, index_values = self._index(x)
+            route = self._route(page_scores)
         gate, q_attn, k_attn, v_attn, q_mem, k_mem, v_mem = self._project_qkv(x)
         q_t = q_attn.transpose(1, 2).contiguous()
         k_t = k_attn.transpose(1, 2).contiguous()
         v_t = v_attn.transpose(1, 2).contiguous()
-        index_loss = self._teacher_loss(page_scores, q_t, k_attn)
+        index_loss = (
+            self._teacher_loss(page_scores, q_t, k_attn, route)
+            if self.uses_kl
+            else page_scores.sum() * 0.0
+        )
 
         if self.is_polar:
             direction, mag = self._polar_sparse(q_t, k_t, v_t, route)
@@ -603,6 +713,11 @@ class FovealAttention(nn.Module):
             attended = self._softmax_sparse(q_t, k_t, v_t, route)
             flat = attended.transpose(1, 2).reshape(x.shape[0], x.shape[1], -1)
             out = self.base.proj(flat * torch.sigmoid(gate.reshape_as(flat)))
+
+        if self.uses_lm_output:
+            if index_values is None:
+                raise RuntimeError("LM index output requested without an index value stream")
+            out = out + self._index_output(page_scores, index_values)
 
         if self.base.mem is not None:
             groups = self.num_heads // self.num_kv_heads

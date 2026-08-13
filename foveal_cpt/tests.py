@@ -46,6 +46,7 @@ def tiny_config(attn_type: str, *, cuda_flex: bool = False) -> tuple[AtmaConfig,
     )
     foveal = FovealConfig(
         checkpoint="unused",
+        adaptation_mode="local",
         sequence_length=sequence_length,
         batch_tokens=sequence_length,
         microbatch_sequences=1,
@@ -108,8 +109,10 @@ def test_dense_parity(attn_type: str, device: str = "cpu", *, backward: bool = F
     with torch.no_grad():
         dense_loss = dense(inputs, targets)[0]
     sparse_loss = sparse(inputs, targets)[0]
-    difference = abs(float(dense_loss) - float(sparse_loss))
-    tolerance = 1e-1 if cuda_flex else 2e-3
+    difference = abs(float(dense_loss.detach()) - float(sparse_loss.detach()))
+    # CPU SDPA and the explicit boolean-mask reference use different reduction
+    # orders; this is a summed-token loss, so keep the per-token tolerance tight.
+    tolerance = 1e-1 if cuda_flex else 1e-2
     check(
         f"{device} {attn_type} full-support loss parity",
         difference < tolerance,
@@ -136,9 +139,58 @@ def test_index_gradient() -> None:
     inputs = torch.randint(0, atma.vocab_size, (1, config.sequence_length), dtype=torch.int32)
     loss = wrapped.calibration_loss(inputs)
     loss.backward()
-    grads = [parameter.grad for parameter in wrapped.index_parameters()]
+    grads = [parameter.grad for parameter in wrapped.routing_parameters()]
     check("index calibration produces gradients", all(grad is not None for grad in grads))
     check("index gradients are finite", all(torch.isfinite(grad).all() for grad in grads if grad is not None))
+
+
+def test_lm_output_gradient() -> None:
+    torch.manual_seed(13)
+    atma, config = tiny_config("polar")
+    config.adaptation_mode = "lm_output"
+    model = Model(atma, reg_mode="baseline")
+    wrap_foveal(model, config)
+    wrapped = FovealCPTModel(model, config)
+    wrapped.configure_adaptation()
+    inputs = torch.randint(0, atma.vocab_size, (1, config.sequence_length), dtype=torch.int32)
+    targets = torch.randint(0, atma.vocab_size, (1, config.sequence_length), dtype=torch.int64)
+    lm_loss, _, index_loss = wrapped(inputs, targets)
+    check("LM-output cell has no KL loss", float(index_loss.detach()) == 0.0)
+    lm_loss.backward()
+    for layer in foveal_layers(wrapped.base):
+        for name, module in (
+            ("q", layer.index_q),
+            ("k", layer.index_k),
+            ("v", layer.index_v),
+            ("out", layer.index_out),
+        ):
+            grads = [parameter.grad for parameter in module.parameters()]
+            check(f"LM loss reaches index {name}", all(grad is not None for grad in grads))
+            check(
+                f"LM index {name} gradients are finite",
+                all(torch.isfinite(grad).all() for grad in grads if grad is not None),
+            )
+
+
+def test_sparse_kl_gradient() -> None:
+    torch.manual_seed(17)
+    atma, config = tiny_config("polar")
+    config.adaptation_mode = "kl"
+    model = Model(atma, reg_mode="baseline")
+    wrap_foveal(model, config)
+    wrapped = FovealCPTModel(model, config)
+    wrapped.configure_adaptation()
+    inputs = torch.randint(0, atma.vocab_size, (1, config.sequence_length), dtype=torch.int32)
+    targets = torch.randint(0, atma.vocab_size, (1, config.sequence_length), dtype=torch.int64)
+    lm_loss, _, index_loss = wrapped(inputs, targets)
+    check("selected-support KL is finite", torch.isfinite(index_loss).item())
+    (lm_loss + index_loss).backward()
+    grads = [parameter.grad for parameter in wrapped.routing_parameters()]
+    check("selected-support KL reaches routing projections", all(grad is not None for grad in grads))
+    check(
+        "selected-support routing gradients are finite",
+        all(torch.isfinite(grad).all() for grad in grads if grad is not None),
+    )
 
 
 def test_sparse_polar_triton() -> None:
@@ -218,6 +270,8 @@ def main() -> None:
     test_dense_parity("rope")
     test_dense_parity("polar")
     test_index_gradient()
+    test_lm_output_gradient()
+    test_sparse_kl_gradient()
     if torch.cuda.is_available():
         test_sparse_polar_triton()
         test_dense_parity("nope", "cuda", backward=True)

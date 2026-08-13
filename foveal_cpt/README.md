@@ -1,128 +1,80 @@
-# Foveal checkpoint-CPT pilot
+# Foveal sparse-attention CPT sweep
 
-This directory is an isolated experiment. It does not change ATMA's shipping training or
-inference paths. It adds a learned 16D MQA page index to an existing ATMA checkpoint, calibrates
-the index against the checkpoint's full attention, and then runs local-plus-remote sparse
-continual pretraining.
+This directory is an isolated 12-run adaptation experiment over the three existing ATMA 10B
+checkpoints. Every cell trains for **1B tokens** at 32K context and a 524,288-token global batch
+(1,908 optimizer steps). There is no 100M-token screening stage.
 
-The default configuration targets the Polar L40S checkpoint:
+| attention core | local SWA-512 | LM index output | index KL | LM output + KL |
+| --- | --- | --- | --- | --- |
+| Polar | `polar-local.json` | `polar-lm_output.json` | `polar-kl.json` | `polar-lm_output_kl.json` |
+| RoPE | `rope-local.json` | `rope-lm_output.json` | `rope-kl.json` | `rope-lm_output_kl.json` |
+| NoPE | `nope-local.json` | `nope-lm_output.json` | `nope-kl.json` | `nope-lm_output_kl.json` |
 
-- 32K sequences and a 512-token exact sliding window;
-- 64-token query/KV blocks;
-- capped top-P routing, annealed from `p=0.98, K=8:64` to `p=0.95, K=0:32`;
-- four full-rank teacher anchor queries per sequence and attention layer;
-- 1B CPT tokens at the original 524,288-token global batch.
+All files live in `foveal_cpt/configs/` and use isolated output directories.
 
-CUDA NoPE/RoPE execution uses PyTorch FlexAttention `BlockMask`. Polar uses the trainable selected-
-page path in `kernel/polar_triton.py`, which fuses its direction and participation-ratio statistics
-in one sparse pass. Remote pages are full blocks and local pages use an exact causal/window mask;
-no `32768 x 32768` mask is created. CPU execution is a correctness reference limited to 4,096
-tokens. The pilot pins 64x64 tiles to stay aligned with the sparse layout and reduce shared-memory
-pressure on the L40S; treat the first CUDA smoke as a mandatory kernel-compatibility gate.
+## What the four cells test
 
-## Requirements
+- `local`: exact causal SWA-512 with no remote pages and no trained index parameters.
+- `lm_output`: the 16D MQA q/k stream selects sparse pages. A matching 16D value stream performs
+  a differentiable causal page read and is projected into the residual stream, so ordinary LM
+  loss trains index q/k/v/output parameters.
+- `kl`: the 16D q/k stream selects pages and receives an auxiliary page-mass KL loss. A short
+  frozen-backbone calibration initializes it. During 32K CPT, KL only gathers the selected local
+  and remote support; it does not run full dense attention.
+- `lm_output_kl`: combines the two indexer gradient paths.
 
-Use the same environment as ATMA training, with CUDA, Triton, FLA, causal-conv1d, and a recent
-PyTorch build that provides `torch.nn.attention.flex_attention.BlockMask.from_kv_blocks` and GQA.
-The checkpoint downloader also needs `huggingface_hub`.
+The index projections consume `x.detach()`: index learning does not reshape the checkpoint hidden
+states through the auxiliary branch. The backbone still receives ordinary LM gradients through
+the sparse attention path. Hard page indices are detached because discrete top-P selection is not
+differentiable; LM-output and KL provide the continuous indexer gradients.
 
-Run the portable correctness suite before using a GPU budget:
+CUDA NoPE/RoPE execution uses PyTorch FlexAttention. Polar calls the selected-page Triton path in
+`kernel/polar_triton.py`, including its custom backward. No eager Polar reduction is used for the
+32K CUDA path. CPU execution is only a correctness reference and is capped at 4,096 tokens.
+
+## Run the complete sweep
+
+Use the ATMA CUDA training environment, then run:
 
 ```bash
 python -m foveal_cpt.tests
+python -m foveal_cpt.sweep --dry-run
+python -m foveal_cpt.sweep --smoke-steps 2
+python -m foveal_cpt.sweep
 ```
 
-The suite checks causal page selection, full-support parity for NoPE/RoPE/Polar, and indexer
-gradients. On CUDA it also compares sparse Polar outputs and all trainable gradients against the
-materialized oracle. Run the smoke stages below as well; CUDA kernel compilation cannot be
-validated by the portable reference alone.
+The default invocation covers all 12 cells. The two KL cells for a given attention core share one
+20M-token calibration produced from that core's checkpoint. Local and LM-output-only cells start
+directly from the source checkpoint. Calibration is not counted in any cell's 1B CPT budget.
 
-## 1. Prepare data
-
-`pilot.json` defaults to the existing binary shards:
-
-```text
-finewebedu10B/finewebedu_train_*.bin
-```
-
-For the scientific run, use document-coherent 32K packs or add explicit document reset masks.
-The legacy flat shards are sufficient for kernel and optimizer smoke tests, but arbitrary
-cross-document slices can make the index learn recency/boundary artifacts.
-
-## 2. Calibrate the new index
-
-Calibration freezes every checkpoint parameter and trains only the new query/key index
-projections. The original dense attention supplies page-mass targets at 4K by default.
+The runner reads each output's `latest.json`, resumes incomplete work, and skips completed work.
+Smoke artifacts are isolated under each cell's `smoke/` subdirectory and are never resumed into
+the full scientific run.
+To distribute the matrix across three GPUs or machines, launch one core per process, for example:
 
 ```bash
-python -m foveal_cpt.calibrate --config foveal_cpt/pilot.json --smoke-steps 2
-python -m foveal_cpt.calibrate --config foveal_cpt/pilot.json
+python -m foveal_cpt.sweep --cores polar --device cuda:0
+python -m foveal_cpt.sweep --cores rope  --device cuda:1
+python -m foveal_cpt.sweep --cores nope  --device cuda:2
 ```
 
-Outputs are written under `foveal_cpt/output/polar/calibration/`. A saved calibration is fully
-restartable:
-
-```bash
-python -m foveal_cpt.calibrate \
-  --config foveal_cpt/pilot.json \
-  --resume foveal_cpt/output/polar/calibration/calibration-step-000250.pt
-```
-
-## 3. Smoke-test and launch CPT
-
-Pass the completed calibration checkpoint. The trainer refuses an uncalibrated index unless
-`--allow-uncalibrated-index` is explicit.
+For one cell, invoke the trainer directly:
 
 ```bash
 python -m foveal_cpt.train \
-  --config foveal_cpt/pilot.json \
-  --index-checkpoint foveal_cpt/output/polar/calibration/calibration-step-000306.pt \
-  --smoke-steps 2
+  --config foveal_cpt/configs/polar-lm_output.json \
+  --device cuda
 ```
 
-Inspect peak memory, index loss, teacher top-K recall/mass, cap rate, mean remote pages, and
-tokens/s. Then remove `--smoke-steps`:
+KL cells require the matching calibration checkpoint when they are not launched by the sweep
+runner. Checkpoints contain model, optimizer, RNG, data cursor, step, token count, stage, and the
+resolved experiment config.
 
-```bash
-python -m foveal_cpt.train \
-  --config foveal_cpt/pilot.json \
-  --index-checkpoint foveal_cpt/output/polar/calibration/calibration-step-000306.pt
-```
+## Run gates
 
-Resume CPT with:
-
-```bash
-python -m foveal_cpt.train \
-  --config foveal_cpt/pilot.json \
-  --resume foveal_cpt/output/polar/cpt/cpt-step-000250.pt
-```
-
-Checkpoints contain model, optimizer, RNG, token-shard cursor, step, and token count. The Hugging
-Face source artifacts do not contain optimizer state, so the first CPT run starts fresh optimizer
-states by design.
-
-## 4. Evaluate the routing curve
-
-The lightweight evaluator reports validation loss and routing statistics for several top-P and
-fixed-K budgets:
-
-```bash
-python -m foveal_cpt.evaluate \
-  --config foveal_cpt/pilot.json \
-  --checkpoint foveal_cpt/output/polar/cpt/cpt-step-001908.pt \
-  --lengths 2048 8192 32768 \
-  --top-p 0.90 0.95 0.98 \
-  --fixed-k 8 16 32 64 \
-  --output foveal_cpt/output/polar/routing-eval.json
-```
-
-This is a run gate, not the complete research evaluation. Promote a checkpoint only after running
-the repository's coherent-document loss, needle/RULER, and Polar diagnostic suites against the
-untouched full-attention checkpoint and the matched `SWA=512 + Titans` CPT control.
-
-## Other attention cores
-
-Copy `pilot.json` and change `checkpoint`/`output_dir` to the RoPE or NoPE repository. Calibrate
-each index independently. Start those conditions with a 100M-token screen by setting
-`train_tokens` to `100000000` and shorten the handoff boundaries proportionally. NoPE is a
-diagnostic because its source checkpoint already has a known long-context instability.
+The first two-step smoke is mandatory for validating CUDA compilation, memory, backward, and
+actual step time. At the existing dense baseline's 9 seconds/step, 12 x 1,908 steps is 57.2 L40S
+GPU-hours; sparse routing, KL, and kernel compile overhead must be measured rather than assumed.
+After CPT, evaluate loss and routing curves with `python -m foveal_cpt.evaluate`, then run the
+repository's coherent-document, needle/RULER, and Polar diagnostics against the untouched source
+checkpoint.

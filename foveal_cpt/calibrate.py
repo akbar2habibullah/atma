@@ -23,16 +23,19 @@ from .runtime import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Calibrate the Foveal MQA index against full attention")
-    parser.add_argument("--config", default="foveal_cpt/pilot.json")
+    parser.add_argument("--config", required=True)
     parser.add_argument("--resume")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--smoke-steps", type=int)
+    parser.add_argument("--output-dir", help="override config output_dir (used for isolated smoke runs)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = FovealConfig.load(args.config)
+    if not config.uses_kl:
+        raise ValueError("calibration is only defined for the kl and lm_output_kl sweep cells")
     if config.calibration_sequence_length % config.page_size:
         raise ValueError("calibration_sequence_length must be divisible by page_size")
     if config.calibration_batch_tokens % config.calibration_sequence_length:
@@ -107,7 +110,7 @@ def main() -> None:
             )
         if (step + 1) % config.save_every == 0 or step + 1 == total_steps:
             path = save_run(
-                Path(config.output_dir) / "calibration",
+                Path(args.output_dir or config.output_dir) / "calibration",
                 model=model,
                 config=config,
                 step=step + 1,
