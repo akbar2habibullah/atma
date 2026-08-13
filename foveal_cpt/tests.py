@@ -8,6 +8,9 @@ Run with the same Python environment used for training:
 from __future__ import annotations
 
 import copy
+import struct
+import tempfile
+from pathlib import Path
 
 import torch
 
@@ -20,6 +23,7 @@ from .attention import FovealAttention, select_pages
 from .checkpoint import wrap_foveal
 from .config import FovealConfig
 from .model import FovealCPTModel, foveal_layers
+from .prepare_data import ensure_training_data, shard_token_count
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
@@ -90,6 +94,33 @@ def test_router() -> None:
     check("router has no remote page at block zero", int(route.page_counts[0, 0]) == 0)
     check("router selects causal page", int(route.page_indices[0, 3, 0]) == 0)
     check("router respects cap", int(route.page_counts.max()) <= 2)
+
+
+def test_dataset_preflight() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "finewebedu_train_000001.bin"
+        token_count = 10
+        header = [20240520, 1, token_count, 2] + [0] * 252
+        path.write_bytes(struct.pack("<256i", *header) + bytes(token_count * 2))
+        config = FovealConfig(
+            train_glob=str(Path(directory) / "finewebedu_train_*.bin"),
+            dataset_repo=None,
+            auto_download_data=False,
+            sequence_length=8,
+            batch_tokens=8,
+            microbatch_sequences=1,
+            train_tokens=8,
+            index_dim=8,
+            page_size=8,
+            query_block_size=8,
+            local_window=8,
+            remote_capacity=4,
+            max_remote_pages=4,
+            initial_max_remote_pages=4,
+        )
+        paths = ensure_training_data(config, include_validation=False)
+        check("dataset preflight finds the sequential shard", paths == [path])
+        check("dataset preflight validates token count", shard_token_count(path) == token_count)
 
 
 def test_dense_parity(attn_type: str, device: str = "cpu", *, backward: bool = False) -> None:
@@ -265,6 +296,7 @@ def test_sparse_polar_triton() -> None:
 
 
 def main() -> None:
+    test_dataset_preflight()
     test_router()
     test_dense_parity("nope")
     test_dense_parity("rope")

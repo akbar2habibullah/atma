@@ -11,6 +11,7 @@ from .checkpoint import load_pretrained
 from .config import FovealConfig
 from .data import TokenShardLoader
 from .model import FovealCPTModel
+from .prepare_data import ensure_training_data
 from .runtime import (
     format_stats,
     index_optimizer,
@@ -36,6 +37,7 @@ def main() -> None:
     config = FovealConfig.load(args.config)
     if not config.uses_kl:
         raise ValueError("calibration is only defined for the kl and lm_output_kl sweep cells")
+    ensure_training_data(config)
     if config.calibration_sequence_length % config.page_size:
         raise ValueError("calibration_sequence_length must be divisible by page_size")
     if config.calibration_batch_tokens % config.calibration_sequence_length:

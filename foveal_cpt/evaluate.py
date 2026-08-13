@@ -11,6 +11,7 @@ from .checkpoint import load_foveal_weights, load_pretrained
 from .config import FovealConfig
 from .data import TokenShardLoader
 from .model import FovealCPTModel, foveal_layers
+from .prepare_data import ensure_validation_data
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +63,7 @@ def evaluate_route(
 def main() -> None:
     args = parse_args()
     config = FovealConfig.load(args.config)
+    ensure_validation_data(config, args.val_glob)
     device = torch.device(args.device)
     base, _, _ = load_pretrained(config, device)
     model = FovealCPTModel(base, config)

@@ -1,5 +1,6 @@
 {
   "checkpoint": "ChavyvAkvar/atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0",
+  "dataset_repo": "kjj0/finewebedu10B-gpt2",
   "output_dir": "foveal_cpt/output/polar/kl",
   "adaptation_mode": "kl",
   "sequence_length": 32768,

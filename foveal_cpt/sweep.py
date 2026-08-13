@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .config import FovealConfig
+from .prepare_data import ensure_training_data
 
 
 CORES = ("polar", "rope", "nope")
@@ -138,6 +139,8 @@ def run_cell(
 
 def main() -> None:
     args = parse_args()
+    if not args.dry_run:
+        ensure_training_data(FovealConfig.load(config_path(args.cores[0], args.modes[0])))
     for core in args.cores:
         calibration = None
         if any(mode in {"kl", "lm_output_kl"} for mode in args.modes):

@@ -1213,6 +1213,12 @@ or carry an explicit end-of-document reset mask through attention and Titans mem
 index can look successful by learning recency and document-boundary artifacts rather than remote
 semantic retrieval.
 
+The executable sweep currently uses the GPT-2-tokenized FineWeb-Edu shards from
+[`kjj0/finewebedu10B-gpt2`](https://huggingface.co/datasets/kjj0/finewebedu10B-gpt2). Its data
+preflight downloads train shards `000001` through `000011` plus validation shard `000000`, verifies
+their binary headers and sizes, and reuses them across all 12 cells. Eleven train shards are needed
+for 1,908 whole 524,288-token batches because a batch is not allowed to cross a shard boundary.
+
 A direct `hidden_size -> 16` query/key pair adds only about 32.8K weights per attention layer. The
 LM-output conditions add a matching 16D value projection and `16 -> hidden_size` output projection,
 for about 65.5K weights per layer, or 262K across ATMA's four attention layers. At 32K, a BF16

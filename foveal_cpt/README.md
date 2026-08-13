@@ -12,6 +12,25 @@ checkpoints. Every cell trains for **1B tokens** at 32K context and a 524,288-to
 
 All files live in `foveal_cpt/configs/` and use isolated output directories.
 
+## Dataset preparation
+
+The sweep uses [`kjj0/finewebedu10B-gpt2`](https://huggingface.co/datasets/kjj0/finewebedu10B-gpt2).
+Before allocating a model, the launcher downloads and verifies enough sequential shards under
+`finewebedu10B/` to satisfy all 1,908 steps, plus the validation shard. With 100M-token source
+shards and the 524,288-token batch, this requires train shards `000001` through `000011`: ten
+shards are slightly short because batches never cross shard boundaries. All 12 cells reuse these
+same local files.
+
+To prepare data without starting training:
+
+```bash
+python -m foveal_cpt.prepare_data \
+  --config foveal_cpt/configs/polar-local.json
+```
+
+Existing files are reused. Each shard's header, token width, declared token count, and exact file
+size are checked before training. `--dry-run` never downloads data.
+
 ## What the four cells test
 
 - `local`: exact causal SWA-512 with no remote pages and no trained index parameters.

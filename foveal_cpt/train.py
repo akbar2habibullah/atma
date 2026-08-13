@@ -11,6 +11,7 @@ from .checkpoint import load_foveal_weights, load_pretrained
 from .config import FovealConfig
 from .data import TokenShardLoader
 from .model import FovealCPTModel
+from .prepare_data import ensure_training_data
 from .runtime import (
     cpt_optimizers,
     format_stats,
@@ -37,6 +38,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = FovealConfig.load(args.config)
+    ensure_training_data(config)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA CPT requested but CUDA is unavailable")

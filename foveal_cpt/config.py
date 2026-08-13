@@ -21,6 +21,10 @@ class FovealConfig:
     train_glob: str = "finewebedu10B/finewebedu_train_*.bin"
     output_dir: str = "foveal_cpt/output/polar"
     hf_cache: str | None = None
+    dataset_repo: str | None = "kjj0/finewebedu10B-gpt2"
+    dataset_train_template: str = "finewebedu_train_{index:06d}.bin"
+    dataset_validation_file: str = "finewebedu_val_000000.bin"
+    auto_download_data: bool = True
     adaptation_mode: str = "lm_output_kl"
 
     sequence_length: int = 32768
