@@ -61,6 +61,7 @@ class DirectScorer:
         device: str | None = None,
         max_length: int | None = 2048,
         batch_size: int = 8,
+        gamma_clamp: str | None = None,
     ):
         import torch
         from transformers import AutoTokenizer
@@ -73,6 +74,8 @@ class DirectScorer:
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.max_length = max_length
         self.batch_size = batch_size
+        self.gamma_clamp = gamma_clamp
+        self._gamma_clamp_handle = None
         self.tokenizer = self._load_tokenizer(AutoTokenizer)
         self.model = self._load_model(torch)
 
@@ -108,6 +111,12 @@ class DirectScorer:
             )
         model.to(self.device)
         model.eval()
+        if self.gamma_clamp:
+            from gamma_diagnostics.clamp import apply_gamma_clamp
+
+            self._gamma_clamp_handle = apply_gamma_clamp(model, self.gamma_clamp)
+            targets = self._gamma_clamp_handle.resolved_targets
+            print(f"Applied gamma clamp to {len(targets)} layer-head target(s): {targets}")
         # Length extrapolation is evaluated at full context, matching
         # scaled_ablation.eval_hf_checkpoints rather than any training-only window.
         for block in model.blocks:
@@ -124,6 +133,9 @@ class DirectScorer:
         import gc
         import torch
 
+        if self._gamma_clamp_handle is not None:
+            self._gamma_clamp_handle.remove()
+            self._gamma_clamp_handle = None
         self.model = None
         gc.collect()
         if torch.cuda.is_available():
