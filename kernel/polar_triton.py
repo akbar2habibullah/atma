@@ -1175,3 +1175,520 @@ def polar_attention(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
     return PolarAttentionTriton.apply(
         q, k, v, n_keys, v_null, null_base, null_slope_raw,
         len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window)
+
+
+# ---------------------------------------------------------------------------
+# Foveal sparse training kernel
+# ---------------------------------------------------------------------------
+# Each query page attends to (a) its exact token-level causal sliding window and
+# (b) a query-dependent list of completed remote KV pages.  Unlike the paged
+# decode kernel above, this path skips unselected pages and implements backward.
+
+if HAS_TRITON:
+
+    @triton.jit
+    def _polar_sparse_fwd_kernel(
+        Q, K, V, PAGE_INDICES, PAGE_COUNTS, VNULL, SPG, NULLBASE, SPS, BETA,
+        C, MAG, M_OUT, L_OUT, Q2_OUT, S_OUT,
+        stride_qb, stride_qh, stride_qt, stride_qd,
+        stride_kb, stride_kh, stride_kt, stride_kd,
+        stride_vb, stride_vh, stride_vt, stride_vd,
+        stride_pib, stride_piq, stride_pis,
+        stride_pcb, stride_pcq,
+        stride_cb, stride_ch, stride_ct, stride_cd,
+        stride_sb, stride_sh, stride_st, stride_sd,
+        stride_mb, stride_mh, stride_mt,
+        B, H, T, scale, eps,
+        PAGE_SIZE: tl.constexpr, LOCAL_WINDOW: tl.constexpr,
+        LOCAL_BLOCKS: tl.constexpr, REMOTE_CAPACITY: tl.constexpr,
+        DK: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+    ):
+        query_page = tl.program_id(0)
+        pid_bh = tl.program_id(1)
+        b = pid_bh // H
+        h = pid_bh % H
+        scale = scale.to(tl.float32)
+        eps = eps.to(tl.float32)
+
+        offs_m = query_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+        offs_d = tl.arange(0, DK)
+        m_valid = offs_m < T
+        q = tl.load(
+            Q + b * stride_qb + h * stride_qh
+            + offs_m[:, None] * stride_qt + offs_d[None, :] * stride_qd,
+            mask=m_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+
+        route_count = tl.load(
+            PAGE_COUNTS + b * stride_pcb + query_page * stride_pcq
+        ).to(tl.int32)
+        route_count = tl.minimum(tl.maximum(route_count, 0), REMOTE_CAPACITY)
+        # Preserve the pretrained Polar calibration: temperature and the null
+        # floor describe the full visible prefix even though only selected keys
+        # are reduced.  Changing this to sparse-support cardinality would shift
+        # both channels immediately at the dense-to-sparse handoff.
+        n_i = (offs_m + 1).to(tl.float32)
+        n_clamp = tl.maximum(n_i, 1.0)
+        spg = tl.load(SPG + h).to(tl.float32)
+        sps = tl.load(SPS + h).to(tl.float32)
+        beta = tl.load(BETA + h).to(tl.float32)
+        nb = tl.load(NULLBASE + h).to(tl.float32)
+        logn = tl.log(n_clamp)
+        temp = 1.0 + spg * logn
+        nullv = nb + sps * tl.sqrt(tl.log(n_clamp + 1.0))
+
+        m_i = tl.full([PAGE_SIZE], -1e38, tl.float32)
+        l_i = tl.zeros([PAGE_SIZE], tl.float32)
+        q2_i = tl.zeros([PAGE_SIZE], tl.float32)
+        acc = tl.zeros([PAGE_SIZE, DK], tl.float32)
+
+        # Token-exact local band.  LOCAL_BLOCKS includes the potentially partial
+        # oldest page and the current query page.
+        for local_slot in range(0, LOCAL_BLOCKS):
+            key_page = query_page - (LOCAL_BLOCKS - 1) + local_slot
+            offs_n = key_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            n_valid = (key_page >= 0) & (offs_n >= 0) & (offs_n < T)
+            k = tl.load(
+                K + b * stride_kb + h * stride_kh
+                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            v = tl.load(
+                V + b * stride_vb + h * stride_vh
+                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            valid = (n_valid[None, :] & (offs_n[None, :] <= offs_m[:, None])
+                     & (offs_n[None, :] > offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            m_new = tl.maximum(m_i, tl.max(a, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.where(valid, tl.exp(a - m_new[:, None]), 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(
+                p.to(DOT_DTYPE), v, input_precision=INPUT_PRECISION
+            )
+            m_i = m_new
+
+        # Selected completed remote pages.  Counts are runtime values, while the
+        # fixed capacity keeps the route tensors and launch shape static.
+        for remote_slot in range(0, REMOTE_CAPACITY):
+            selected = remote_slot < route_count
+            key_page = tl.load(
+                PAGE_INDICES + b * stride_pib + query_page * stride_piq
+                + remote_slot * stride_pis,
+                mask=selected, other=0,
+            ).to(tl.int32)
+            offs_n = key_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            n_valid = selected & (key_page >= 0) & (offs_n >= 0) & (offs_n < T)
+            k = tl.load(
+                K + b * stride_kb + h * stride_kh
+                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            v = tl.load(
+                V + b * stride_vb + h * stride_vh
+                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                mask=n_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            # Enforce completed, non-local pages even if a malformed route is
+            # supplied.  Valid routes produced by Foveal already satisfy this.
+            valid = (n_valid[None, :] & (offs_n[None, :] <= offs_m[:, None])
+                     & (offs_n[None, :] <= offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            m_new = tl.maximum(m_i, tl.max(a, 1))
+            alpha = tl.exp(m_i - m_new)
+            p = tl.where(valid, tl.exp(a - m_new[:, None]), 0.0)
+            l_i = l_i * alpha + tl.sum(p, 1)
+            q2_i = q2_i * alpha * alpha + tl.sum(p * p, 1)
+            acc = acc * alpha[:, None] + tl.dot(
+                p.to(DOT_DTYPE), v, input_precision=INPUT_PRECISION
+            )
+            m_i = m_new
+
+        a_n = temp * nullv
+        m_new = tl.maximum(m_i, a_n)
+        alpha = tl.exp(m_i - m_new)
+        l_i *= alpha
+        q2_i *= alpha * alpha
+        acc *= alpha[:, None]
+        m_i = m_new
+        p_n = tl.exp(a_n - m_i)
+        z = l_i + p_n
+        vnull = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
+        s = acc + p_n[:, None] * vnull[None, :]
+        snorm = tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)
+        c = s / snorm[:, None]
+        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        m_eff = n_eff * (l_i / tl.maximum(z, eps))
+        mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
+
+        c_ptrs = (C + b * stride_cb + h * stride_ch
+                  + offs_m[:, None] * stride_ct + offs_d[None, :] * stride_cd)
+        s_ptrs = (S_OUT + b * stride_sb + h * stride_sh
+                  + offs_m[:, None] * stride_st + offs_d[None, :] * stride_sd)
+        tl.store(c_ptrs, c, mask=m_valid[:, None])
+        tl.store(s_ptrs, s, mask=m_valid[:, None])
+        mbase = b * stride_mb + h * stride_mh + offs_m * stride_mt
+        tl.store(MAG + mbase, mag, mask=m_valid)
+        tl.store(M_OUT + mbase, m_i, mask=m_valid)
+        tl.store(L_OUT + mbase, l_i, mask=m_valid)
+        tl.store(Q2_OUT + mbase, q2_i, mask=m_valid)
+
+
+    @triton.jit
+    def _polar_sparse_bwd_kernel(
+        Q, K, V, PAGE_INDICES, PAGE_COUNTS, GS, GL, GQ2, TEMP, M,
+        DQ, DK_OUT, DV_OUT, DT,
+        stride_qb, stride_qh, stride_qt, stride_qd,
+        stride_kb, stride_kh, stride_kt, stride_kd,
+        stride_vb, stride_vh, stride_vt, stride_vd,
+        stride_pib, stride_piq, stride_pis,
+        stride_pcb, stride_pcq,
+        stride_gsb, stride_gsh, stride_gst, stride_gsd,
+        stride_mb, stride_mh, stride_mt,
+        stride_tb, stride_th, stride_tt,
+        B, H, T, scale,
+        PAGE_SIZE: tl.constexpr, LOCAL_WINDOW: tl.constexpr,
+        LOCAL_BLOCKS: tl.constexpr, REMOTE_CAPACITY: tl.constexpr,
+        DK: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+    ):
+        query_page = tl.program_id(0)
+        pid_bh = tl.program_id(1)
+        b = pid_bh // H
+        h = pid_bh % H
+        scale = scale.to(tl.float32)
+        offs_m = query_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+        offs_d = tl.arange(0, DK)
+        m_valid = offs_m < T
+        q = tl.load(
+            Q + b * stride_qb + h * stride_qh
+            + offs_m[:, None] * stride_qt + offs_d[None, :] * stride_qd,
+            mask=m_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+        gs = tl.load(
+            GS + b * stride_gsb + h * stride_gsh
+            + offs_m[:, None] * stride_gst + offs_d[None, :] * stride_gsd,
+            mask=m_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+        mbase = b * stride_mb + h * stride_mh + offs_m * stride_mt
+        g_l = tl.load(GL + mbase, mask=m_valid, other=0.0).to(tl.float32)
+        g_q2 = tl.load(GQ2 + mbase, mask=m_valid, other=0.0).to(tl.float32)
+        m_i = tl.load(M + mbase, mask=m_valid, other=0.0).to(tl.float32)
+        temp = tl.load(
+            TEMP + b * stride_tb + h * stride_th + offs_m * stride_tt,
+            mask=m_valid, other=1.0,
+        ).to(tl.float32)
+        route_count = tl.load(
+            PAGE_COUNTS + b * stride_pcb + query_page * stride_pcq
+        ).to(tl.int32)
+        route_count = tl.minimum(tl.maximum(route_count, 0), REMOTE_CAPACITY)
+        dq = tl.zeros([PAGE_SIZE, DK], tl.float32)
+        dt = tl.zeros([PAGE_SIZE], tl.float32)
+
+        for local_slot in range(0, LOCAL_BLOCKS):
+            key_page = query_page - (LOCAL_BLOCKS - 1) + local_slot
+            offs_n = key_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            n_valid = (key_page >= 0) & (offs_n >= 0) & (offs_n < T)
+            k_ptrs = (K + b * stride_kb + h * stride_kh
+                      + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd)
+            v_ptrs = (V + b * stride_vb + h * stride_vh
+                      + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd)
+            k = tl.load(k_ptrs, mask=n_valid[:, None], other=0.0).to(DOT_DTYPE)
+            v = tl.load(v_ptrs, mask=n_valid[:, None], other=0.0).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            valid = (n_valid[None, :] & (offs_n[None, :] <= offs_m[:, None])
+                     & (offs_n[None, :] > offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            p = tl.where(valid, tl.exp(a - m_i[:, None]), 0.0)
+            gs_v = tl.dot(gs, tl.trans(v), input_precision=INPUT_PRECISION)
+            dldp = gs_v + g_l[:, None] + g_q2[:, None] * (2.0 * p)
+            da = tl.where(valid, dldp * p, 0.0)
+            dt += tl.sum(da * sig, 1)
+            gsig = (da * temp[:, None]).to(DOT_DTYPE)
+            dq += tl.dot(gsig, k, input_precision=INPUT_PRECISION) * scale
+            dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+            dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+            tl.atomic_add(
+                DK_OUT + b * stride_kb + h * stride_kh
+                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                dk, mask=n_valid[:, None],
+            )
+            tl.atomic_add(
+                DV_OUT + b * stride_vb + h * stride_vh
+                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                dv, mask=n_valid[:, None],
+            )
+
+        for remote_slot in range(0, REMOTE_CAPACITY):
+            selected = remote_slot < route_count
+            key_page = tl.load(
+                PAGE_INDICES + b * stride_pib + query_page * stride_piq
+                + remote_slot * stride_pis,
+                mask=selected, other=0,
+            ).to(tl.int32)
+            offs_n = key_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            n_valid = selected & (key_page >= 0) & (offs_n >= 0) & (offs_n < T)
+            k_ptrs = (K + b * stride_kb + h * stride_kh
+                      + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd)
+            v_ptrs = (V + b * stride_vb + h * stride_vh
+                      + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd)
+            k = tl.load(k_ptrs, mask=n_valid[:, None], other=0.0).to(DOT_DTYPE)
+            v = tl.load(v_ptrs, mask=n_valid[:, None], other=0.0).to(DOT_DTYPE)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            valid = (n_valid[None, :] & (offs_n[None, :] <= offs_m[:, None])
+                     & (offs_n[None, :] <= offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            p = tl.where(valid, tl.exp(a - m_i[:, None]), 0.0)
+            gs_v = tl.dot(gs, tl.trans(v), input_precision=INPUT_PRECISION)
+            dldp = gs_v + g_l[:, None] + g_q2[:, None] * (2.0 * p)
+            da = tl.where(valid, dldp * p, 0.0)
+            dt += tl.sum(da * sig, 1)
+            gsig = (da * temp[:, None]).to(DOT_DTYPE)
+            dq += tl.dot(gsig, k, input_precision=INPUT_PRECISION) * scale
+            dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+            dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+            tl.atomic_add(
+                DK_OUT + b * stride_kb + h * stride_kh
+                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                dk, mask=n_valid[:, None],
+            )
+            tl.atomic_add(
+                DV_OUT + b * stride_vb + h * stride_vh
+                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                dv, mask=n_valid[:, None],
+            )
+
+        tl.store(
+            DQ + b * stride_qb + h * stride_qh
+            + offs_m[:, None] * stride_qt + offs_d[None, :] * stride_qd,
+            dq, mask=m_valid[:, None],
+        )
+        tl.store(DT + mbase, dt, mask=m_valid)
+
+
+def _polar_sparse_forward(
+    q, k, v, page_indices, page_counts, v_null, null_base, null_slope_raw,
+    len_gain_raw, mag_beta_raw, page_size, local_window, eps, input_precision,
+):
+    B, H, T, dk = q.shape
+    dev, out_dtype = q.device, q.dtype
+    dot_dtype, ip, is_fp32 = _dtype_meta(out_dtype)
+    if is_fp32:
+        ip = input_precision
+    spg = _softplus(len_gain_raw.float()).contiguous()
+    sps = _softplus(null_slope_raw.float()).contiguous()
+    beta = _softplus(mag_beta_raw.float()).contiguous()
+    nb = null_base.float().contiguous()
+    vn = v_null.float().contiguous()
+    page_indices = page_indices.to(device=dev, dtype=torch.int32).contiguous()
+    page_counts = page_counts.to(device=dev, dtype=torch.int32).contiguous()
+    remote_capacity = page_indices.shape[-1]
+    local_blocks = local_window // page_size + 1
+
+    c = torch.empty_like(q, dtype=torch.float32)
+    s = torch.empty_like(q, dtype=torch.float32)
+    mag = torch.empty((B, H, T), device=dev, dtype=torch.float32)
+    M = torch.empty_like(mag)
+    L = torch.empty_like(mag)
+    Q2 = torch.empty_like(mag)
+    grid = (T // page_size, B * H)
+    cfg = _fwd_config(dk, is_fp32, dev)
+    _polar_sparse_fwd_kernel[grid](
+        q, k, v, page_indices, page_counts, vn, spg, nb, sps, beta,
+        c, mag, M, L, Q2, s,
+        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+        k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+        v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        page_indices.stride(0), page_indices.stride(1), page_indices.stride(2),
+        page_counts.stride(0), page_counts.stride(1),
+        c.stride(0), c.stride(1), c.stride(2), c.stride(3),
+        s.stride(0), s.stride(1), s.stride(2), s.stride(3),
+        mag.stride(0), mag.stride(1), mag.stride(2),
+        B, H, T, 1.0 / math.sqrt(dk), eps,
+        PAGE_SIZE=page_size, LOCAL_WINDOW=local_window, LOCAL_BLOCKS=local_blocks,
+        REMOTE_CAPACITY=remote_capacity, DK=dk, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        num_warps=cfg["num_warps"], num_stages=cfg["num_stages"],
+    )
+    return c.to(out_dtype), mag.to(out_dtype), M, L, Q2, s, page_indices, page_counts
+
+
+def _polar_sparse_backward(
+    gc, gm, q, k, v, page_indices, page_counts, v_null, null_base,
+    null_slope_raw, len_gain_raw, mag_beta_raw, M, L, Q2, s,
+    page_size, local_window, eps, input_precision,
+):
+    B, H, T, dk = q.shape
+    dev, fdt = q.device, torch.float32
+    gc, gm = gc.to(fdt), gm.to(fdt)
+    # Match the checkpoint's dense Polar length calibration.  Routing changes
+    # the reduced support, not the meaning of n_keys.
+    n = torch.arange(1, T + 1, device=dev, dtype=fdt).view(1, T).expand(B, -1)
+    spg = _softplus(len_gain_raw.to(fdt)).view(1, H, 1)
+    sps = _softplus(null_slope_raw.to(fdt)).view(1, H, 1)
+    beta = _softplus(mag_beta_raw.to(fdt)).view(1, H, 1)
+    logn = torch.log(n).unsqueeze(1)
+    sqrt_lognp1 = torch.sqrt(torch.log(n + 1.0)).unsqueeze(1)
+    temp = 1.0 + spg * logn
+    nu = null_base.to(fdt).view(1, H, 1) + sps * sqrt_lognp1
+    a_n = temp * nu
+    p_n = torch.exp(a_n - M)
+    z = L + p_n
+    zc, q2c = z.clamp_min(eps), Q2.clamp_min(eps)
+    m_eff = (L ** 3) / (q2c * zc)
+    log1p_m = torch.log1p(m_eff)
+    mag = torch.tanh(beta * log1p_m)
+    gme = gm * beta * (1.0 - mag * mag) / (1.0 + m_eff)
+    dm_dl = 3.0 * L * L / (q2c * zc)
+    dm_dq2 = -(L ** 3) / (q2c * q2c * zc)
+    dm_dz = -(L ** 3) / (q2c * zc * zc)
+    g_l = gme * (dm_dl + dm_dz)
+    g_q2 = gme * dm_dq2
+    gpn = gme * dm_dz
+
+    s = s.to(fdt)
+    snorm = s.norm(p=2, dim=-1, keepdim=True).clamp_min(eps)
+    c = s / snorm
+    gs = (gc - (gc * c).sum(-1, keepdim=True) * c) / snorm
+    gpn = gpn + (gs * v_null.to(fdt).view(1, H, 1, dk)).sum(-1)
+    grad_v_null = (p_n.unsqueeze(-1) * gs).sum(dim=(0, 2))
+    da_n = gpn * p_n
+    grad_t_null = da_n * nu
+    grad_nu = da_n * temp
+
+    out_dtype = q.dtype
+    dot_dtype, ip, is_fp32 = _dtype_meta(out_dtype)
+    if is_fp32:
+        ip = input_precision
+    gs_kernel = gs.to(out_dtype).contiguous()
+    g_l = g_l.contiguous()
+    g_q2 = g_q2.contiguous()
+    M = M.contiguous()
+    temp = temp.contiguous()
+    dq = torch.zeros_like(q, dtype=fdt)
+    dk_out = torch.zeros_like(k, dtype=fdt)
+    dv_out = torch.zeros_like(v, dtype=fdt)
+    dt_real = torch.zeros((B, H, T), device=dev, dtype=fdt)
+    local_blocks = local_window // page_size + 1
+    remote_capacity = page_indices.shape[-1]
+    cfg = _bwd_config(dk, is_fp32, dev)["dq"]
+    _polar_sparse_bwd_kernel[(T // page_size, B * H)](
+        q, k, v, page_indices, page_counts, gs_kernel, g_l, g_q2, temp, M,
+        dq, dk_out, dv_out, dt_real,
+        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+        k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+        v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        page_indices.stride(0), page_indices.stride(1), page_indices.stride(2),
+        page_counts.stride(0), page_counts.stride(1),
+        gs_kernel.stride(0), gs_kernel.stride(1), gs_kernel.stride(2), gs_kernel.stride(3),
+        g_l.stride(0), g_l.stride(1), g_l.stride(2),
+        temp.stride(0), temp.stride(1), temp.stride(2),
+        B, H, T, 1.0 / math.sqrt(dk),
+        PAGE_SIZE=page_size, LOCAL_WINDOW=local_window, LOCAL_BLOCKS=local_blocks,
+        REMOTE_CAPACITY=remote_capacity, DK=dk, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        num_warps=cfg["num_warps"], num_stages=cfg["num_stages"],
+    )
+
+    grad_t = dt_real + grad_t_null
+    grad_len_gain = (grad_t * logn).sum(dim=(0, 2)) * torch.sigmoid(len_gain_raw.to(fdt))
+    grad_null_base = grad_nu.sum(dim=(0, 2))
+    grad_null_slope = ((grad_nu * sqrt_lognp1).sum(dim=(0, 2))
+                       * torch.sigmoid(null_slope_raw.to(fdt)))
+    grad_mag_beta = ((gm * (1.0 - mag * mag) * log1p_m).sum(dim=(0, 2))
+                     * torch.sigmoid(mag_beta_raw.to(fdt)))
+    return (dq, dk_out, dv_out, grad_v_null, grad_null_base, grad_null_slope,
+            grad_len_gain, grad_mag_beta)
+
+
+class PolarSparseAttentionTriton(torch.autograd.Function):
+    """Block-sparse Polar attention for Foveal local-plus-remote routes."""
+
+    @staticmethod
+    def forward(
+        ctx, q, k, v, page_indices, page_counts, v_null, null_base,
+        null_slope_raw, len_gain_raw, mag_beta_raw, page_size, local_window,
+        eps, input_precision,
+    ):
+        q = q.contiguous(); k = k.contiguous(); v = v.contiguous()
+        c, mag, M, L, Q2, s, page_indices, page_counts = _polar_sparse_forward(
+            q, k, v, page_indices, page_counts, v_null, null_base,
+            null_slope_raw, len_gain_raw, mag_beta_raw, page_size,
+            local_window, eps, input_precision,
+        )
+        ctx.save_for_backward(
+            q, k, v, page_indices, page_counts, v_null, null_base,
+            null_slope_raw, len_gain_raw, mag_beta_raw, M, L, Q2, s,
+        )
+        ctx.page_size = page_size
+        ctx.local_window = local_window
+        ctx.eps = eps
+        ctx.input_precision = input_precision
+        return c, mag
+
+    @staticmethod
+    def backward(ctx, gc, gm):
+        (q, k, v, page_indices, page_counts, v_null, null_base,
+         null_slope_raw, len_gain_raw, mag_beta_raw, M, L, Q2, s) = ctx.saved_tensors
+        grads = _polar_sparse_backward(
+            gc, gm, q, k, v, page_indices, page_counts, v_null, null_base,
+            null_slope_raw, len_gain_raw, mag_beta_raw, M, L, Q2, s,
+            ctx.page_size, ctx.local_window, ctx.eps, ctx.input_precision,
+        )
+        refs = (q, k, v, v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw)
+        grads = tuple(grad.to(ref.dtype) for grad, ref in zip(grads, refs))
+        return (grads[0], grads[1], grads[2], None, None, grads[3], grads[4],
+                grads[5], grads[6], grads[7], None, None, None, None)
+
+
+def polar_attention_sparse(
+    q, k, v, page_indices, page_counts, *, page_size, local_window,
+    v_null, null_base, null_slope_raw, len_gain_raw, mag_beta_raw,
+    eps=1e-6, input_precision="ieee",
+):
+    """Trainable block-sparse Polar attention for a Foveal route.
+
+    ``q``, ``k`` and ``v`` are ``(B,H,T,D)`` with GQA heads already expanded.
+    ``page_indices`` is ``(B,T/page_size,capacity)`` and ``page_counts`` gives
+    the active prefix of each route row.  The support is the union of the exact
+    causal ``local_window`` and those completed remote pages. Polar temperature
+    and null-floor calibration still use the full causal prefix length ``t+1``.
+    Page selection is discrete: gradients are returned for attention tensors and
+    Polar parameters, but never for the integer route.
+    """
+    if not HAS_TRITON or not q.is_cuda:
+        raise RuntimeError("sparse Polar attention requires CUDA and Triton")
+    if q.ndim != 4 or k.shape != q.shape or v.shape != q.shape:
+        raise ValueError("q, k, and v must have identical (B,H,T,D) shapes")
+    B, H, T, dk = q.shape
+    if q.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        raise ValueError(f"unsupported sparse Polar dtype: {q.dtype}")
+    if dk < 16 or dk & (dk - 1):
+        raise ValueError(f"head_dim (dk={dk}) must be a power of two of at least 16")
+    if page_size < 16 or page_size > 128 or page_size & (page_size - 1):
+        raise ValueError("page_size must be a power of two in [16, 128]")
+    if T % page_size:
+        raise ValueError("token length must be divisible by page_size")
+    if local_window <= 0 or local_window % page_size:
+        raise ValueError("local_window must be positive and divisible by page_size")
+    query_pages = T // page_size
+    if page_indices.ndim != 3 or page_indices.shape[:2] != (B, query_pages):
+        raise ValueError("page_indices must have shape (B,T/page_size,capacity)")
+    if page_counts.shape != (B, query_pages):
+        raise ValueError("page_counts must have shape (B,T/page_size)")
+    if not 0 < page_indices.shape[-1] <= 128:
+        raise ValueError("the sparse route capacity must lie in [1, 128]")
+    expected_heads = (H, dk)
+    if v_null.shape != expected_heads:
+        raise ValueError(f"v_null must have shape {expected_heads}")
+    for name, param in (("null_base", null_base), ("null_slope_raw", null_slope_raw),
+                        ("len_gain_raw", len_gain_raw), ("mag_beta_raw", mag_beta_raw)):
+        if param.shape != (H,):
+            raise ValueError(f"{name} must have shape ({H},)")
+    return PolarSparseAttentionTriton.apply(
+        q, k, v, page_indices, page_counts, v_null, null_base,
+        null_slope_raw, len_gain_raw, mag_beta_raw, int(page_size),
+        int(local_window), float(eps), input_precision,
+    )

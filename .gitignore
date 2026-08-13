@@ -11,6 +11,7 @@ scaled_ablation/cross_eval_*.json
 /tmp/training_artifact_diag/
 paper/arxiv
 /checkpoints/babilong_2k_ft/
+/foveal_cpt/output/
 
 # LaTeX build products (compiled manuscript PDFs are tracked explicitly).
 paper/**/*.aux
