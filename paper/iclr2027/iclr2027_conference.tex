@@ -73,7 +73,7 @@ Linear attention, state-space models, and gated recurrences exchange full-resolu
 
 \subsection{Hybrid architecture}
 
-ATMA is a 16-layer decoder with 12 LFM2-style gated convolutional layers interleaved with four global attention layers. All blocks use pre-normalization and squared-ReLU MLPs. The attention variants share hidden size 1024, eight query heads, two key-value heads, head dimension 128, tokenizer, data order, optimizer, schedule, and training budget; only the attention core changes among NoPE, RoPE, and Polar. Canon depthwise causal convolutions are applied to $q$, $k$, and $v$ before attention~\citep{physics_lms_2025}.
+ATMA is a 16-layer decoder whose block order repeats local--local--global--local four times, yielding 12 LFM2-style gated convolutional layers and global attention at blocks 3, 7, 11, and 15. All blocks use pre-normalization and squared-ReLU MLPs. The attention variants share hidden size 1024, eight query heads, two key-value heads, head dimension 128, tokenizer, data order, optimizer, schedule, and training budget; only the attention core changes among NoPE, RoPE, and Polar. Canon depthwise causal convolutions are applied to $q$, $k$, and $v$ before attention~\citep{physics_lms_2025}.
 
 \subsection{Polar attention}
 

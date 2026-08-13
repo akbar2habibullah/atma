@@ -73,9 +73,9 @@
         </ul>
       </section>
 
-      <figure class="lead-figure wide-figure">
-        <a href="assets/figures/atma-architecture.svg" title="Open the full-resolution architecture diagram"><img src="assets/figures/atma-architecture.svg" width="1200" height="720" alt="Diagram of the ATMA 3-to-1 layer stack and a Polar Attention block with content, count, and recurrent memory branches." decoding="async"></a>
-        <figcaption><strong>Figure 1.</strong> ATMA interleaves 12 gated-convolution layers with four global Polar Attention layers. Each Polar block combines a normalized content direction, a bounded participation-count channel, and gated-delta compression memory.</figcaption>
+      <figure class="lead-figure wide-figure" id="figure-architecture">
+        <a href="assets/figures/atma-architecture.svg?v=7" title="Open the full-resolution architecture diagram"><img src="assets/figures/atma-architecture.svg?v=7" width="1260" height="680" alt="Diagram showing the Local, Local, Global, Local schedule repeated four times and an expanded Polar Attention global block with content, count, and recurrent memory paths." decoding="async"></a>
+        <figcaption><strong>Figure 1.</strong> ATMA repeats <em>Local → Local → Global → Local</em> four times, giving 12 gated-convolution layers and four global Polar Attention layers at blocks 3, 7, 11, and 15. Each global block combines normalized content direction, bounded participation magnitude, and gated-delta compression memory before gated projection and residual addition.</figcaption>
       </figure>
 
       <section id="introduction">
@@ -88,7 +88,7 @@
         <p>That distinction motivates Polar Attention. We want one channel to represent <em>what matched</em>, without its norm growing simply because more keys were present, and another bounded channel to express <em>how much matched</em>.</p>
 
         <h3 id="approach">Our approach</h3>
-        <p>ATMA is a 16-layer decoder with 12 gated convolutional layers and four global attention layers. The global layers use Polar Attention and also maintain gated-delta recurrent memory. The attention path can still read the full context; the recurrent path supplies a compressed history whose state size does not grow with the sequence.</p>
+        <p>ATMA is a 16-layer decoder that repeats <em>Local → Local → Global → Local</em> four times: 12 gated-convolution layers and four global attention layers at blocks 3, 7, 11, and 15. The global layers use Polar Attention and also maintain gated-delta recurrent memory. The attention path can still read the full context; the recurrent path supplies a compressed history whose state size does not grow with the sequence.</p>
         <p>We test this in two stages. First, a complete factorial sweep chooses the recipe across attention type, regularization, distractor alignment, memory, and local training windows. Second, matched NoPE, RoPE, and Polar models are trained for 9.816B tokens and evaluated from their 2K training length through 256K.</p>
       </section>
 

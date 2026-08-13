@@ -25,6 +25,7 @@ The canonical model uses 16 pre-norm decoder blocks with a 3:1 convolution-to-at
 
 - 12 LFM2-style gated depthwise causal convolution layers.
 - 4 global mixing layers using Polar Attention and an additive gated-delta memory channel.
+- Exact order: **Local → Local → Global → Local**, repeated four times (global blocks 3, 7, 11, and 15 in one-based numbering).
 - Squared-ReLU gated MLPs with 4× hidden expansion.
 
 | Configuration | Value | Configuration | Value |

@@ -1,95 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">ATMA architecture and Polar Attention block</title>
-  <desc id="desc">A sixteen-layer ATMA stack feeds a Polar Attention block whose content, count, and gated-delta memory branches merge into the residual stream.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 680" role="img" aria-labelledby="title desc">
+  <title id="title">ATMA layer schedule and Polar Attention global block</title>
+  <desc id="desc">The sixteen-layer schedule repeats local, local, global, local four times. The expanded global block routes normalized inputs through content direction, bounded participation count, and gated-delta memory paths before gated projection and residual addition.</desc>
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0l8 4-8 4z" fill="#4f5661"/></marker>
-    <style>
-      .sans{font-family:Inter,Arial,sans-serif}.serif{font-family:Georgia,'Times New Roman',serif}.mono{font-family:'SFMono-Regular',Consolas,monospace}
-      .kicker{font-size:11px;font-weight:700;letter-spacing:1.8px;fill:#5275ff}.small{font-size:11px;fill:#626975}.label{font-size:13px;font-weight:650;fill:#16191f}.title{font-size:27px;font-weight:500;fill:#111318}.rule{stroke:#d6dae1;stroke-width:1}.flow{fill:none;stroke:#4f5661;stroke-width:1.5;marker-end:url(#arrow)}
-    </style>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6.5" refY="3.5" orient="auto"><path d="M0 0l7 3.5L0 7z" fill="#505762"/></marker>
+    <style>.sans{font-family:Inter,Arial,sans-serif}.serif{font-family:Georgia,'Times New Roman',serif}.mono{font-family:'SFMono-Regular',Consolas,monospace}.kicker{font-size:11px;font-weight:700;letter-spacing:1.8px;fill:#5275ff}.title{font-size:28px;font-weight:500;fill:#111318}.section{font-size:15px;font-weight:700;fill:#111318}.label{font-size:12px;font-weight:650;fill:#20242b}.small{font-size:10px;fill:#68707c}.micro{font-size:8px;font-weight:700;letter-spacing:1px}.rule{stroke:#d5dae2;stroke-width:1}.branch,.flow,.residual{fill:none;stroke-linecap:round;stroke-linejoin:round}.branch{stroke:#505762;stroke-width:1.5}.flow{stroke:#505762;stroke-width:1.6;marker-end:url(#arrow)}.residual{stroke:#8c939d;stroke-width:1.25;marker-end:url(#arrow)}</style>
   </defs>
-  <rect width="1200" height="720" fill="#f7f7f5"/>
-  <text x="40" y="42" class="sans kicker">FIGURE 01 · ARCHITECTURE</text>
-  <text x="40" y="78" class="serif title">One full-context read, three complementary channels</text>
-  <line x1="40" y1="96" x2="1160" y2="96" class="rule"/>
+  <rect width="1260" height="680" fill="#f7f7f5"/>
+  <text x="42" y="40" class="sans kicker">FIGURE 01 · MODEL ARCHITECTURE</text>
+  <text x="42" y="76" class="serif title">Local mixing between full-context reads</text>
+  <text x="1218" y="72" text-anchor="end" class="sans small">16 decoder layers · 12 local + 4 global</text>
+  <line x1="42" y1="95" x2="1218" y2="95" class="rule"/>
 
-  <rect x="40" y="124" width="230" height="552" rx="8" fill="#fff" stroke="#cfd4dc"/>
-  <text x="64" y="158" class="sans kicker">ATMA STACK · 3:1</text>
-  <text x="64" y="182" class="serif" font-size="20" fill="#111318">16 decoder layers</text>
-  <g class="sans small">
-    <rect x="64" y="202" width="11" height="11" fill="#dceede" stroke="#65a66d"/><text x="83" y="212">12 gated-convolution mixers</text>
-    <rect x="64" y="222" width="11" height="11" fill="#dce8ff" stroke="#5275ff"/><text x="83" y="232">4 Polar + memory mixers</text>
-  </g>
-  <g stroke-width="1.2">
-    <rect x="82" y="256" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="286" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="316" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="346" width="146" height="27" rx="4" fill="#dce8ff" stroke="#5275ff"/>
-    <rect x="82" y="383" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="413" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="443" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="473" width="146" height="27" rx="4" fill="#dce8ff" stroke="#5275ff"/>
-    <rect x="82" y="510" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="540" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="570" width="146" height="23" rx="4" fill="#dceede" stroke="#65a66d"/>
-    <rect x="82" y="600" width="146" height="27" rx="4" fill="#dce8ff" stroke="#5275ff"/>
-  </g>
-  <text x="155" y="365" text-anchor="middle" class="mono" font-size="9" fill="#3458df">POLAR + MEMORY ×4</text>
-  <text x="155" y="648" text-anchor="middle" class="sans small">+ final 3:1 group and LM head</text>
-
-  <rect x="294" y="124" width="866" height="552" rx="8" fill="#fff" stroke="#cfd4dc"/>
-  <text x="322" y="158" class="sans kicker">POLAR ATTENTION BLOCK</text>
-  <text x="322" y="182" class="serif" font-size="20" fill="#111318">content + count + compressed memory</text>
-
-  <circle cx="727" cy="231" r="20" fill="#111318"/><text x="727" y="238" text-anchor="middle" class="serif" font-size="23" fill="#fff">+</text>
-  <path d="M727 211V195" class="flow"/><text x="727" y="184" text-anchor="middle" class="sans small">to residual stream</text>
-
-  <g>
-    <rect x="338" y="270" width="236" height="52" rx="6" fill="#e5edff" stroke="#5275ff"/>
-    <text x="356" y="289" class="mono" font-size="9" font-weight="700" fill="#3458df">01 · CONTENT</text>
-    <text x="356" y="309" class="sans label">What matched?</text>
-    <rect x="338" y="344" width="236" height="42" rx="5" fill="#f7f9ff" stroke="#9db2ff"/>
-    <text x="456" y="370" text-anchor="middle" class="sans small">scores → temperature → null sink</text>
-    <rect x="338" y="399" width="236" height="42" rx="5" fill="#f7f9ff" stroke="#9db2ff"/>
-    <text x="456" y="425" text-anchor="middle" class="sans small">renormalize over real keys</text>
-    <rect x="338" y="454" width="236" height="42" rx="5" fill="#f7f9ff" stroke="#9db2ff"/>
-    <text x="456" y="480" text-anchor="middle" class="sans small">normalize weighted-value direction</text>
-    <rect x="338" y="509" width="236" height="42" rx="5" fill="#dce8ff" stroke="#5275ff"/>
-    <text x="456" y="535" text-anchor="middle" class="sans label">content projection W<tspan baseline-shift="sub" font-size="9">o</tspan></text>
-    <path d="M456 509V496M456 454V441M456 399V386M456 344V322M456 270V251H707" class="flow"/>
+  <text x="42" y="126" class="sans section">Layer schedule</text>
+  <text x="1218" y="124" text-anchor="end" class="mono small">repeat ×4 · LOCAL → LOCAL → GLOBAL → LOCAL</text>
+  <g class="sans">
+    <g transform="translate(42 145)"><rect width="264" height="70" rx="8" fill="#fff" stroke="#cfd4dc"/><text x="12" y="17" class="mono micro" fill="#8a9099">GROUP 1</text><g transform="translate(12 27)"><rect width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="26" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L1</text><rect x="61" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="87" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L2</text><rect x="122" width="52" height="29" rx="4" fill="#e5edff" stroke="#5275ff"/><text x="148" y="19" text-anchor="middle" class="mono" font-size="9" font-weight="700" fill="#3458df">G3</text><rect x="183" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="209" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L4</text></g></g>
+    <g transform="translate(346 145)"><rect width="264" height="70" rx="8" fill="#fff" stroke="#cfd4dc"/><text x="12" y="17" class="mono micro" fill="#8a9099">GROUP 2</text><g transform="translate(12 27)"><rect width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="26" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L5</text><rect x="61" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="87" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L6</text><rect x="122" width="52" height="29" rx="4" fill="#e5edff" stroke="#5275ff"/><text x="148" y="19" text-anchor="middle" class="mono" font-size="9" font-weight="700" fill="#3458df">G7</text><rect x="183" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="209" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L8</text></g></g>
+    <g transform="translate(650 145)"><rect width="264" height="70" rx="8" fill="#fff" stroke="#cfd4dc"/><text x="12" y="17" class="mono micro" fill="#8a9099">GROUP 3</text><g transform="translate(12 27)"><rect width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="26" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L9</text><rect x="61" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="87" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L10</text><rect x="122" width="52" height="29" rx="4" fill="#e5edff" stroke="#5275ff"/><text x="148" y="19" text-anchor="middle" class="mono" font-size="9" font-weight="700" fill="#3458df">G11</text><rect x="183" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="209" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L12</text></g></g>
+    <g transform="translate(954 145)"><rect width="264" height="70" rx="8" fill="#fff" stroke="#cfd4dc"/><text x="12" y="17" class="mono micro" fill="#8a9099">GROUP 4</text><g transform="translate(12 27)"><rect width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="26" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L13</text><rect x="61" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="87" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L14</text><rect x="122" width="52" height="29" rx="4" fill="#e5edff" stroke="#5275ff"/><text x="148" y="19" text-anchor="middle" class="mono" font-size="9" font-weight="700" fill="#3458df">G15</text><rect x="183" width="52" height="29" rx="4" fill="#e4f1e5" stroke="#72aa78"/><text x="209" y="19" text-anchor="middle" class="mono" font-size="9" fill="#347342">L16</text></g></g>
+    <path d="M306 180H342" class="flow"/>
+    <path d="M610 180H646" class="flow"/>
+    <path d="M914 180H950" class="flow"/>
   </g>
 
-  <g>
-    <rect x="609" y="270" width="236" height="52" rx="6" fill="#e3f1e4" stroke="#65a66d"/>
-    <text x="627" y="289" class="mono" font-size="9" font-weight="700" fill="#347342">02 · COUNT</text>
-    <text x="627" y="309" class="sans label">How much matched?</text>
-    <rect x="609" y="344" width="236" height="42" rx="5" fill="#f7fbf7" stroke="#93bf98"/>
-    <text x="727" y="370" text-anchor="middle" class="sans small">participation ratio 1 / Σŵ²</text>
-    <rect x="609" y="399" width="236" height="42" rx="5" fill="#f7fbf7" stroke="#93bf98"/>
-    <text x="727" y="425" text-anchor="middle" class="sans small">remove null-sink participation</text>
-    <rect x="609" y="454" width="236" height="42" rx="5" fill="#f7fbf7" stroke="#93bf98"/>
-    <text x="727" y="480" text-anchor="middle" class="sans small">bounded tanh(β log(1 + m<tspan baseline-shift="sub" font-size="8">eff</tspan>))</text>
-    <rect x="609" y="509" width="236" height="42" rx="5" fill="#e3f1e4" stroke="#65a66d"/>
-    <text x="727" y="535" text-anchor="middle" class="sans label">count projection W<tspan baseline-shift="sub" font-size="9">μ</tspan></text>
-    <path d="M727 509V496M727 454V441M727 399V386M727 344V322M727 270V251" class="flow"/>
-  </g>
-
-  <g>
-    <rect x="880" y="270" width="236" height="52" rx="6" fill="#f0e5f6" stroke="#9c56bd"/>
-    <text x="898" y="289" class="mono" font-size="9" font-weight="700" fill="#80429e">03 · MEMORY</text>
-    <text x="898" y="309" class="sans label">What should persist?</text>
-    <rect x="880" y="344" width="236" height="42" rx="5" fill="#fcf8fd" stroke="#bd89d1"/>
-    <text x="998" y="370" text-anchor="middle" class="sans small">gated-delta recurrent update</text>
-    <rect x="880" y="399" width="236" height="42" rx="5" fill="#fcf8fd" stroke="#bd89d1"/>
-    <text x="998" y="425" text-anchor="middle" class="sans small">read with L2-normalized keys</text>
-    <rect x="880" y="454" width="236" height="42" rx="5" fill="#fcf8fd" stroke="#bd89d1"/>
-    <text x="998" y="480" text-anchor="middle" class="sans small">RMS norm + learned gate</text>
-    <rect x="880" y="509" width="236" height="42" rx="5" fill="#f0e5f6" stroke="#9c56bd"/>
-    <text x="998" y="535" text-anchor="middle" class="sans label">zero-init memory projection</text>
-    <path d="M998 509V496M998 454V441M998 399V386M998 344V322M998 270V251H747" class="flow"/>
-  </g>
-
-  <rect x="449" y="601" width="556" height="43" rx="6" fill="#fff7ee" stroke="#dc8841"/>
-  <text x="727" y="628" text-anchor="middle" class="sans label">shared q, k, v and gates · causal convolution · RMSNorm</text>
-  <path d="M615 601L456 551M727 601V551M839 601L998 551" class="flow"/>
+  <rect x="42" y="245" width="1176" height="388" rx="10" fill="#fff" stroke="#cfd4dc"/>
+  <text x="64" y="275" class="sans section">Expanded global block</text><text x="1196" y="274" text-anchor="end" class="sans small">Polar Attention + gated-delta memory</text>
+  <rect x="65" y="380" width="58" height="50" rx="7" fill="#fff" stroke="#cfd4dc"/><text x="94" y="401" text-anchor="middle" class="serif" font-size="19" fill="#111318">x</text><text x="94" y="418" text-anchor="middle" class="mono" font-size="8" fill="#7b828d">HIDDEN</text><path d="M123 405H150" class="flow"/>
+  <rect x="151" y="356" width="126" height="98" rx="7" fill="#fff7eb" stroke="#d99a47"/><text x="214" y="378" text-anchor="middle" class="mono micro" fill="#a76818">PRE-NORM</text><text x="214" y="399" text-anchor="middle" class="sans label">RMSNorm</text><line x1="170" y1="409" x2="258" y2="409" class="rule"/><text x="214" y="427" text-anchor="middle" class="sans small">q, k, v + gates</text><text x="214" y="441" text-anchor="middle" class="sans small">causal conv</text>
+  <rect x="314" y="306" width="673" height="263" rx="12" fill="#f8faff" stroke="#7391e8" stroke-width="1.5" stroke-dasharray="7 5"/><text x="335" y="332" class="sans" font-size="13" font-weight="700" fill="#3458df">Polar Attention sublayer</text>
+  <path d="M277 390H337" class="flow"/><rect x="338" y="354" width="135" height="72" rx="7" fill="#e5edff" stroke="#6e8ee7"/><text x="353" y="374" class="mono micro" fill="#3458df">SCORE</text><text x="353" y="394" class="sans label">qkᵀ / √d</text><text x="353" y="412" class="sans small">length temperature</text><path d="M473 390H496" class="flow"/>
+  <rect x="497" y="354" width="147" height="72" rx="7" fill="#e5edff" stroke="#6e8ee7"/><text x="512" y="374" class="mono micro" fill="#3458df">CALIBRATE</text><text x="512" y="394" class="sans label">adaptive null sink</text><text x="512" y="412" class="sans small">softmax + real-key weights</text>
+  <path d="M644 378H707" class="flow"/><rect x="708" y="345" width="146" height="66" rx="7" fill="#e5edff" stroke="#5275ff"/><text x="723" y="366" class="mono micro" fill="#3458df">CONTENT</text><text x="723" y="386" class="sans label">direction cᵢ</text><text x="723" y="402" class="sans small">normalize Σwⱼvⱼ</text>
+  <path d="M644 402H676Q684 402 684 410V465Q684 473 707 473" class="flow"/><rect x="708" y="440" width="146" height="66" rx="7" fill="#e5f2e6" stroke="#65a66d"/><text x="723" y="461" class="mono micro" fill="#347342">COUNT</text><text x="723" y="481" class="sans label">magnitude μᵢ</text><text x="723" y="497" class="sans small">bounded participation</text>
+  <path d="M277 429H298Q304 429 304 435V513Q304 519 310 519H496" class="flow"/><rect x="497" y="486" width="147" height="66" rx="7" fill="#f2e8f7" stroke="#a968c4"/><text x="512" y="507" class="mono micro" fill="#80429e">MEMORY</text><text x="512" y="527" class="sans label">gated-delta state</text><text x="512" y="543" class="sans small">normalized recurrent read</text>
+  <path d="M854 378H876Q900 378 900 402V418Q900 429 908 434" class="flow"/>
+  <path d="M854 473H874Q886 473 900 459" class="flow"/>
+  <path d="M644 519H876Q900 519 900 495V481Q900 472 908 465" class="flow"/>
+  <circle cx="916" cy="449" r="22" fill="#111318"/><text x="916" y="457" text-anchor="middle" class="serif" font-size="25" fill="#fff">+</text><text x="916" y="489" text-anchor="middle" class="mono" font-size="8" fill="#6e7480">3 CHANNELS</text>
+  <path d="M938 449H981" class="flow"/><rect x="982" y="398" width="92" height="102" rx="7" fill="#fff7eb" stroke="#d99a47"/><text x="1028" y="420" text-anchor="middle" class="mono micro" fill="#a76818">OUTPUT</text><text x="1028" y="444" text-anchor="middle" class="sans label">gate σ(g)</text><line x1="999" y1="457" x2="1057" y2="457" class="rule"/><text x="1028" y="477" text-anchor="middle" class="sans label">Wₒ project</text><path d="M1074 449H1099" class="flow"/><circle cx="1123" cy="449" r="22" fill="#fff" stroke="#111318" stroke-width="1.5"/><text x="1123" y="457" text-anchor="middle" class="serif" font-size="25" fill="#111318">+</text><path d="M1145 449H1178" class="flow"/><text x="1188" y="456" class="serif" font-size="19" fill="#111318">y</text>
+  <path d="M94 430V574Q94 586 106 586H1111Q1123 586 1123 574V472" class="residual"/><text x="624" y="604" text-anchor="middle" class="mono small">RESIDUAL BYPASS</text>
 </svg>
