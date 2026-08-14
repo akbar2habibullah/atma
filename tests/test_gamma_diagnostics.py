@@ -15,6 +15,7 @@ from gamma_diagnostics.clamp import (
     load_clamp_spec,
 )
 from gamma_diagnostics.inspect_parameters import inspect_checkpoint
+from gamma_diagnostics.rebenchmark_all import _clamp_spec, _select_targets, _source_record
 from gamma_diagnostics.selection import recommend
 
 
@@ -164,6 +165,34 @@ class GammaDiagnosticsTest(unittest.TestCase):
             "baseline": {"metrics": {"needle": baseline["needle"]}},
             "good": {"metrics": {"needle": good["needle"]}, "spec": {}},
         }, [2048, 65536], 0.05))
+
+    def test_rebenchmark_selects_largest_final_checkpoint_operating_point(self):
+        rows = [
+            {"layer": 2, "head": 0, "total_zero_input_logit": 1.0},
+            {"layer": 6, "head": 3, "total_zero_input_logit": 12.0},
+            {"layer": 10, "head": 1, "total_zero_input_logit": 4.0},
+        ]
+        selected = _select_targets(rows, 1)
+        self.assertEqual((selected[0]["layer"], selected[0]["head"]), (6, 3))
+        source = {"repo_id": "org/checkpoint", "revision": "abc123"}
+        spec = _clamp_spec(source, selected, 256)
+        self.assertEqual(spec["format"], FORMAT_VERSION)
+        self.assertEqual(spec["targets"], [{
+            "layer": 6, "heads": [3], "max_half_life_tokens": 256.0,
+        }])
+        self.assertEqual(spec["selection"]["checkpoint_revision"], "abc123")
+
+    def test_rebenchmark_reads_both_manifest_revision_schemas(self):
+        base = {"models": {"polar": {
+            "repo_id": "org/base", "resolved_revision": "base-sha",
+        }}}
+        adapted = {"models": {"polar": {
+            "repo_id": "org/adapted", "revision": "adapted-sha",
+        }}}
+        self.assertEqual(_source_record(base, "polar", "base")["revision"], "base-sha")
+        self.assertEqual(
+            _source_record(adapted, "polar", "babilong")["revision"], "adapted-sha"
+        )
 
 
 if __name__ == "__main__":

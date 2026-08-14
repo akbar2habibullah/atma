@@ -75,6 +75,36 @@ For a less noisy confirmation before benchmark promotion, increase to at least
 
 ## 3. Paired benchmark re-evaluation
 
+To re-benchmark all three matched attention variants on the complete downstream
+and BABILong suites with a fixed 256-token runtime half-life ceiling, run:
+
+```bash
+python -m gamma_diagnostics.rebenchmark_all \
+  --models nope polar rope \
+  --benchmarks base babilong \
+  --max-half-life 256 \
+  --execute
+```
+
+The command resolves the pinned base and BABILong-fine-tuned checkpoints from
+the existing benchmark manifests. Each final checkpoint is scanned separately,
+its largest parameter-only gamma layer-head is selected, and the runtime cap is
+applied without modifying checkpoint tensors. Completed jobs are resumable with
+the same command. Results, clamp specs, parameter scans, and the run manifest are
+written under `gamma_diagnostics/results/re_evaluation/`.
+
+The repository already contains the corresponding untouched benchmark logs, so
+the command above runs only the clamped condition. Add `--paired` to rerun both
+baseline and clamped conditions in the same environment. Use
+`--babilong-lengths` or `--base-limit` for a cheaper smoke test.
+
+The BABILong jobs use the already fine-tuned checkpoints and apply the cap only
+during held-out evaluation; they do not fine-tune again. All jobs use the
+checkpoint-exact direct scorer because paged serving does not support the
+diagnostic hook.
+
+### Re-evaluate a clamp selected by a pilot sweep
+
 First dry-run the benchmark plan generated from a qualifying sweep:
 
 ```bash
