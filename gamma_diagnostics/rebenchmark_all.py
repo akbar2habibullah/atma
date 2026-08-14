@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Re-benchmark the matched attention variants with a runtime gamma ceiling.
 
-The promoted base checkpoints are used for zero-shot downstream tasks.  The
-separately fine-tuned BABILong checkpoints are used for BABILong.  Every final
-checkpoint is inspected independently, the largest parameter-only gamma
-layer-head is selected, and a reversible runtime ceiling is installed by
-``benchmarks.run``.  Checkpoint tensors are never rewritten.
+The promoted base checkpoints are used for zero-shot downstream, retrieval, and
+fixed-target long-document BPB tasks.  The separately fine-tuned BABILong
+checkpoints are used for BABILong.  Every final checkpoint is inspected
+independently, the largest parameter-only gamma layer-head is selected, and a
+reversible runtime ceiling is installed by ``benchmarks.run``.  Checkpoint
+tensors are never rewritten.
 
 By default only the clamped condition is run because the repository already
 contains the corresponding baseline benchmark logs.  Pass ``--paired`` to
@@ -25,6 +26,7 @@ from pathlib import Path
 
 from benchmarks.babilong import DEFAULT_DATASET_ID, EVAL_LENGTHS, TASKS
 from benchmarks.base_tasks import BASE_TASK_SPECS
+from benchmarks.longdoc import LONGDOC_SPECS
 from benchmarks.run_pipeline import _extract_result, _is_complete
 from gamma_diagnostics.clamp import FORMAT_VERSION
 
@@ -36,6 +38,7 @@ DEFAULT_BABILONG_MANIFEST = (
 )
 DEFAULT_OUTPUT_DIR = ROOT / "gamma_diagnostics" / "results" / "re_evaluation"
 DEFAULT_MODELS = ("nope", "polar", "rope")
+DEFAULT_LENGTHS = ("2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k")
 WEIGHT_NAMES = ("weights.pt", "model.pt", "pytorch_model.bin")
 
 
@@ -43,8 +46,8 @@ def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="+", choices=DEFAULT_MODELS, default=DEFAULT_MODELS)
     parser.add_argument(
-        "--benchmarks", nargs="+", choices=("base", "babilong"),
-        default=("base", "babilong"),
+        "--benchmarks", nargs="+", choices=("base", "retrieval", "longdoc", "babilong"),
+        default=("base", "retrieval", "longdoc", "babilong"),
     )
     parser.add_argument("--max-half-life", type=float, default=256.0)
     parser.add_argument("--num-target-heads", type=int, default=1)
@@ -62,6 +65,21 @@ def _parse_args():
                         default=tuple(BASE_TASK_SPECS))
     parser.add_argument("--base-limit", type=int, default=None)
     parser.add_argument("--base-batch-size", type=int, default=8)
+    parser.add_argument("--retrieval-suites", nargs="+", choices=("synthetic", "real"),
+                        default=("synthetic", "real"))
+    parser.add_argument("--retrieval-tasks", nargs="+", choices=("passkey", "niah"),
+                        default=("passkey", "niah"))
+    parser.add_argument("--retrieval-lengths", nargs="+", default=DEFAULT_LENGTHS)
+    parser.add_argument("--retrieval-depths", nargs="+", type=float, default=(0.1, 0.5, 0.9))
+    parser.add_argument("--retrieval-samples", type=int, default=50)
+    parser.add_argument("--retrieval-value-tokens", type=int, default=5)
+    parser.add_argument("--haystack", default="codelion/finepdfs-1B")
+    parser.add_argument("--longdoc-datasets", nargs="+", choices=tuple(LONGDOC_SPECS),
+                        default=tuple(LONGDOC_SPECS))
+    parser.add_argument("--longdoc-lengths", nargs="+", default=DEFAULT_LENGTHS)
+    parser.add_argument("--target-tokens", type=int, default=256)
+    parser.add_argument("--num-docs", type=int, default=8)
+    parser.add_argument("--max-scan", type=int, default=100000)
     parser.add_argument("--babilong-tasks", nargs="+", choices=TASKS[:10], default=TASKS[:10])
     parser.add_argument("--babilong-lengths", nargs="+", choices=EVAL_LENGTHS,
                         default=EVAL_LENGTHS)
@@ -167,8 +185,20 @@ def _job_id(job: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
 
 
-def _benchmark_args(args, family: str) -> list[str]:
-    if family == "base":
+def _dataset_revision(manifest: dict, dataset_id: str) -> str:
+    try:
+        record = manifest["datasets"][dataset_id]
+    except KeyError as exc:
+        raise KeyError(f"base manifest has no pinned dataset {dataset_id!r}") from exc
+    revision = record.get("resolved_revision") if isinstance(record, dict) else record
+    if not revision:
+        raise ValueError(f"base manifest has no pinned revision for {dataset_id!r}")
+    return str(revision)
+
+
+def _benchmark_variants(args, benchmark: str, base_manifest: dict,
+                        babilong_manifest: dict) -> list[tuple[str, list[str]]]:
+    if benchmark == "base":
         command = [
             "--benchmark", "base",
             "--tasks", *args.base_tasks,
@@ -178,20 +208,49 @@ def _benchmark_args(args, family: str) -> list[str]:
         ]
         if args.base_limit is not None:
             command.extend(("--limit", str(args.base_limit)))
-        return command
-    babilong_manifest = _read_json(args.babilong_manifest)
-    return [
-        "--benchmark", "babilong",
-        "--dataset", DEFAULT_DATASET_ID,
-        "--dataset_revision", str(babilong_manifest["dataset_revision"]),
-        "--tasks", *args.babilong_tasks,
-        "--lengths", *args.babilong_lengths,
-        "--row_start", "90", "--row_end", "100",
-        "--samples", str(args.babilong_samples),
-        "--seed", str(args.seed),
-        "--babilong_backend", "direct",
-        "--max_tokens", "16",
-    ]
+        return [("zero-shot", command)]
+    if benchmark == "retrieval":
+        variants = []
+        common = [
+            "--benchmark", "retrieval",
+            "--tasks", *args.retrieval_tasks,
+            "--lengths", *args.retrieval_lengths,
+            "--depths", *(str(depth) for depth in args.retrieval_depths),
+            "--samples", str(args.retrieval_samples),
+            "--seed", str(args.seed),
+            "--retrieval_value_tokens", str(args.retrieval_value_tokens),
+        ]
+        for suite in args.retrieval_suites:
+            extra = []
+            if suite == "real":
+                extra = [
+                    "--haystack", args.haystack,
+                    "--haystack_revision", _dataset_revision(base_manifest, args.haystack),
+                ]
+            variants.append((suite, [*common, *extra]))
+        return variants
+    if benchmark == "longdoc":
+        return [("fixed-target", [
+            "--benchmark", "longdoc",
+            "--datasets", *args.longdoc_datasets,
+            "--lengths", *args.longdoc_lengths,
+            "--target_tokens", str(args.target_tokens),
+            "--num_docs", str(args.num_docs),
+            "--max_scan", str(args.max_scan),
+            "--dataset_revisions", str(args.base_manifest.resolve()),
+        ])]
+    return [("heldout", [
+            "--benchmark", "babilong",
+            "--dataset", DEFAULT_DATASET_ID,
+            "--dataset_revision", str(babilong_manifest["dataset_revision"]),
+            "--tasks", *args.babilong_tasks,
+            "--lengths", *args.babilong_lengths,
+            "--row_start", "90", "--row_end", "100",
+            "--samples", str(args.babilong_samples),
+            "--seed", str(args.seed),
+            "--babilong_backend", "direct",
+            "--max_tokens", "16",
+    ])]
 
 
 def _run_job(job: dict, env: dict) -> dict:
@@ -229,6 +288,10 @@ def main():
         raise SystemExit("--max-half-life must be positive")
     if args.babilong_samples <= 0:
         raise SystemExit("--babilong-samples must be positive")
+    if args.retrieval_samples <= 0 or args.retrieval_value_tokens <= 0:
+        raise SystemExit("retrieval sample and value-token counts must be positive")
+    if args.target_tokens <= 0 or args.num_docs <= 0 or args.max_scan <= 0:
+        raise SystemExit("long-document evaluation counts must be positive")
 
     # Keep argument parsing and --help lightweight; Torch is only required once
     # checkpoint parameter inspection actually begins.
@@ -250,22 +313,35 @@ def main():
         "jobs": [],
     }
 
-    for family in args.benchmarks:
+    checkpoint_cache = {}
+    for benchmark in args.benchmarks:
+        checkpoint_family = "babilong" if benchmark == "babilong" else "base"
         for model in args.models:
-            source = _source_record(manifests[family], model, family)
-            checkpoint, weights = _resolve_checkpoint(source, args.hf_cache, args.offline)
-            rows = inspect_checkpoint(
-                f"{family}/{model}", weights, checkpoint / "config.json"
-            )
-            targets = _select_targets(rows, args.num_target_heads)
-            model_dir = output_dir / family / model
-            spec_path = model_dir / f"hl-{args.max_half_life:g}.gamma-clamp.json"
-            parameters_path = model_dir / "gamma-parameters.json"
-            _write_json(spec_path, _clamp_spec(source, targets, args.max_half_life))
-            _write_json(parameters_path, rows)
+            cache_key = (checkpoint_family, model)
+            if cache_key not in checkpoint_cache:
+                source = _source_record(
+                    manifests[checkpoint_family], model, checkpoint_family
+                )
+                checkpoint, weights = _resolve_checkpoint(
+                    source, args.hf_cache, args.offline
+                )
+                rows = inspect_checkpoint(
+                    f"{checkpoint_family}/{model}", weights, checkpoint / "config.json"
+                )
+                targets = _select_targets(rows, args.num_target_heads)
+                checkpoint_dir = output_dir / "checkpoints" / checkpoint_family / model
+                spec_path = checkpoint_dir / f"hl-{args.max_half_life:g}.gamma-clamp.json"
+                parameters_path = checkpoint_dir / "gamma-parameters.json"
+                _write_json(spec_path, _clamp_spec(source, targets, args.max_half_life))
+                _write_json(parameters_path, rows)
+                checkpoint_cache[cache_key] = (
+                    source, checkpoint, rows, targets, spec_path
+                )
+            source, checkpoint, rows, targets, spec_path = checkpoint_cache[cache_key]
+            model_dir = output_dir / benchmark / model
 
             print(
-                f"[gamma-rebench] {family}/{model}: target(s) "
+                f"[gamma-rebench] {benchmark}/{model}: target(s) "
                 + ", ".join(
                     f"block {row['layer']} head {row['head']} "
                     f"(zero-input half-life={row['half_life_tokens']:.1f})"
@@ -273,32 +349,38 @@ def main():
                 ),
                 flush=True,
             )
-            for condition in conditions:
-                command = [
-                    sys.executable, "-m", "benchmarks.run",
-                    "--model", str(checkpoint),
-                    *_benchmark_args(args, family),
-                ]
-                if condition == "clamped":
-                    command.extend(("--gamma-clamp", str(spec_path)))
-                proto = {
-                    "family": family,
-                    "model": model,
-                    "condition": condition,
-                    "source": source,
-                    "command": command,
-                }
-                fingerprint = _job_id(proto)
-                output = model_dir / f"{family}.{condition}.{fingerprint}.log"
-                console = model_dir / f"{family}.{condition}.{fingerprint}.console.log"
-                command.extend(("--out", str(output)))
-                plan["jobs"].append({
-                    **proto,
-                    "command": command,
-                    "output": str(output),
-                    "console": str(console),
-                    "clamp_spec": str(spec_path) if condition == "clamped" else None,
-                })
+            variants = _benchmark_variants(
+                args, benchmark, base_manifest, babilong_manifest
+            )
+            for suite, benchmark_args in variants:
+                for condition in conditions:
+                    command = [
+                        sys.executable, "-m", "benchmarks.run",
+                        "--model", str(checkpoint), *benchmark_args,
+                    ]
+                    if condition == "clamped":
+                        command.extend(("--gamma-clamp", str(spec_path)))
+                    proto = {
+                        "family": benchmark,
+                        "suite": suite,
+                        "model": model,
+                        "condition": condition,
+                        "source": source,
+                        "command": command,
+                    }
+                    fingerprint = _job_id(proto)
+                    output = model_dir / f"{benchmark}.{suite}.{condition}.{fingerprint}.log"
+                    console = model_dir / (
+                        f"{benchmark}.{suite}.{condition}.{fingerprint}.console.log"
+                    )
+                    command.extend(("--out", str(output)))
+                    plan["jobs"].append({
+                        **proto,
+                        "command": command,
+                        "output": str(output),
+                        "console": str(console),
+                        "clamp_spec": str(spec_path) if condition == "clamped" else None,
+                    })
 
     plan_path = output_dir / "benchmark-plan.json"
     _write_json(plan_path, plan)
@@ -320,7 +402,8 @@ def main():
         result = _run_job(job, env)
         state["results"].append({
             "family": job["family"], "model": job["model"],
-            "condition": job["condition"], "output": job["output"], **result,
+            "suite": job["suite"], "condition": job["condition"],
+            "output": job["output"], **result,
         })
         _write_json(state_path, state)
         if result["status"] == "failed":

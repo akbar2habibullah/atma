@@ -75,13 +75,14 @@ For a less noisy confirmation before benchmark promotion, increase to at least
 
 ## 3. Paired benchmark re-evaluation
 
-To re-benchmark all three matched attention variants on the complete downstream
-and BABILong suites with a fixed 256-token runtime half-life ceiling, run:
+To re-benchmark all three matched attention variants on downstream tasks,
+synthetic and real-text retrieval, fixed-target long-document BPB, and BABILong
+with a fixed 256-token runtime half-life ceiling, run:
 
 ```bash
 python -m gamma_diagnostics.rebenchmark_all \
   --models nope polar rope \
-  --benchmarks base babilong \
+  --benchmarks base retrieval longdoc babilong \
   --max-half-life 256 \
   --execute
 ```

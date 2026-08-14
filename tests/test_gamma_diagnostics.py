@@ -15,7 +15,12 @@ from gamma_diagnostics.clamp import (
     load_clamp_spec,
 )
 from gamma_diagnostics.inspect_parameters import inspect_checkpoint
-from gamma_diagnostics.rebenchmark_all import _clamp_spec, _select_targets, _source_record
+from gamma_diagnostics.rebenchmark_all import (
+    _clamp_spec,
+    _dataset_revision,
+    _select_targets,
+    _source_record,
+)
 from gamma_diagnostics.selection import recommend
 
 
@@ -193,6 +198,8 @@ class GammaDiagnosticsTest(unittest.TestCase):
         self.assertEqual(
             _source_record(adapted, "polar", "babilong")["revision"], "adapted-sha"
         )
+        datasets = {"datasets": {"org/corpus": {"resolved_revision": "data-sha"}}}
+        self.assertEqual(_dataset_revision(datasets, "org/corpus"), "data-sha")
 
 
 if __name__ == "__main__":
