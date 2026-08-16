@@ -5,8 +5,8 @@ This directory separates three questions that should not be conflated:
 1. Do checkpoint parameters contain extreme zero-input gamma operating points?
 2. Does selectively capping the **runtime** gamma of those heads causally improve
    long-context behavior without damaging short-context behavior?
-3. If the pilot recovers, does that recovery reproduce on the repository's
-   independent retrieval and long-document benchmarks?
+3. If the pilot recovers, does that recovery reproduce across the repository's
+   retrieval, long-document, BABILong, and short-context benchmarks?
 
 Nothing is clamped by default. Clamp specs are opt-in, affect only listed
 transformer block/head pairs, do not rewrite checkpoint tensors, and are removed
@@ -24,12 +24,27 @@ OOM. The table compares the clamped runs in
 | Model | Downstream mean (%) | Mean BPB at 256K | Retrieval at 256K, token / exact (%) | BABILong at 256K (%) |
 |---|---:|---:|---:|---:|
 | NoPE | 45.15 -> 45.10 | **8.097 -> 1.595** | 0.60 / 0.00 -> 0.93 / 0.00 | **0 -> 39** |
-| Polar | 43.29 -> 43.25 | **1.826 -> 1.501** | **34.37 / 9.00 -> 47.07 / 16.33** | **28 -> 42** |
+| Polar | 43.29 -> 43.25 | **1.825 -> 1.501** | **34.37 / 9.00 -> 47.07 / 16.33** | **28 -> 42** |
 | RoPE | 44.60 -> 44.66 | 2.512 -> 2.460 | 0.00 / 0.00 -> 0.00 / 0.00 | 14 -> 11 |
 
 Retrieval entries average the synthetic and FinePDFs suites, passkey and NIAH,
 and all three tested depths. BPB averages FinePDFs, PG-19, and Proof-Pile.
 Downstream is the mean primary metric across the eight 2K base-model tasks.
+
+The endpoint understates the most informative result: recovery persists over
+the extrapolation range. NoPE's BABILong curve and mean fixed-target BPB are:
+
+| Length | 2K | 4K | 8K | 16K | 32K | 64K | 128K | 256K |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| BABILong, untouched | 55 | 56 | 39 | 21 | 6 | 0 | 0 | 0 |
+| BABILong, capped | 55 | 56 | 57 | 54 | 45 | 37 | 35 | 39 |
+| Mean BPB, untouched | 1.432 | 1.717 | 2.656 | 3.374 | 5.527 | 5.885 | 6.369 | 8.097 |
+| Mean BPB, capped | 1.454 | 1.454 | 1.473 | 1.484 | 1.504 | 1.506 | 1.530 | 1.595 |
+
+Thus the intervention does not merely rescue a favorable 256K cell. It prevents
+the progressive likelihood collapse beyond the 2K training length and restores
+nonzero adapted reasoning from 8K through 256K. At the same time, NoPE exact
+retrieval still falls to zero, which keeps the mechanistic claim narrow.
 
 The selected zero-input operating point survives BABILong fine-tuning almost
 unchanged:
@@ -48,9 +63,10 @@ The results support the following interpretation:
   long-document collapse and improves Polar's likelihood, retrieval, and
   adapted reasoning.
 - **NoPE's state stability and exact retrieval are distinct problems.** Its
-  mean 256K BPB falls from 8.097 to 1.595 and BABILong rises from 0% to 39%, but
-  exact retrieval remains 0%. The gamma outlier is therefore a major cause, not
-  a complete explanation of NoPE's extrapolation limits.
+  BPB remains near 1.5 through 256K and BABILong stays at 35--39% from 64K to
+  256K after clamping, but exact retrieval still reaches 0%. The gamma outlier
+  is therefore a major cause, not a complete explanation of NoPE's
+  extrapolation limits.
 - **Polar's promoted checkpoint is materially weakened by its outlier.** At
   256K, target-token retrieval rises by 12.70 points, exact retrieval by 7.33
   points, and BABILong by 14 points. Its mean BPB degradation relative to 2K

@@ -2,20 +2,29 @@
 
 ## Current milestone
 
-Stage 1 (ICLR conversion and length reduction) is complete. In the compiled draft:
+Stage 1 (ICLR conversion and length reduction) is complete. The source and
+compiled PDF now also contain the full retention-horizon diagnostic: parameter
+inspection, the paired single-head intervention, and independent downstream,
+retrieval, BPB, and BABILong re-evaluation. The full re-evaluation is presented
+as length-wise curves in the main paper and as generated, cell-complete tables
+in the appendix. In the current compiled draft:
 
-- Pages 1--7 contain the abstract, main text, tables, and main-text figures.
-- Page 8 starts the page-limit-exempt AI use and reproducibility statements, followed by references.
-- Appendices follow the bibliography.
+- The main body concludes on page 9, within the nine-page limit.
+- The page-limit-exempt AI use and reproducibility statements follow on page 9.
+- References begin on page 10 and appendices begin on page 11.
+- The compiled artifact is 29 pages; the five full re-evaluation tables appear
+  on pages 26--27.
 
-This leaves two main-text pages of headroom for the authors' manual rewrite.
+The retention-horizon figures, endpoint table, and prose therefore fit without exceeding the
+main-text limit, but leave no additional full page of headroom.
 
 ## Preserved main-paper spine
 
 1. Long-context modeling is framed as a Pareto problem across retrieval, reasoning, document likelihood, short-context quality, and systems cost.
 2. The Polar mechanism retains its null floor, bounded direction/magnitude decomposition, and gated-delta memory channel.
-3. The main evidence retains the recipe ablation, matched long-context endpoints, synthetic/real-text boundary, short-context and systems trade-offs, and environment diagnostics.
-4. Claims are explicitly scoped: Raven is not an optimizer-matched ablation, 256K natural-text retrieval remains unsolved, serving measurements are descriptive, and the hardware evidence establishes environment sensitivity rather than a unique CUDA-level cause.
+3. The main evidence retains the recipe ablation, matched long-context endpoints, synthetic/real-text boundary, short-context and systems trade-offs, and adds a checkpoint-level retention-horizon audit.
+4. Claims are explicitly scoped: Raven is not an optimizer-matched ablation, 256K natural-text retrieval remains unsolved, serving measurements are descriptive, the infrastructure transition is not causal evidence, and the inference cap is a diagnostic rather than a validated training method.
+5. Both Raven Native and Atma-Raven-Titans remain visible as untouched references in the main length curves, short-context bars, retrieval depth heatmaps, serving figure, article retrieval chart, and web recovery chart. Checkpoint-specific probes that were not run on Raven say so explicitly rather than implying missing results.
 
 ## Pending author-led stages
 

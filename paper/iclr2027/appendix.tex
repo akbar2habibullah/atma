@@ -63,7 +63,7 @@ For recurrence~\eqref{eq:memory},
 $I-\beta_tk_tk_t^\top$ has spectral norm at most one and $\lVert\beta_tv_tk_t^\top\rVert_F\leq V$. Thus $\lVert M_t\rVert_F\leq\bar\gamma\lVert M_{t-1}\rVert_F+V$; unrolling gives the result.
 \end{proof}
 
-The Lean artifact checks the finite-sum, exponential-monotonicity, bounded-channel composition, and invariant-set induction steps. It takes the sub-Gaussian tail, high-probability margin, and one-step contraction as premises. It is therefore a machine-checked proof skeleton, not end-to-end formal verification. The learned conditions $b\geq0$ and $s>c>\sqrt2v$ require an empirical head-wise audit before they can be asserted for a trained checkpoint.
+The Lean artifact checks the finite-sum, exponential-monotonicity, bounded-channel composition, and invariant-set induction steps. It takes the sub-Gaussian tail, high-probability margin, and one-step contraction as premises. It is therefore a machine-checked proof skeleton, not end-to-end formal verification. The learned Polar conditions $b\geq0$ and $s>c>\sqrt2v$ require an empirical head-wise audit before they can be asserted for a trained checkpoint. Likewise, $\gamma_t=\sigma(W_\gamma x_t+b_\gamma)$ establishes only $0<\gamma_t<1$ at any finite logit; it does not supply one sequence-uniform $\bar\gamma<1$. Appendix~\ref{appendix:retention_audit} shows that the distinction is practically material: individual zero-input operating points can imply million-token half-lives, although that parameter-only scan does not by itself bound activation-conditioned runtime gates.
 
 \section{Regularization Modes}
 \label{appendix:reg_modes}
@@ -198,7 +198,7 @@ Table~\ref{table:ablation_appendix} retains all 120 factorial cells; the main pa
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{fig_niah_heatmap.pdf}
-\caption{Retrieval depth sweeps for the five promoted models. Each cell is teacher-forced token accuracy.}
+\caption{Retrieval depth sweeps for the three matched attention variants before and after the one-head retention cap, followed by untouched Raven Native and Atma-Raven-Titans reference panels. Each cell is teacher-forced token accuracy averaged over passkey and NIAH and over synthetic and FinePDFs haystacks. The Raven rows are separately optimized comparisons, not clamped ablations.}
 \label{fig:retrieval_depth_sweeps}
 \end{figure}
 
@@ -435,13 +435,95 @@ Decode, context 512 & Batch 128 & 2,939 tok/s & 2,247 tok/s & 1.31$\times$ \\
 \label{table:vllm_comparison_matrix}
 \end{table}
 
+\section{Retention-Horizon Diagnostic}
+\label{appendix:retention_audit}
+
+This section records the complete post-hoc chain from parameter inspection to re-evaluation. It is an analysis of released checkpoints, not an additional trained architecture. The primary checkpoint results in Section 5 remain untouched; every cap below is opt-in, applied only at inference, and removed after each condition.
+
+\subsection{Parameter-only operating points}
+The memory gate has one learned row per query/memory head, rather than one scalar per attention KV head. For each row we decompose the logit as
+\begin{equation}
+ z_{\gamma,t}=W_\gamma x_t+b_\gamma,\qquad
+ \gamma_0=\sigma(b_\gamma),\qquad
+ H_{1/2}(\gamma_0)=\frac{\log(1/2)}{\log\gamma_0}.
+\end{equation}
+Here $x=0$ defines a reproducible learned operating point. It is not the empirical mean runtime gate: every reported outlier has a nonzero $W_\gamma$ row, so activations can shorten or lengthen its instantaneous horizon. Table~\ref{table:gamma_parameter_scan} reports the maximum over all four memory blocks and eight heads per block.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Checkpoint} & \textbf{Block/head} & \textbf{Maximum $H_{1/2}$} & \textbf{Role} \\
+\midrule
+NoPE, L4, microbatch 4 & 2/7 & 185.3 & Earlier control \\
+NoPE, L40S, microbatch 4 & 2/2 & 1.38M & Microbatch control \\
+NoPE, L40S, microbatch 16 & 2/5 & 21.01M & Promoted matched model \\
+Polar, L40S, microbatch 16 & 2/6 & 3.07M & Promoted matched model \\
+RoPE, L40S, microbatch 16 & 2/1 & 682.2 & Matched negative control \\
+Atma-Raven-Titans & 2/3 & 41.4 & Recurrent-family reference \\
+\bottomrule
+\end{tabular}
+\caption{Largest learned zero-input retention half-life in each base checkpoint. ``Block/head'' uses zero-based indices. The full scan reports every layer/head, logit, $\gamma_0$, $1/e$ horizon, and $W_\gamma$ row norm.}
+\label{table:gamma_parameter_scan}
+\end{table}
+
+Scanning the separately fine-tuned BABILong checkpoints gives 20.86M tokens for NoPE, 3.05M for Polar, and 680 for RoPE. Thus the selected outlier survives adaptation nearly unchanged; each BABILong cap is nevertheless selected afresh from the final fine-tuned checkpoint rather than copied from the base model.
+
+\subsection{Runtime intervention}
+For a target maximum half-life $H_{\max}$, the diagnostic clips the final activation-conditioned gate logit,
+\begin{equation}
+ z'_{\gamma,t}=\min\!\left(z_{\gamma,t},\operatorname{logit}(2^{-1/H_{\max}})\right),\qquad
+ \gamma'_t=\sigma(z'_{\gamma,t}).
+\end{equation}
+All experiments use $H_{\max}=256$, hence $\gamma'_t\leq0.997296$. Only the single layer/head with the largest parameter-only $b_\gamma$ is targeted. This upper bound leaves smaller token-conditioned gates unchanged, modifies neither checkpoint tensors nor attention, and is removed after the condition. It therefore tests whether excessive retention mediates a failure; it does not test a train-time parameterization.
+
+The first sweep is paired within one process: baseline and cap share the loaded model, nested FinePDFs documents, generated needle examples, seeds, and SDPA implementation. Four documents and eight needle trials are evaluated at each length from 2K to 256K. Table~\ref{table:gamma_paired_sweep} reports the longest endpoint.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Checkpoint} & \textbf{Clean NLL at 256K} & \textbf{Needle CE at 256K} & \textbf{Needle acc. at 256K} \\
+\midrule
+NoPE, L4 mbs4 & 3.615 $\rightarrow$ 2.776 & 3.730 $\rightarrow$ 4.360 & 15.0 $\rightarrow$ 10.0 \\
+NoPE, L40S mbs4 & 9.589 $\rightarrow$ 1.181 & 10.446 $\rightarrow$ 6.108 & 0.0 $\rightarrow$ 0.0 \\
+NoPE, L40S mbs16 & 12.003 $\rightarrow$ 1.138 & 12.198 $\rightarrow$ 6.051 & 0.0 $\rightarrow$ 0.0 \\
+Polar, L40S mbs16 & 1.252 $\rightarrow$ 1.057 & 2.387 $\rightarrow$ 1.707 & 50.0 $\rightarrow$ 65.0 \\
+RoPE, L40S mbs16 & 2.948 $\rightarrow$ 2.754 & 6.157 $\rightarrow$ 6.019 & 0.0 $\rightarrow$ 0.0 \\
+\bottomrule
+\end{tabular}
+\caption{Same-process paired pilot, baseline $\rightarrow$ one-head 256-token half-life cap. Accuracy is teacher-forced target-token accuracy (\%). The L4 and RoPE rows show that likelihood improvements need not restore retrieval.}
+\label{table:gamma_paired_sweep}
+\end{table}
+
+At 2K, clean NLL changes by $+0.001$, $+0.013$, $+0.022$, $+0.010$, and $+0.004$ for the rows in table order. The cap therefore leaves ordinary likelihood nearly unchanged in this pilot. It is not cost-free: RoPE's 2K needle accuracy falls from 82.5\% to 50.0\%, and the L4 NoPE 256K needle result also worsens. These controls argue against treating 256 tokens as a universal deployment setting.
+
+\subsection{Independent benchmark re-evaluation}
+After the pilot, we evaluate the capped promoted checkpoints on all eight short-context tasks, the full synthetic/FinePDFs retrieval matrix, three fixed-target long-document datasets, and BABILong QA1--QA10. Base-model and BABILong-fine-tuned checkpoints are pinned to their archived Hugging Face revisions. The BABILong checkpoints are not fine-tuned again; the cap is installed only for held-out evaluation. Direct checkpoint-exact scoring is used throughout because the paged serving path does not expose the diagnostic hook. All 15 model--suite jobs complete without OOM.
+
+Tables~\ref{table:gamma_downstream_full}--\ref{table:gamma_bpb_full} report every evaluated length and every short-context task, rather than only the 256K endpoint. The broad run reuses pinned archived baselines; Table~\ref{table:gamma_paired_sweep} is the controlled same-process comparison.
+
+\input{gamma_re_evaluation_tables.tex}
+
+NoPE's BPB recovery begins immediately beyond the training length and remains nearly flat through 256K: mean BPB is 1.454 at 4K and 1.595 at 256K after clamping, versus 1.717 and 8.097 untouched. At 256K its dataset BPB changes from 11.666 to 1.180 on FinePDFs, 4.902 to 1.224 on PG-19, and 7.723 to 2.382 on Proof-Pile. Its mean degradation relative to 2K falls from $5.65\times$ to $1.10\times$. BABILong shows a parallel length-dependent recovery: untouched accuracy falls from 21\% at 16K to 6/0/0/0\% at 32/64/128/256K, whereas the cap yields 54/45/37/35/39\%. Exact retrieval nevertheless remains zero at 256K. Thus the intervention restores usable recurrent computation and likelihood without restoring every form of direct lookup.
+
+For Polar, token/exact retrieval at 64K changes from 54.3/32.83\% to 69.0/33.0\%, at 128K from 41.77/13.17\% to 63.57/19.83\%, and at 256K from 34.37/9.00\% to 47.07/16.33\%. The 256K synthetic component changes from 68.4/18.0\% to 77.47/32.67\%; FinePDFs token accuracy changes from 0.33\% to 16.67\%, while exact FinePDFs retrieval remains zero. Mean BPB degradation falls from $1.26\times$ to $1.03\times$.
+
+RoPE is the decisive boundary: its maximum parameter-only half-life is three to four orders of magnitude below the NoPE and Polar outliers, and the same cap neither restores retrieval nor improves BABILong. Across all three models, downstream means move by at most 0.06 points. The evidence therefore supports a selective claim: an isolated near-unit retention gate is a major causal mediator of the observed NoPE and Polar extrapolation degradation. It does not explain every failure mode, identify the training event that produced the outlier, or validate a particular bounded-gate training formulation.
+
+The complete machine-readable artifacts are under \texttt{gamma\_diagnostics/results/}: \texttt{parameters/gamma\_parameters.json} for the scan, \texttt{all\_clamp\_sweep\_262k.json} for the paired pilot, and \texttt{re\_evaluation/run-summary.json} plus per-suite logs for the full benchmark. The executable protocol and reporting caveats are in \texttt{gamma\_diagnostics/README.md}.
+
 \section{Stress and Environment Diagnostics}
 \label{appendix:diagnostics}
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{fig_stress_heatmap.pdf}
-\caption{Block-wise sampled secant gains over 64 nested FinePDFs documents and 64 perturbation directions per document. The probe localizes checkpoint-specific changes but does not estimate a global Lipschitz constant.}
+\caption{Block-wise sampled secant gains for the three matched attention checkpoints over 64 nested FinePDFs documents and 64 perturbation directions per document. Raven Native and Atma-Raven-Titans were not run under this checkpoint-specific probe. The diagnostic localizes changes but does not estimate a global Lipschitz constant.}
 \label{fig:appendix_stress_heatmap}
 \end{figure}
 

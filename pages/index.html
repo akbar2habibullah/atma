@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ATMA: Long-Context Language Modeling | Kreasof AI</title>
-  <meta name="description" content="A Kreasof AI research article on Polar Attention, gated-delta compression memory, and long-context evaluation through 256K.">
+  <meta name="description" content="ATMA results through 256K, plus a checkpoint diagnostic tracing extrapolation degradation to an extreme recurrent retention horizon.">
   <meta property="og:title" content="ATMA: Long-Context Language Modeling via Polar Attention and Gated-Delta Compression Memory">
-  <meta property="og:description" content="Research article and open evidence for ATMA. This work is under review and has not yet been peer reviewed.">
+  <meta property="og:description" content="Polar Attention, gated-delta memory, matched long-context evaluation, and an inference-only retention-horizon diagnostic. Under review.">
   <link rel="stylesheet" href="assets/site.css?v=20260812-3">
 </head>
 <body>
@@ -35,7 +35,7 @@
       <a class="sub" href="#matched">Matched comparison</a>
       <a class="sub" href="#boundary">Where retrieval fails</a>
       <a href="#tradeoffs">5. The frontier</a>
-      <a href="#audit">6. Checkpoint audit</a>
+      <a href="#audit">6. Retention audit</a>
       <a href="#limitations">7. Limitations</a>
       <a href="#conclusion">Conclusion</a>
     </aside>
@@ -70,6 +70,7 @@
           <li>After matched 9.816B-token pretraining at 2K, Polar retains <strong>34.4% target-token accuracy at 256K</strong>, compared with 0.6% for NoPE and 0.0% for RoPE.</li>
           <li>The result has a hard boundary: Polar reaches 18.0% exact retrieval on synthetic 256K contexts but <strong>0.0% on FinePDFs</strong>. This is retained signal, not solved real-text retrieval.</li>
           <li>There is no universal winner. Raven leads adapted BABILong and fixed-state decode; Polar leads retrieval and likelihood among the matched attention variants.</li>
+          <li>A post-hoc audit finds single near-unit memory gates in NoPE and Polar. An inference-only cap on one head largely restores long-document likelihood and improves Polar retrieval, while RoPE does not recover. This diagnoses a checkpoint failure; it is not a new trained method.</li>
         </ul>
       </section>
 
@@ -113,7 +114,7 @@
         </figure>
 
         <h3 id="memory">Gated-delta compression memory</h3>
-        <p>Each global layer also updates a recurrent key-value state. A learned retention gate controls what remains; a delta update writes new information; a zero-initialized projection adds the retrieved memory back to the attention output. Unit-normalized keys keep the tested recurrence stable, while the gate bounds how much the state can change at each step.</p>
+        <p>Each global layer also updates a recurrent key-value state. A learned sigmoid retention gate controls what remains; a delta update writes new information; a zero-initialized projection adds the retrieved memory back to the attention output. Unit-normalized keys control the update geometry. The sigmoid keeps each gate below one, but does not guarantee a useful fixed margin from one—an important distinction exposed by the checkpoint audit below.</p>
         <aside class="note"><strong>Why use both?</strong> Attention and recurrent memory are complementary. Attention keeps full-resolution access but pays length-dependent cost. Memory keeps fixed-size state but compresses. ATMA does not claim that one makes the other unnecessary.</aside>
       </section>
 
@@ -145,17 +146,19 @@
         <h3 id="matched">Polar retains more target signal at 256K</h3>
         <p>After matched training, NoPE and Polar both approach perfect teacher-forced target-token accuracy at 2K. Their extrapolation is different. At 256K, Polar retains 34.4% averaged across tasks, haystack suites, and depths; NoPE retains 0.6% and RoPE 0.0%.</p>
         <figure>
-          <div class="legend"><span><i class="polar"></i>Polar</span><span><i class="nope"></i>NoPE</span><span><i class="rope"></i>RoPE</span></div>
+          <div class="legend"><span><i class="polar"></i>Polar</span><span><i class="nope"></i>NoPE</span><span><i class="rope"></i>RoPE</span><span><i class="raven"></i>Raven Native</span><span><i class="titans"></i>Atma-Raven-Titans</span></div>
           <svg class="line-chart" viewBox="0 0 760 360" role="img" aria-labelledby="chart-title chart-desc">
             <title id="chart-title">Teacher-forced target-token accuracy from 2K through 256K</title>
-            <desc id="chart-desc">Polar declines to 34.4 percent at 256K, NoPE to 0.6 percent, and RoPE to zero.</desc>
+            <desc id="chart-desc">Polar declines to 34.4 percent at 256K, NoPE to 0.6 percent, RoPE to zero, Raven Native to 20.3 percent, and Atma-Raven-Titans to 10.0 percent.</desc>
             <g stroke="#d8dde5"><path d="M58 24H730M58 96H730M58 168H730M58 240H730M58 312H730"/><path d="M58 24V312"/></g>
             <g fill="#737985" font-family="ui-monospace,monospace" font-size="11"><text x="15" y="28">100</text><text x="22" y="100">75</text><text x="22" y="172">50</text><text x="22" y="244">25</text><text x="30" y="316">0</text><text x="51" y="340">2K</text><text x="139" y="340">4K</text><text x="230" y="340">8K</text><text x="315" y="340">16K</text><text x="410" y="340">32K</text><text x="505" y="340">64K</text><text x="592" y="340">128K</text><text x="692" y="340">256K</text></g>
             <polyline points="58,27 151,45 244,58 337,101 430,117 523,157 616,193 709,213" fill="none" stroke="#5275ff" stroke-width="4"/>
             <polyline points="58,26 151,94 244,169 337,176 430,211 523,274 616,298 709,310" fill="none" stroke="#111318" stroke-width="2.5"/>
             <polyline points="58,58 151,241 244,264 337,311 430,302 523,312 616,312 709,312" fill="none" stroke="#c2536a" stroke-width="2.5"/>
+            <polyline points="58,193.6 151,206.7 244,224.2 337,237.7 430,240.6 523,249.0 616,250.7 709,253.6" fill="none" stroke="#009e73" stroke-width="2.5" stroke-dasharray="8 6"/>
+            <polyline points="58,187.9 151,220.9 244,233.5 337,244.1 430,250.0 523,259.7 616,272.3 709,283.3" fill="none" stroke="#e69f00" stroke-width="2.5" stroke-dasharray="3 5"/>
           </svg>
-          <figcaption><strong>Figure 3.</strong> Teacher-forced target-token retrieval accuracy. All models train at 2K and are evaluated zero-shot through 256K. Values average tasks, suites, and needle depths.</figcaption>
+          <figcaption><strong>Figure 3.</strong> Teacher-forced target-token retrieval accuracy for all five promoted checkpoints. Values average tasks, suites, and needle depths. Raven Native and Atma-Raven-Titans are separately optimized recurrent-family references, not matched attention ablations.</figcaption>
         </figure>
 
         <div class="table-scroll">
@@ -193,10 +196,49 @@
       </section>
 
       <section id="audit">
-        <h2>6. What a checkpoint audit revealed</h2>
-        <p>A post-hoc audit found that three NoPE checkpoints could have nearly identical 2K validation curves while differing by 6.70 nats at 256K. The divergence appeared around blocks 6–7 in sampled secant-gain probes.</p>
-        <p>The finding emerged during an infrastructure transition, not a randomized hardware experiment. Re-evaluation excluded an evaluation-version mismatch, and a microbatch-4 retrain excluded microbatch size alone in the tested runs. It did not distinguish initialization, data order, device-dependent kernels, or their interactions.</p>
-        <aside class="note"><strong>The useful lesson is narrower than a hardware claim.</strong> Short-context convergence did not predict length extrapolation. Long-context work needs evaluation beyond the training window and enough run metadata to audit surprising failures.</aside>
+        <h2>6. From checkpoint variability to a retention mechanism</h2>
+        <p>The audit began with a mismatch: three NoPE checkpoints ended at almost the same 2K validation loss, yet differed by 6.70 nats at 256K. The runs were not seed-paired or randomized across devices, so this establishes checkpoint variability—not a hardware effect.</p>
+
+        <h3>Parameter inspection found isolated near-unit gates</h3>
+        <p>For every recurrent layer and memory head, we evaluated the learned zero-input gate <em>γ</em><sub>0</sub> and converted it to a half-life. The memory branch has eight independently learned head rows, even though attention uses two KV heads. One NoPE head implied a 21.01-million-token half-life and one Polar head 3.07 million. The earlier L4 NoPE control peaked at 185 tokens; Atma-Raven-Titans peaked at 41.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Checkpoint</th><th>Largest head</th><th>Zero-input half-life</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td>NoPE · L4 mbs4</td><td>block 2 / head 7</td><td>185</td><td>Earlier control</td></tr>
+              <tr><td>NoPE · L40S mbs4</td><td>block 2 / head 2</td><td>1.38M</td><td>Microbatch control</td></tr>
+              <tr><td>NoPE · L40S mbs16</td><td>block 2 / head 5</td><td><strong>21.01M</strong></td><td>Promoted checkpoint</td></tr>
+              <tr><td>Polar · L40S mbs16</td><td>block 2 / head 6</td><td><strong>3.07M</strong></td><td>Promoted checkpoint</td></tr>
+              <tr><td>RoPE · L40S mbs16</td><td>block 2 / head 1</td><td>682</td><td>Negative control</td></tr>
+              <tr><td>Atma-Raven-Titans</td><td>block 2 / head 3</td><td>41</td><td>Recurrent reference</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>This is a parameter-only operating point, not a runtime trace: the nonzero input weights make <em>γ</em> activation-dependent. But the same extreme heads survive BABILong fine-tuning almost unchanged, which made them concrete intervention targets.</p>
+
+        <h3>A one-head runtime cap tests the mechanism</h3>
+        <p>We capped only the final runtime gate logit of the largest head so its half-life could not exceed 256 tokens (<em>γ</em> ≤ 0.997296). The hook changes no checkpoint tensor, leaves attention untouched, and is removed after each condition. In the paired pilot, baseline and cap use the same loaded model, documents, needle examples, seeds, and attention backend. At 256K, NoPE clean NLL falls from 12.003 to 1.138 and Polar from 1.252 to 1.057. Polar needle cross-entropy falls from 2.39 to 1.71; RoPE changes only from 6.16 to 6.02 and loses short-range retrieval.</p>
+        <aside class="note"><strong>Why this is causal but narrow.</strong> The same-process intervention isolates excessive runtime retention in one selected head. It does not reveal what training event created the outlier, and it does not show that 256 tokens is the right ceiling for every model.</aside>
+
+        <h3>Full re-evaluation confirms selective recovery</h3>
+        <p>We then ran all eight 2K downstream tasks, synthetic and FinePDFs retrieval, fixed-target BPB, and BABILong for NoPE, Polar, and RoPE. The clamped runs below are compared with pinned archived baselines; the paired pilot above supplies the controlled comparison. All 15 jobs completed without OOM.</p>
+        <figure class="wide-figure">
+          <a href="assets/figures/retention-recovery.svg" title="Open the full-resolution recovery curves"><img src="assets/figures/retention-recovery.svg" width="1050" height="650" alt="Three-panel length curves compare untouched and one-head-capped NoPE, Polar, and RoPE on retrieval, BABILong, and long-document bits per byte." loading="lazy" decoding="async"></a>
+          <figcaption><strong>Figure 6.</strong> The complete length-wise re-evaluation. Dashed open and solid curves are the untouched/capped matched attention variants; dotted filled curves retain Raven Native and Atma-Raven-Titans as untouched recurrent-family references. NoPE’s BABILong recovery begins at 8K and persists through 256K.</figcaption>
+        </figure>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Model</th><th>Downstream mean</th><th>BPB @256K</th><th>Retrieval @256K<br>token / exact</th><th>BABILong @256K</th></tr></thead>
+            <tbody>
+              <tr><td>NoPE</td><td>45.15 → 45.10</td><td><strong>8.097 → 1.595</strong></td><td>0.60 / 0.00 → 0.93 / 0.00</td><td><strong>0 → 39</strong></td></tr>
+              <tr><td>Polar</td><td>43.29 → 43.25</td><td><strong>1.825 → 1.501</strong></td><td><strong>34.37 / 9.00 → 47.07 / 16.33</strong></td><td><strong>28 → 42</strong></td></tr>
+              <tr><td>RoPE</td><td>44.60 → 44.66</td><td>2.512 → 2.460</td><td>0.00 / 0.00 → 0.00 / 0.00</td><td>14 → 11</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>NoPE’s recovery is not confined to the endpoint. Its untouched BABILong curve falls from 21% at 16K to 6%, 0%, 0%, and 0% at 32K, 64K, 128K, and 256K; the capped checkpoint scores 54%, 45%, 37%, 35%, and 39%. Mean BPB changes from 3.374/5.527/5.885/6.369/8.097 to 1.484/1.504/1.506/1.530/1.595 over the same lengths. Exact retrieval still remains zero at 256K, so restored recurrent usability is not equivalent to restored direct lookup.</p>
+        <p>Polar gains 12.70 points in 256K target-token retrieval, 7.33 points in exact retrieval, and 14 points on BABILong; exact FinePDFs retrieval still remains zero. RoPE does not recover retrieval and loses three BABILong points at 256K. Ordinary downstream means move by at most 0.06 points. The paper appendix and diagnostic README report every task, dataset, depth, and length cell.</p>
+        <aside class="note"><strong>Interpretation.</strong> Excessive retention is a major checkpoint-specific mediator of NoPE and Polar degradation, not the sole explanation of long-context failure. The result motivates auditing learned horizons and eventually testing a bounded train-time parameterization, but the present experiment validates neither a new architecture nor a universal clamp.</aside>
       </section>
 
       <section id="limitations">
@@ -208,19 +250,22 @@
           <li>Teacher-forced retrieval is not autoregressive generation.</li>
           <li>Raven is a separately optimized family comparison, not an optimizer-matched ablation.</li>
           <li>Serving measurements are single-sequence measurements on one L40S and should be treated as descriptive.</li>
+          <li>The retention cap diagnoses existing checkpoints. It neither identifies the outlier’s training origin nor validates a bounded-gate training formulation.</li>
+          <li>The broad clamped re-evaluation uses pinned archived baselines; strict same-process causality comes from the smaller paired sweep.</li>
         </ul>
       </section>
 
       <section id="conclusion">
         <h2>Conclusion</h2>
         <p>ATMA establishes a reproducible operating point for bounded full-context attention plus recurrent memory. Polar materially extends target-token signal, preserves exact synthetic retrieval, and stabilizes long-document likelihood. The result does not solve natural-text retrieval at extreme length, and it does not dominate recurrent alternatives on reasoning or serving.</p>
-        <p>That mixed result is the point. Long-context systems should be compared as trade-offs, with metrics kept distinct and failure boundaries made visible.</p>
+        <p>The retention audit sharpens that lesson: a model can look converged at its training length while one near-unit recurrent gate silently creates a million-token timescale. A selective one-head intervention recovers NoPE likelihood and BABILong and improves Polar across likelihood, retrieval, and reasoning, but leaves other failures intact.</p>
+        <p>That mixed result is the point. Long-context systems should be compared as trade-offs, with metrics kept distinct, learned timescales audited, and failure boundaries made visible.</p>
       </section>
 
       <section class="artifact">
         <p class="article-label">Open research artifact</p>
         <h2>Inspect the evidence</h2>
-        <p>The dashboard exposes all 120 recipe cells, validation trajectories, grouped contrasts, and the current Stage II endpoints.</p>
+        <p>The dashboard exposes all 120 recipe cells, validation trajectories, grouped contrasts, Stage II endpoints, and the retention-horizon re-evaluation. The repository contains the complete parameter scan, paired sweep, clamp specifications, and per-suite logs.</p>
         <div class="article-actions">
           <a class="primary" href="dashboard.html">Open the ablation dashboard ↗</a>
           <a href="https://github.com/kreasof-ai/atma">Browse the repository ↗</a>
