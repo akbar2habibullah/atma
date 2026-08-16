@@ -12,8 +12,7 @@ in the appendix. In the current compiled draft:
 - The main body concludes on page 9, within the nine-page limit.
 - The page-limit-exempt AI use and reproducibility statements follow on page 9.
 - References begin on page 10 and appendices begin on page 11.
-- The compiled artifact is 29 pages; the five full re-evaluation tables appear
-  on pages 26--27.
+- The compiled artifact is 30 pages; the nine full diagnostic and re-evaluation tables appear in Appendix C.
 
 The retention-horizon figures, endpoint table, and prose therefore fit without exceeding the
 main-text limit, but leave no additional full page of headroom.
