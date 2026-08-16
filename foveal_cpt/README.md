@@ -92,8 +92,32 @@ resolved experiment config.
 ## Run gates
 
 The first two-step smoke is mandatory for validating CUDA compilation, memory, backward, and
-actual step time. At the existing dense baseline's 9 seconds/step, 12 x 1,908 steps is 57.2 L40S
-GPU-hours; sparse routing, KL, and kernel compile overhead must be measured rather than assumed.
+actual step time. The initial August 2026 L40S smoke measured 62-74 seconds per step, but that was
+not sparse-attention compute. The CPT facade was eager, checkpointed every block, used a slow
+row-wise loss kernel, and specialized the compiled graph on continuously annealed Python routing
+attributes. The latter caused a 49-55 second whole-model recompile on almost every handoff step.
+
+The corrected L40S path matches source pretraining: whole-model compilation, the opaque FLA Titans
+ops, no unnecessary activation recomputation, and the compiled materialized loss head (about
+33.1 GiB peak on the 46 GiB GPU). Routing schedules are runtime tensor buffers and do not
+recompile. Polar's regular local band now has true window loop bounds and a key-parallel backward;
+the arbitrary remote kernel inverts query-to-page routes on GPU and computes dK/dV per key page,
+without atomic accumulation.
+
+The exact loaded source checkpoint reproduces at 8.997 seconds per 524,288-token step. Actual
+second-step CPT measurements are 9.00 seconds for Polar local (58.2K tokens/second), 10.33 seconds
+for initial Polar `K_max=64` LM-output (50.8K tokens/second), 8.73 seconds for NoPE local, and 9.78
+seconds for initial NoPE `K_max=64` LM-output, all near 32-33 GiB peak. These endpoints project to
+roughly 4.6-5.5 L40S hours per 1B-token cell. The former 392-469 hour serial projection is invalid;
+use a fresh complete two-step matrix smoke for the final KL/RoPE-inclusive schedule projection.
+Only the latest restart checkpoint is retained by default; retaining every 250-step checkpoint
+would require roughly 300 GB for the complete matrix.
+
+**Data protocol gate.** The downloaded FineWeb-Edu token shards are a flat stream with GPT-2 EOT
+document separators. The current loader does not reset attention or Titans memory at those
+separators, so a fixed 32K slice is not document-coherent. This violates the pilot protocol in the
+research note and must be corrected with a document-coherent long-form corpus or explicit
+attention-and-memory reset semantics before treating the complete sweep as a scientific run.
 After CPT, evaluate loss and routing curves with `python -m foveal_cpt.evaluate`, then run the
 repository's coherent-document, needle/RULER, and Polar diagnostics against the untouched source
 checkpoint.

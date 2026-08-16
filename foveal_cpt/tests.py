@@ -24,6 +24,7 @@ from .checkpoint import wrap_foveal
 from .config import FovealConfig
 from .model import FovealCPTModel, foveal_layers
 from .prepare_data import ensure_training_data, shard_token_count
+from .runtime import prune_checkpoints
 
 
 def check(name: str, condition: bool, detail: str = "") -> None:
@@ -34,8 +35,12 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 def tiny_config(attn_type: str, *, cuda_flex: bool = False) -> tuple[AtmaConfig, FovealConfig]:
     sequence_length = 128 if cuda_flex else 32
-    hidden_size = 128 if cuda_flex else 32
-    head_dim = 32 if cuda_flex else 8
+    # Ada's default FlexAttention backward tile for sub-64 head dimensions has
+    # a 128-wide KV block, which is incompatible with this pilot's 64-token
+    # sparse pages.  The production checkpoint uses head_dim=128; use 64 here
+    # so the CUDA integration test exercises a supported training shape.
+    hidden_size = 256 if cuda_flex else 32
+    head_dim = 64 if cuda_flex else 8
     page_size = 64 if cuda_flex else 8
     atma = AtmaConfig(
         vocab_size=64,
@@ -121,6 +126,16 @@ def test_dataset_preflight() -> None:
         paths = ensure_training_data(config, include_validation=False)
         check("dataset preflight finds the sequential shard", paths == [path])
         check("dataset preflight validates token count", shard_token_count(path) == token_count)
+
+
+def test_checkpoint_retention() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory)
+        paths = [output / f"cpt-step-{step:06d}.pt" for step in (250, 500, 750)]
+        for path in paths:
+            path.touch()
+        prune_checkpoints(output, "cpt", keep=1)
+        check("checkpoint retention keeps only latest", sorted(output.glob("*.pt")) == paths[-1:])
 
 
 def test_dense_parity(attn_type: str, device: str = "cpu", *, backward: bool = False) -> None:
@@ -294,9 +309,47 @@ def test_sparse_polar_triton() -> None:
         torch.testing.assert_close(actual.grad, expected.grad, atol=3e-3, rtol=3e-3)
         check(f"CUDA sparse Polar Triton {name} gradient matches oracle", True)
 
+    # Regression: when the null sink is the largest logit, the online Q2
+    # accumulator is expressed in that max-shifted scale and can be far below
+    # 1e-6.  It must retain its scale for L^2/Q2 rather than being clamped with
+    # the unrelated direction-normalization epsilon.
+    tokens, dim, page_size, local_window = 128, 16, 16, 16
+    pages = tokens // page_size
+    page_indices = torch.zeros((1, pages, 1), device=device, dtype=torch.int32)
+    page_counts = torch.zeros((1, pages), device=device, dtype=torch.int32)
+    q = (torch.randn(1, heads, tokens, dim, device=device) * 0.2).to(torch.bfloat16)
+    k = (torch.randn_like(q.float()) * 0.2).to(torch.bfloat16)
+    v = (torch.randn_like(q.float()) * 0.2).to(torch.bfloat16)
+    v_null = (torch.randn(heads, dim, device=device) * 0.2).to(torch.bfloat16)
+    null_base = torch.full((heads,), 2.0, device=device, dtype=torch.bfloat16)
+    null_slope = torch.zeros(heads, device=device, dtype=torch.bfloat16)
+    len_gain = torch.zeros(heads, device=device, dtype=torch.bfloat16)
+    mag_beta = torch.zeros(heads, device=device, dtype=torch.bfloat16)
+    actual_c, actual_mag = polar_attention_sparse(
+        q, k, v, page_indices, page_counts,
+        page_size=page_size, local_window=local_window,
+        v_null=v_null, null_base=null_base, null_slope_raw=null_slope,
+        len_gain_raw=len_gain, mag_beta_raw=mag_beta,
+    )
+    positions = torch.arange(tokens, device=device)
+    allowed = ((positions[None, :] <= positions[:, None])
+               & (positions[None, :] > positions[:, None] - local_window))
+    scores = torch.matmul(q.float(), k.float().transpose(-2, -1)) / (dim ** 0.5)
+    scores = scores.masked_fill(~allowed[None, None], -torch.inf)
+    expected_c, expected_mag = polar_reduce(
+        scores, v.float(), (positions + 1).float(),
+        v_null=v_null.float(), null_base=null_base.float(),
+        null_slope_raw=null_slope.float(), len_gain_raw=len_gain.float(),
+        mag_beta_raw=mag_beta.float(),
+    )
+    torch.testing.assert_close(actual_c.float(), expected_c, atol=3e-3, rtol=3e-3)
+    torch.testing.assert_close(actual_mag.float(), expected_mag, atol=3e-3, rtol=3e-3)
+    check("CUDA sparse Polar Triton preserves null-dominant Q2 scale", True)
+
 
 def main() -> None:
     test_dataset_preflight()
+    test_checkpoint_retention()
     test_router()
     test_dense_parity("nope")
     test_dense_parity("rope")

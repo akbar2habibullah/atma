@@ -53,11 +53,16 @@ class FovealConfig:
     index_loss_weight: float = 0.1
     teacher_mean_weight: float = 0.5
 
-    activation_checkpointing: bool = True
+    # A 32K microbatch peaks near 33 GiB on the 46 GiB L40S without block
+    # recomputation. Compile the whole facade, matching the source pretraining.
+    activation_checkpointing: bool = False
+    compile_model: bool = True
     flex_compile: bool = True
     flex_kernel_options: dict | None = None
-    xent_impl: str = "auto"
-    xent_token_chunk: int = 512
+    # The compiled materialized head is both faster and memory-safe on L40S;
+    # the bounded chunked path remains available for smaller-memory devices.
+    xent_impl: str = "eager"
+    xent_token_chunk: int = 4096
     xent_vocab_chunk: int = 2048
 
     base_lr_scale: float = 0.1
@@ -68,6 +73,7 @@ class FovealConfig:
 
     log_every: int = 10
     save_every: int = 250
+    keep_last_checkpoints: int = 1
     seed: int = 1234
 
     # Frozen-backbone index calibration defaults.
@@ -124,6 +130,8 @@ class FovealConfig:
             raise ValueError("handoff token boundaries are invalid")
         if not 0.0 <= self.cooldown_fraction <= 1.0:
             raise ValueError("cooldown_fraction must lie in [0, 1]")
+        if self.keep_last_checkpoints <= 0:
+            raise ValueError("keep_last_checkpoints must be positive")
 
     @property
     def uses_index(self) -> bool:

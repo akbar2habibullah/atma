@@ -109,6 +109,14 @@ def restore_rng(state: dict | None) -> None:
         torch.cuda.set_rng_state_all(state["cuda"])
 
 
+def prune_checkpoints(output: Path, stage: str, keep: int) -> None:
+    if keep <= 0:
+        raise ValueError("checkpoint retention must be positive")
+    checkpoints = sorted(output.glob(f"{stage}-step-*.pt"))
+    for obsolete in checkpoints[:-keep]:
+        obsolete.unlink()
+
+
 def save_run(
     output_dir: str | Path,
     *,
@@ -139,6 +147,7 @@ def save_run(
     os.replace(temporary, numbered)
     latest = output / "latest.json"
     latest.write_text(json.dumps({"checkpoint": numbered.name, "step": step, "tokens_seen": tokens_seen}, indent=2) + "\n")
+    prune_checkpoints(output, stage, config.keep_last_checkpoints)
     return numbered
 
 

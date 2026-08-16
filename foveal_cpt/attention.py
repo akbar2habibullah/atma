@@ -19,9 +19,10 @@ from train.model import (
 
 try:
     from kernel.polar_triton import HAS_TRITON as HAS_POLAR_TRITON
-    from kernel.polar_triton import polar_attention_sparse
+    from kernel.polar_triton import polar_attention, polar_attention_sparse
 except Exception:  # pragma: no cover - CPU-only environments do not ship Triton.
     HAS_POLAR_TRITON = False
+    polar_attention = None
     polar_attention_sparse = None
 
 try:
@@ -67,9 +68,9 @@ def select_pages(
     *,
     page_size: int,
     local_window: int,
-    top_p: float,
-    min_remote_pages: int,
-    max_remote_pages: int,
+    top_p: float | Tensor,
+    min_remote_pages: int | Tensor,
+    max_remote_pages: int | Tensor,
     remote_capacity: int,
 ) -> Route:
     """Select causal remote pages for each query block.
@@ -85,10 +86,10 @@ def select_pages(
         raise ValueError("the pilot requires one query block per KV page")
     if local_window % page_size:
         raise ValueError("local_window must be divisible by page_size")
-    if max_remote_pages > remote_capacity:
-        raise ValueError("max_remote_pages exceeds the allocated route capacity")
-
     device = page_scores.device
+    top_p_t = torch.as_tensor(top_p, device=device, dtype=torch.float32)
+    min_remote_t = torch.as_tensor(min_remote_pages, device=device, dtype=torch.int64)
+    max_remote_t = torch.as_tensor(max_remote_pages, device=device, dtype=torch.int64)
     qb = torch.arange(query_blocks, device=device)
     pb = torch.arange(pages, device=device)
     local_page_span = local_window // page_size
@@ -106,21 +107,20 @@ def select_pages(
     sorted_prob, sorted_idx = remote_probs.sort(dim=-1, descending=True)
     sorted_prob = sorted_prob.clamp_min(0.0)
     cumulative = sorted_prob.cumsum(dim=-1)
-    target = (float(top_p) - local_mass).clamp_min(0.0)
+    target = (top_p_t - local_mass).clamp_min(0.0)
     available = remote.sum(dim=-1).view(1, query_blocks).expand(batch, -1)
 
     # Smallest n for which cumulative[n-1] >= target. A zero target permits
     # no fetch; otherwise add one to the count of entries still below target.
     needed = (cumulative < target[..., None]).sum(dim=-1) + (target > 0).long()
     needed = torch.where(available > 0, needed, torch.zeros_like(needed))
-    if min_remote_pages:
-        needed = torch.where(
-            available > 0,
-            torch.maximum(needed, needed.new_full((), min_remote_pages)),
-            needed,
-        )
+    needed = torch.where(
+        available > 0,
+        torch.maximum(needed, min_remote_t),
+        needed,
+    )
     counts = torch.minimum(needed, available)
-    counts = counts.clamp_max(max_remote_pages)
+    counts = torch.minimum(counts, max_remote_t)
 
     indices = sorted_idx[..., :remote_capacity].to(torch.int32)
     if indices.shape[-1] < remote_capacity:
@@ -139,7 +139,11 @@ def select_pages(
     local_indices = local_indices[None].expand(batch, -1, -1).to(torch.int32)
     local_counts = local_counts[None].expand(batch, -1).to(torch.int32)
 
-    cap_rate = (counts >= max_remote_pages).float().mean() if max_remote_pages else counts.new_zeros((), dtype=torch.float32)
+    cap_rate = torch.where(
+        max_remote_t > 0,
+        (counts >= max_remote_t).float().mean(),
+        counts.new_zeros((), dtype=torch.float32),
+    )
     return Route(
         page_indices=indices,
         page_counts=counts.to(torch.int32),
@@ -160,13 +164,42 @@ def _local_mask(local_window: int) -> Callable:
     return mask_mod
 
 
-def build_block_mask(route: Route, *, heads: int, block_size: int, local_window: int):
+def build_block_mask(
+    route: Route,
+    *,
+    heads: int,
+    block_size: int,
+    local_window: int,
+    include_remote: bool = True,
+):
     if not HAS_FLEX_ATTENTION:
         raise RuntimeError("PyTorch FlexAttention is unavailable")
+    query_blocks = route.page_counts.shape[1]
+    key_blocks = route.page_scores.shape[2]
+    # BlockMask's ordered-to-dense transpose interprets the final metadata
+    # dimension as the complete KV-block ID domain.  The route tensors store
+    # only their active slot capacities (for example 9 local or 64 remote
+    # slots), but their values are absolute page IDs up to key_blocks - 1.
+    # Pad the inactive tail so long-context absolute IDs remain in range; the
+    # per-row counts continue to exclude every padded entry from attention.
+    local_indices = route.local_indices
+    if local_indices.shape[-1] < key_blocks:
+        local_indices = F.pad(local_indices, (0, key_blocks - local_indices.shape[-1]))
     partial_counts = route.local_counts[:, None].expand(-1, heads, -1).contiguous()
-    partial_indices = route.local_indices[:, None].expand(-1, heads, -1, -1).contiguous()
-    full_counts = route.page_counts[:, None].expand(-1, heads, -1).contiguous()
-    full_indices = route.page_indices[:, None].expand(-1, heads, -1, -1).contiguous()
+    partial_indices = local_indices[:, None].expand(-1, heads, -1, -1).contiguous()
+    remote_indices = route.page_indices
+    if include_remote and remote_indices.shape[-1] < key_blocks:
+        remote_indices = F.pad(remote_indices, (0, key_blocks - remote_indices.shape[-1]))
+    full_counts = (
+        route.page_counts[:, None].expand(-1, heads, -1).contiguous()
+        if include_remote
+        else None
+    )
+    full_indices = (
+        remote_indices[:, None].expand(-1, heads, -1, -1).contiguous()
+        if include_remote
+        else None
+    )
     return BlockMask.from_kv_blocks(
         partial_counts,
         partial_indices,
@@ -174,6 +207,9 @@ def build_block_mask(route: Route, *, heads: int, block_size: int, local_window:
         full_indices,
         BLOCK_SIZE=(block_size, block_size),
         mask_mod=_local_mask(local_window),
+        # Without explicit lengths, BlockMask infers KV length from the route's
+        # padded index capacity rather than from the actual number of pages.
+        seq_lengths=(query_blocks * block_size, key_blocks * block_size),
     )
 
 
@@ -245,9 +281,20 @@ class FovealAttention(nn.Module):
         self.page_size = page_size
         self.local_window = local_window
         self.remote_capacity = remote_capacity
+        # These Python values describe the static graph shape. Runtime schedule
+        # values live in buffers below so changing the handoff every step does
+        # not trigger a whole-model torch.compile recompile.
         self.top_p = top_p
         self.min_remote_pages = min_remote_pages
         self.max_remote_pages = max_remote_pages
+        self.register_buffer("route_top_p", torch.tensor(float(top_p), dtype=torch.float32))
+        self.register_buffer(
+            "route_min_remote_pages", torch.tensor(int(min_remote_pages), dtype=torch.int64)
+        )
+        self.register_buffer(
+            "route_max_remote_pages", torch.tensor(int(max_remote_pages), dtype=torch.int64)
+        )
+        self.register_buffer("route_step", torch.tensor(0, dtype=torch.int64))
         self.teacher_query_blocks = teacher_query_blocks
         self.teacher_interval = teacher_interval
         self.teacher_mean_weight = teacher_mean_weight
@@ -255,7 +302,6 @@ class FovealAttention(nn.Module):
         self.compile_flex = compile_flex
         self.flex_kernel_options = flex_kernel_options
         self.mode = "sparse"
-        self.step = 0
         self.last_stats: dict[str, Tensor] = {}
         self._last_teacher_stats: dict[str, Tensor] = {}
         self._compiled_flex = None
@@ -282,16 +328,16 @@ class FovealAttention(nn.Module):
         self.mode = mode
 
     def set_step(self, step: int) -> None:
-        self.step = int(step)
+        self.route_step.fill_(int(step))
 
     def set_route(self, top_p: float, min_remote_pages: int, max_remote_pages: int) -> None:
         if not 0.0 < top_p <= 1.0:
             raise ValueError("top_p must lie in (0, 1]")
         if not 0 <= min_remote_pages <= max_remote_pages <= self.remote_capacity:
             raise ValueError("invalid remote page limits")
-        self.top_p = float(top_p)
-        self.min_remote_pages = int(min_remote_pages)
-        self.max_remote_pages = int(max_remote_pages)
+        self.route_top_p.fill_(float(top_p))
+        self.route_min_remote_pages.fill_(int(min_remote_pages))
+        self.route_max_remote_pages.fill_(int(max_remote_pages))
 
     @property
     def uses_lm_output(self) -> bool:
@@ -353,9 +399,9 @@ class FovealAttention(nn.Module):
             detached,
             page_size=self.page_size,
             local_window=self.local_window,
-            top_p=self.top_p,
-            min_remote_pages=self.min_remote_pages,
-            max_remote_pages=self.max_remote_pages,
+            top_p=self.route_top_p,
+            min_remote_pages=self.route_min_remote_pages,
+            max_remote_pages=self.route_max_remote_pages,
             remote_capacity=self.remote_capacity,
         )
         route.page_scores = page_scores
@@ -411,6 +457,7 @@ class FovealAttention(nn.Module):
                 heads=self.num_heads,
                 block_size=self.page_size,
                 local_window=self.local_window,
+                include_remote=self.max_remote_pages > 0,
             )
             scale = self.base.sdpa_scale if getattr(self.base, "sdpa_scale", None) is not None else None
             return self._flex(
@@ -444,11 +491,35 @@ class FovealAttention(nn.Module):
             # dense Polar path, expand GQA KV heads before entering the kernel.
             k_full = k.repeat_interleave(groups, dim=1)
             v_full = v.repeat_interleave(groups, dim=1)
+            if self.max_remote_pages == 0 and polar_attention is not None:
+                # The no-remote control has a regular sliding band, so use the
+                # key-parallel backward (no atomic gradient accumulation). Keep
+                # full-prefix Polar temperature/null calibration as required by
+                # the Foveal protocol.
+                return polar_attention(
+                    q,
+                    k_full,
+                    v_full,
+                    n_keys,
+                    window=self.local_window,
+                    preserve_length=True,
+                    v_null=self.base.v_null,
+                    null_base=self.base.null_base,
+                    null_slope_raw=self.base.null_slope_raw,
+                    len_gain_raw=self.base.len_gain_raw,
+                    mag_beta_raw=self.base.mag_beta_raw,
+                )
+            # REMOTE_CAPACITY is a compile-time loop bound in the Triton
+            # forward/backward.  Bucket the live limit to a power of two so the
+            # post-handoff K=32 phase does not execute 64 masked tl.dot slots,
+            # while avoiding a new compilation for every annealing step.
+            live_capacity = max(1, self.max_remote_pages)
+            page_indices = route.page_indices[..., :live_capacity]
             return polar_attention_sparse(
                 q,
                 k_full,
                 v_full,
-                route.page_indices,
+                page_indices,
                 route.page_counts,
                 page_size=self.page_size,
                 local_window=self.local_window,
@@ -467,6 +538,7 @@ class FovealAttention(nn.Module):
                 heads=self.num_heads,
                 block_size=self.page_size,
                 local_window=self.local_window,
+                include_remote=self.max_remote_pages > 0,
             )
             temp, null = polar_temp_null(
                 n_keys,
@@ -543,9 +615,9 @@ class FovealAttention(nn.Module):
         count = min(self.teacher_query_blocks, query_blocks - 1)
         # Avoid the trivial first block and rotate anchors through later context.
         stride = max(1, query_blocks // (count + 1))
-        offset = self.step % stride
+        offset = torch.remainder(self.route_step, stride)
         blocks = stride + offset + torch.arange(count, device=device) * stride
-        return blocks.clamp_max(query_blocks - 1).unique()
+        return blocks.clamp_max(query_blocks - 1)
 
     def _teacher_loss(
         self,
@@ -561,7 +633,7 @@ class FovealAttention(nn.Module):
         a dense full-attention teacher in the training loop.
         """
 
-        if self.teacher_query_blocks <= 0 or self.step % self.teacher_interval:
+        if self.teacher_query_blocks <= 0:
             self._last_teacher_stats = {}
             return page_scores.sum() * 0.0
         batch, query_blocks, pages = page_scores.shape
@@ -639,6 +711,10 @@ class FovealAttention(nn.Module):
         log_student = torch.log_softmax(student.float(), dim=-1)
         log_student = torch.where(selected_valid, log_student, torch.zeros_like(log_student))
         loss = -(target.detach() * log_student).sum(dim=-1).mean()
+        # Keep the interval a runtime tensor mask. A Python step guard here
+        # would specialize and recompile the complete 32K graph every step.
+        teacher_active = torch.remainder(self.route_step, self.teacher_interval) == 0
+        loss = loss * teacher_active.to(loss.dtype)
 
         topk = min(self.max_remote_pages, selected_count)
         self._last_teacher_stats = {}

@@ -12,6 +12,66 @@ Nothing is clamped by default. Clamp specs are opt-in, affect only listed
 transformer block/head pairs, do not rewrite checkpoint tensors, and are removed
 after each sweep condition.
 
+## Results and interpretation
+
+The completed `hl:256` re-evaluation caps only the largest parameter-only gamma
+layer-head in each final checkpoint. All 15 requested jobs completed without an
+OOM. The table compares the clamped runs in
+`results/re_evaluation/run-summary.json` with the pinned untouched results in
+`benchmarks/logs/atma_10b/benchmark_matrix.json` and
+`benchmarks/logs/babilong_2k_ft/benchmark_matrix.json`.
+
+| Model | Downstream mean (%) | Mean BPB at 256K | Retrieval at 256K, token / exact (%) | BABILong at 256K (%) |
+|---|---:|---:|---:|---:|
+| NoPE | 45.15 -> 45.10 | **8.097 -> 1.595** | 0.60 / 0.00 -> 0.93 / 0.00 | **0 -> 39** |
+| Polar | 43.29 -> 43.25 | **1.826 -> 1.501** | **34.37 / 9.00 -> 47.07 / 16.33** | **28 -> 42** |
+| RoPE | 44.60 -> 44.66 | 2.512 -> 2.460 | 0.00 / 0.00 -> 0.00 / 0.00 | 14 -> 11 |
+
+Retrieval entries average the synthetic and FinePDFs suites, passkey and NIAH,
+and all three tested depths. BPB averages FinePDFs, PG-19, and Proof-Pile.
+Downstream is the mean primary metric across the eight 2K base-model tasks.
+
+The selected zero-input operating point survives BABILong fine-tuning almost
+unchanged:
+
+| Model | Base half-life (tokens) | BABILong-fine-tuned half-life (tokens) |
+|---|---:|---:|
+| NoPE | 21.01M | 20.86M |
+| Polar | 3.07M | 3.05M |
+| RoPE | 682 | 680 |
+
+The results support the following interpretation:
+
+- **Excessive learned retention is a major causal mediator of NoPE and Polar
+  degradation.** An inference-only intervention on one recurrent head changes
+  neither checkpoint weights nor attention, yet largely removes NoPE's
+  long-document collapse and improves Polar's likelihood, retrieval, and
+  adapted reasoning.
+- **NoPE's state stability and exact retrieval are distinct problems.** Its
+  mean 256K BPB falls from 8.097 to 1.595 and BABILong rises from 0% to 39%, but
+  exact retrieval remains 0%. The gamma outlier is therefore a major cause, not
+  a complete explanation of NoPE's extrapolation limits.
+- **Polar's promoted checkpoint is materially weakened by its outlier.** At
+  256K, target-token retrieval rises by 12.70 points, exact retrieval by 7.33
+  points, and BABILong by 14 points. Its mean BPB degradation relative to 2K
+  falls from about 1.26x to 1.03x.
+- **RoPE is a useful negative control.** Its much smaller 682-token operating
+  point does not resemble the million-token outliers. Capping it at 256 does
+  not restore retrieval and slightly reduces 256K BABILong, so the intervention
+  is not a universal benchmark booster.
+- **Ordinary downstream quality is effectively unchanged**, but the cap is not
+  free: 2K teacher-forced retrieval declines for some model/suite combinations,
+  especially RoPE. A fixed 256-token ceiling should not be presented as a
+  generally optimal deployment setting.
+
+This experiment identifies the checkpoint mechanism, not its origin. It does
+not establish that hardware, reduction order, seed, or any particular optimizer
+event caused the outlier, nor does it validate training with a bounded-gamma
+parameterization. The broad re-evaluation ran only the clamped condition and
+uses the repository's pinned archived baselines; the earlier clamp sweep is the
+paired same-process intervention. Rerun with `--paired` before making a strict
+paired benchmark claim.
+
 ## 1. Parameter-only scan
 
 From the repository root:
@@ -137,10 +197,10 @@ python -m benchmarks.run \
   --tasks passkey niah --lengths 2k 16k 64k --samples 20
 ```
 
-## Interpreting a positive result
+## Reporting guidance
 
-A clamp recovery would support the claim that the saturated retention head is
-causally involved in degradation. It would not by itself show that it is the
-only cause, or that the same cap should be used during training. Require paired
-benchmark replication, inspect short-context regressions, and report the exact
-target and cap rather than describing the whole model as "fixed."
+Report the exact targeted block/head and runtime ceiling. Describe the result as
+a selective inference-time intervention, not as a retrained or generally fixed
+model. The experiment does not show that the outlier is the only cause, that the
+same cap should be used during training, or that every checkpoint benefits from
+clipping.

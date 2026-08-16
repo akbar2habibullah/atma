@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from pathlib import Path
+
+# Titans' opaque forward/backward wrappers must be selected before importing
+# model.blocks. This is the compile-clean path used by the source pretraining.
+os.environ.setdefault("FLA_CUSTOM_OP", "1")
 
 import torch
 
@@ -71,6 +76,7 @@ def main() -> None:
     model.set_mode("sparse")
     model.train()
     optimizers = cpt_optimizers(model, config)
+    compiled_forward = torch.compile(model) if config.compile_model else model
     loader = TokenShardLoader(config.train_glob, config.batch_tokens, config.sequence_length, device)
 
     start_step = 0
@@ -108,7 +114,7 @@ def main() -> None:
         for start in range(0, config.global_sequences, micro):
             x = inputs[start : start + micro]
             y = targets[start : start + micro]
-            lm_loss, _, index_loss = model(x, y)
+            lm_loss, _, index_loss = compiled_forward(x, y)
             loss = lm_loss / config.batch_tokens
             loss = loss + config.index_loss_weight * index_loss / config.accumulation_steps
             loss.backward()

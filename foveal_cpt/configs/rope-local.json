@@ -10,7 +10,7 @@
   "page_size": 64,
   "query_block_size": 64,
   "local_window": 512,
-  "remote_capacity": 64,
+  "remote_capacity": 1,
   "top_p": 1.0,
   "min_remote_pages": 0,
   "max_remote_pages": 0,

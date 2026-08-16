@@ -60,7 +60,7 @@ if HAS_TRITON:
         scale, eps,
         BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, DK: tl.constexpr,
         IS_CAUSAL: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
-        WINDOW: tl.constexpr,
+        WINDOW: tl.constexpr, PRESERVE_LENGTH: tl.constexpr,
     ):
         pid_m = tl.program_id(0)
         pid_bh = tl.program_id(1)
@@ -90,7 +90,7 @@ if HAS_TRITON:
         # WINDOW>0: causal sliding window — each query sees only its last WINDOW keys,
         # so temp/null use the capped count min(n_i, WINDOW) and the score loop masks
         # the band (key_pos >= n_i - WINDOW). WINDOW==0 disables it (full causal).
-        if WINDOW > 0:
+        if WINDOW > 0 and not PRESERVE_LENGTH:
             n_clamp = tl.maximum(tl.minimum(n_i, float(WINDOW)), 1.0)
         else:
             n_clamp = tl.maximum(n_i, 1.0)
@@ -111,8 +111,16 @@ if HAS_TRITON:
             hi = tl.minimum((pid_m + 1) * BLOCK_M, Tk)
         else:
             hi = Tk
+        if WINDOW > 0:
+            # Skip key tiles that are wholly older than every query in this
+            # block. The previous implementation only masked them after doing
+            # tl.dot, making a sliding window quadratically expensive.
+            lo = tl.maximum(pid_m * BLOCK_M - WINDOW, 0)
+            lo = (lo // BLOCK_N) * BLOCK_N
+        else:
+            lo = 0
 
-        for start_n in range(0, hi, BLOCK_N):
+        for start_n in range(lo, hi, BLOCK_N):
             start_n = tl.multiple_of(start_n, BLOCK_N)
             offs_n = start_n + tl.arange(0, BLOCK_N)
             n_valid = offs_n < Tk
@@ -157,7 +165,10 @@ if HAS_TRITON:
         snorm = tl.maximum(snorm, eps)
         c = s / snorm[:, None]
 
-        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        # Q2 is expressed in the running-max scale and can legitimately be far
+        # below the direction-normalization epsilon when the null logit wins.
+        # Clamping it at `eps` breaks the scale-invariant L^2/Q2 ratio.
+        n_eff = l_i * l_i / tl.maximum(q2_i, 1.0e-30)
         m_eff = n_eff * (l_i / tl.maximum(Z, eps))
         # tanh(x) = 2*sigmoid(2x) - 1  (tl.math.tanh absent in triton 3.7).
         # log(1+m_eff): triton 3.7 has no log1p; for m_eff < ~1e-7 this rounds mag to 0
@@ -239,7 +250,12 @@ if HAS_TRITON:
         # A tile only needs keys through its last query. The runtime bound is
         # different for every tile/request and avoids max-length padding work.
         hi = tl.minimum(q_start + BLOCK_M, seq_len)
-        for start_n in range(0, hi, BLOCK_N):
+        if WINDOW > 0:
+            lo = tl.maximum(q_start - WINDOW, 0)
+            lo = (lo // BLOCK_N) * BLOCK_N
+        else:
+            lo = 0
+        for start_n in range(lo, hi, BLOCK_N):
             offs_n = start_n + tl.arange(0, BLOCK_N)
             n_valid = offs_n < seq_len
             k_idx = seq_start + offs_n
@@ -281,7 +297,7 @@ if HAS_TRITON:
         vn = tl.load(VNULL + h * DK + offs_d).to(tl.float32)
         s = acc + p_n[:, None] * vn[None, :]
         c = s / tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)[:, None]
-        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        n_eff = l_i * l_i / tl.maximum(q2_i, 1.0e-30)
         m_eff = n_eff * (l_i / tl.maximum(z, eps))
         mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
 
@@ -488,7 +504,8 @@ def _decode_config(dk, is_fp32, device=None):
 
 def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                    len_gain_raw, mag_beta_raw, eps, is_causal, input_precision,
-                   block_m=None, block_n=None, num_warps=None, num_stages=None, window=None):
+                   block_m=None, block_n=None, num_warps=None, num_stages=None, window=None,
+                   preserve_length=False):
     """Launch the forward kernel. Returns c, mag, and the saved stats (M,L,Q2,s).
 
     window (int, optional): eval-only causal sliding window (each query attends to its
@@ -550,6 +567,7 @@ def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
         BLOCK_M=block_m, BLOCK_N=block_n, DK=dk,
         IS_CAUSAL=is_causal, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
         WINDOW=(0 if window is None else int(window)),
+        PRESERVE_LENGTH=bool(preserve_length),
         num_warps=num_warps, num_stages=num_stages,
     )
 
@@ -559,14 +577,14 @@ def _polar_forward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
     from model import blocks as _blocks
     if _blocks._PROBE is not None:
         # temp/null use the windowed count when a window is active (matches the kernel).
-        nf = (n_keys if window is None
+        nf = (n_keys if window is None or preserve_length
               else torch.minimum(n_keys, n_keys.new_tensor(float(window)))).clamp(min=1.0)  # (Tq,)
         logn = torch.log(nf).view(1, Tq)
         t = 1.0 + spg.view(H, 1) * logn                              # (H, Tq)
         nu = nb.view(H, 1) + sps.view(H, 1) * torch.sqrt(torch.log(nf + 1.0)).view(1, Tq)
         p_n = torch.exp((t * nu).view(1, H, Tq) - M)                 # (B, H, Tq)
         Z = L + p_n
-        n_eff = L * L / Q2.clamp_min(eps)
+        n_eff = L * L / Q2.clamp_min(1.0e-30)
         _blocks._probe_emit(n_eff, mag, p_n / Z.clamp_min(eps))
 
     return c.to(out_dtype), mag.to(out_dtype), M, L, Q2, s
@@ -765,7 +783,7 @@ if HAS_TRITON:
         s = acc + p_n[:, None] * vnull
         snorm = tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)
         c = s / snorm[:, None]
-        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        n_eff = l_i * l_i / tl.maximum(q2_i, 1.0e-30)
         m_eff = n_eff * (l_i / tl.maximum(Z, eps))
         mag = 2.0 * tl.sigmoid(2.0 * (beta * tl.log(1.0 + m_eff))) - 1.0
 
@@ -890,7 +908,12 @@ if HAS_TRITON:
         dt = tl.zeros([BLOCK_M], tl.float32)
 
         hi = tl.minimum((pid_m + 1) * BLOCK_M, Tk) if IS_CAUSAL else Tk
-        for start_n in range(0, hi, BLOCK_N):
+        if WINDOW > 0:
+            lo = tl.maximum(pid_m * BLOCK_M - WINDOW, 0)
+            lo = (lo // BLOCK_N) * BLOCK_N
+        else:
+            lo = 0
+        for start_n in range(lo, hi, BLOCK_N):
             start_n = tl.multiple_of(start_n, BLOCK_N)
             offs_n = start_n + tl.arange(0, BLOCK_N)
             n_valid = offs_n < Tk
@@ -960,7 +983,11 @@ if HAS_TRITON:
         dv = tl.zeros([BLOCK_N, DK], tl.float32)
 
         lo = (pid_n * BLOCK_N // BLOCK_M) * BLOCK_M if IS_CAUSAL else 0
-        for start_m in range(lo, Tq, BLOCK_M):
+        if WINDOW > 0:
+            hi = tl.minimum((pid_n + 1) * BLOCK_N + WINDOW, Tq)
+        else:
+            hi = Tq
+        for start_m in range(lo, hi, BLOCK_M):
             start_m = tl.multiple_of(start_m, BLOCK_M)
             offs_m = start_m + tl.arange(0, BLOCK_M)
             m_valid = offs_m < Tq
@@ -1005,7 +1032,7 @@ if HAS_TRITON:
 
 def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
                     len_gain_raw, mag_beta_raw, M, L, Q2, s, eps, is_causal,
-                    input_precision, window=None):
+                    input_precision, window=None, preserve_length=False):
     """Backward: cheap per-query preamble (PyTorch) + dq / dk,dv loops (Triton).
 
     window (int, optional): causal sliding window — temp/null use the windowed count
@@ -1019,7 +1046,11 @@ def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
     gc = gc.to(fdt)
     gm = gm.to(fdt)
     n_raw = n_keys.to(dev).to(fdt)                                  # raw, for the causal mask
-    n_cnt = n_raw if window is None else torch.minimum(n_raw, n_raw.new_tensor(float(window)))
+    n_cnt = (
+        n_raw
+        if window is None or preserve_length
+        else torch.minimum(n_raw, n_raw.new_tensor(float(window)))
+    )
     n = n_cnt.clamp(min=1.0)                                        # windowed clamp, for temp/null/param-grads
     spg = _softplus(len_gain_raw.to(fdt)).view(1, H, 1)
     sps = _softplus(null_slope_raw.to(fdt)).view(1, H, 1)
@@ -1032,16 +1063,22 @@ def _polar_backward(gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
     a_n = (t * nu).expand(B, H, Tq)
     p_n = torch.exp(a_n - M)
     Z = L + p_n
-    Zc, Q2c = Z.clamp_min(eps), Q2.clamp_min(eps)
-    m_eff = (L ** 3) / (Q2c * Zc)
+    # Z contains the global maximum term and is therefore >= 1.  Q2 can be
+    # tiny solely because the null term set that maximum; it must not use the
+    # vector-normalization epsilon or the participation ratio ceases to be
+    # invariant to the online softmax shift.
+    stats_tiny = 1.0e-30
+    Zc, Q2c = Z.clamp_min(stats_tiny), Q2.clamp_min(stats_tiny)
+    n_eff = (L * L) / Q2c
+    m_eff = n_eff * (L / Zc)
     log1p_m = torch.log1p(m_eff)
     mag = torch.tanh(beta * log1p_m)
 
     # magnitude path -> (gL, gQ2, gZ via p_n)
     gme = gm * beta * (1.0 - mag * mag) / (1.0 + m_eff)
-    dm_dL = 3.0 * L * L / (Q2c * Zc)
-    dm_dQ2 = -(L ** 3) / (Q2c * Q2c * Zc)
-    dm_dZ = -(L ** 3) / (Q2c * Zc * Zc)
+    dm_dL = torch.where(L > 0, 3.0 * m_eff / L, torch.zeros_like(L))
+    dm_dQ2 = -(m_eff / Q2c) * (Q2 > stats_tiny)
+    dm_dZ = -(m_eff / Zc) * (Z > stats_tiny)
     gL = gme * (dm_dL + dm_dZ)
     gQ2 = gme * dm_dQ2
     gZ_pn = gme * dm_dZ
@@ -1127,17 +1164,20 @@ class PolarAttentionTriton(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, n_keys, v_null, null_base, null_slope_raw,
-                len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window):
+                len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window,
+                preserve_length):
         q = q.contiguous(); k = k.contiguous(); v = v.contiguous()
         c, mag, M, L, Q2, s = _polar_forward(
             q, k, v, n_keys, v_null, null_base, null_slope_raw,
-            len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window=window)
+            len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window=window,
+            preserve_length=preserve_length)
         ctx.save_for_backward(q, k, v, n_keys, v_null, null_base, null_slope_raw,
                               len_gain_raw, mag_beta_raw, M, L, Q2, s)
         ctx.eps = eps
         ctx.is_causal = is_causal
         ctx.input_precision = input_precision
         ctx.window = window
+        ctx.preserve_length = preserve_length
         return c, mag
 
     @staticmethod
@@ -1148,7 +1188,8 @@ class PolarAttentionTriton(torch.autograd.Function):
          grad_len_gain, grad_mag_beta) = _polar_backward(
             gc, gm, q, k, v, n_keys, v_null, null_base, null_slope_raw,
             len_gain_raw, mag_beta_raw, M, L, Q2, s,
-            ctx.eps, ctx.is_causal, ctx.input_precision, window=ctx.window)
+            ctx.eps, ctx.is_causal, ctx.input_precision, window=ctx.window,
+            preserve_length=ctx.preserve_length)
 
         def cast(x, ref):
             return x.to(ref.dtype)
@@ -1156,12 +1197,12 @@ class PolarAttentionTriton(torch.autograd.Function):
         return (cast(dq, q), cast(dk_out, k), cast(dv_out, v), None,
                 cast(grad_v_null, v_null), cast(grad_null_base, null_base),
                 cast(grad_null_slope, null_slope_raw), cast(grad_len_gain, len_gain_raw),
-                cast(grad_mag_beta, mag_beta_raw), None, None, None, None)
+                cast(grad_mag_beta, mag_beta_raw), None, None, None, None, None)
 
 
 def polar_attention(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
                     len_gain_raw, mag_beta_raw, eps=1e-6, is_causal=True,
-                    input_precision="ieee", window=None):
+                    input_precision="ieee", window=None, preserve_length=False):
     """Autograd-aware FlashAttention-style polar attention. q,k,v: (B,H,T,dk)
     with GQA KV-heads already expanded to H. Drop-in for
     ``model.blocks.polar_attention_online`` (the streaming PyTorch oracle).
@@ -1174,7 +1215,8 @@ def polar_attention(q, k, v, n_keys, *, v_null, null_base, null_slope_raw,
     """
     return PolarAttentionTriton.apply(
         q, k, v, n_keys, v_null, null_base, null_slope_raw,
-        len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window)
+        len_gain_raw, mag_beta_raw, eps, is_causal, input_precision, window,
+        preserve_length)
 
 
 # ---------------------------------------------------------------------------
@@ -1272,10 +1314,10 @@ if HAS_TRITON:
             )
             m_i = m_new
 
-        # Selected completed remote pages.  Counts are runtime values, while the
-        # fixed capacity keeps the route tensors and launch shape static.
-        for remote_slot in range(0, REMOTE_CAPACITY):
-            selected = remote_slot < route_count
+        # Runtime loop: do not unroll the maximum capacity into one enormous
+        # program or execute masked tl.dot instructions for unused route slots.
+        for remote_slot in range(0, route_count):
+            selected = True
             key_page = tl.load(
                 PAGE_INDICES + b * stride_pib + query_page * stride_piq
                 + remote_slot * stride_pis,
@@ -1322,7 +1364,9 @@ if HAS_TRITON:
         s = acc + p_n[:, None] * vnull[None, :]
         snorm = tl.maximum(tl.sqrt(tl.sum(s * s, 1)), eps)
         c = s / snorm[:, None]
-        n_eff = l_i * l_i / tl.maximum(q2_i, eps)
+        # Do not reuse the direction epsilon here: Q2 is max-shifted and can
+        # legitimately be tiny when the null sink is the largest logit.
+        n_eff = l_i * l_i / tl.maximum(q2_i, 1.0e-30)
         m_eff = n_eff * (l_i / tl.maximum(z, eps))
         mag = 2.0 * tl.sigmoid(2.0 * beta * tl.log(1.0 + m_eff)) - 1.0
 
@@ -1355,6 +1399,7 @@ if HAS_TRITON:
         PAGE_SIZE: tl.constexpr, LOCAL_WINDOW: tl.constexpr,
         LOCAL_BLOCKS: tl.constexpr, REMOTE_CAPACITY: tl.constexpr,
         DK: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+        DQ_ONLY: tl.constexpr,
     ):
         query_page = tl.program_id(0)
         pid_bh = tl.program_id(1)
@@ -1410,21 +1455,22 @@ if HAS_TRITON:
             dt += tl.sum(da * sig, 1)
             gsig = (da * temp[:, None]).to(DOT_DTYPE)
             dq += tl.dot(gsig, k, input_precision=INPUT_PRECISION) * scale
-            dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
-            dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
-            tl.atomic_add(
-                DK_OUT + b * stride_kb + h * stride_kh
-                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
-                dk, mask=n_valid[:, None],
-            )
-            tl.atomic_add(
-                DV_OUT + b * stride_vb + h * stride_vh
-                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
-                dv, mask=n_valid[:, None],
-            )
+            if not DQ_ONLY:
+                dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+                dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+                tl.atomic_add(
+                    DK_OUT + b * stride_kb + h * stride_kh
+                    + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                    dk, mask=n_valid[:, None],
+                )
+                tl.atomic_add(
+                    DV_OUT + b * stride_vb + h * stride_vh
+                    + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                    dv, mask=n_valid[:, None],
+                )
 
-        for remote_slot in range(0, REMOTE_CAPACITY):
-            selected = remote_slot < route_count
+        for remote_slot in range(0, route_count):
+            selected = True
             key_page = tl.load(
                 PAGE_INDICES + b * stride_pib + query_page * stride_piq
                 + remote_slot * stride_pis,
@@ -1449,18 +1495,19 @@ if HAS_TRITON:
             dt += tl.sum(da * sig, 1)
             gsig = (da * temp[:, None]).to(DOT_DTYPE)
             dq += tl.dot(gsig, k, input_precision=INPUT_PRECISION) * scale
-            dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
-            dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
-            tl.atomic_add(
-                DK_OUT + b * stride_kb + h * stride_kh
-                + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
-                dk, mask=n_valid[:, None],
-            )
-            tl.atomic_add(
-                DV_OUT + b * stride_vb + h * stride_vh
-                + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
-                dv, mask=n_valid[:, None],
-            )
+            if not DQ_ONLY:
+                dk = tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+                dv = tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+                tl.atomic_add(
+                    DK_OUT + b * stride_kb + h * stride_kh
+                    + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+                    dk, mask=n_valid[:, None],
+                )
+                tl.atomic_add(
+                    DV_OUT + b * stride_vb + h * stride_vh
+                    + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+                    dv, mask=n_valid[:, None],
+                )
 
         tl.store(
             DQ + b * stride_qb + h * stride_qh
@@ -1468,6 +1515,139 @@ if HAS_TRITON:
             dq, mask=m_valid[:, None],
         )
         tl.store(DT + mbase, dt, mask=m_valid)
+
+
+    @triton.jit
+    def _polar_sparse_bwd_kv_kernel(
+        Q, K, V, REVERSE_QUERIES, REVERSE_OFFSETS, REVERSE_COUNTS,
+        GS, GL, GQ2, TEMP, M, DK_OUT, DV_OUT,
+        stride_qb, stride_qh, stride_qt, stride_qd,
+        stride_kb, stride_kh, stride_kt, stride_kd,
+        stride_vb, stride_vh, stride_vt, stride_vd,
+        stride_rqb, stride_rqs,
+        stride_rob, stride_rop,
+        stride_rcb, stride_rcp,
+        stride_gsb, stride_gsh, stride_gst, stride_gsd,
+        stride_mb, stride_mh, stride_mt,
+        stride_tb, stride_th, stride_tt,
+        B, H, T, scale,
+        PAGE_SIZE: tl.constexpr, LOCAL_WINDOW: tl.constexpr,
+        LOCAL_BLOCKS: tl.constexpr, REVERSE_CAPACITY: tl.constexpr,
+        DK: tl.constexpr, INPUT_PRECISION: tl.constexpr, DOT_DTYPE: tl.constexpr,
+    ):
+        """Key-page-parallel sparse dK/dV without atomic accumulation."""
+        key_page = tl.program_id(0)
+        pid_bh = tl.program_id(1)
+        b = pid_bh // H
+        h = pid_bh % H
+        scale = scale.to(tl.float32)
+        offs_n = key_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+        offs_d = tl.arange(0, DK)
+        n_valid = offs_n < T
+        k = tl.load(
+            K + b * stride_kb + h * stride_kh
+            + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+            mask=n_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+        v = tl.load(
+            V + b * stride_vb + h * stride_vh
+            + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+            mask=n_valid[:, None], other=0.0,
+        ).to(DOT_DTYPE)
+        dk = tl.zeros([PAGE_SIZE, DK], tl.float32)
+        dv = tl.zeros([PAGE_SIZE, DK], tl.float32)
+
+        # Exact local band: key page p can be visible only from query pages
+        # p..p+LOCAL_BLOCKS-1. Token masks handle causal/window boundaries.
+        for local_delta in range(0, LOCAL_BLOCKS):
+            query_page = key_page + local_delta
+            offs_m = query_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            m_valid = (query_page < (T // PAGE_SIZE)) & (offs_m < T)
+            q = tl.load(
+                Q + b * stride_qb + h * stride_qh
+                + offs_m[:, None] * stride_qt + offs_d[None, :] * stride_qd,
+                mask=m_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            gs = tl.load(
+                GS + b * stride_gsb + h * stride_gsh
+                + offs_m[:, None] * stride_gst + offs_d[None, :] * stride_gsd,
+                mask=m_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            mbase = b * stride_mb + h * stride_mh + offs_m * stride_mt
+            g_l = tl.load(GL + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            g_q2 = tl.load(GQ2 + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            m_i = tl.load(M + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            temp = tl.load(
+                TEMP + b * stride_tb + h * stride_th + offs_m * stride_tt,
+                mask=m_valid, other=1.0,
+            ).to(tl.float32)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            valid = (m_valid[:, None] & n_valid[None, :]
+                     & (offs_n[None, :] <= offs_m[:, None])
+                     & (offs_n[None, :] > offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            p = tl.where(valid, tl.exp(a - m_i[:, None]), 0.0)
+            gs_v = tl.dot(gs, tl.trans(v), input_precision=INPUT_PRECISION)
+            dldp = gs_v + g_l[:, None] + g_q2[:, None] * (2.0 * p)
+            da = tl.where(valid, dldp * p, 0.0)
+            gsig = (da * temp[:, None]).to(DOT_DTYPE)
+            dk += tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+            dv += tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+
+        reverse_count = tl.load(
+            REVERSE_COUNTS + b * stride_rcb + key_page * stride_rcp
+        ).to(tl.int32)
+        reverse_offset = tl.load(
+            REVERSE_OFFSETS + b * stride_rob + key_page * stride_rop
+        ).to(tl.int32)
+        reverse_count = tl.minimum(tl.maximum(reverse_count, 0), REVERSE_CAPACITY)
+        for remote_slot in range(0, reverse_count):
+            query_page = tl.load(
+                REVERSE_QUERIES + b * stride_rqb
+                + (reverse_offset + remote_slot) * stride_rqs
+            ).to(tl.int32)
+            offs_m = query_page * PAGE_SIZE + tl.arange(0, PAGE_SIZE)
+            m_valid = (query_page >= 0) & (query_page < (T // PAGE_SIZE)) & (offs_m < T)
+            q = tl.load(
+                Q + b * stride_qb + h * stride_qh
+                + offs_m[:, None] * stride_qt + offs_d[None, :] * stride_qd,
+                mask=m_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            gs = tl.load(
+                GS + b * stride_gsb + h * stride_gsh
+                + offs_m[:, None] * stride_gst + offs_d[None, :] * stride_gsd,
+                mask=m_valid[:, None], other=0.0,
+            ).to(DOT_DTYPE)
+            mbase = b * stride_mb + h * stride_mh + offs_m * stride_mt
+            g_l = tl.load(GL + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            g_q2 = tl.load(GQ2 + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            m_i = tl.load(M + mbase, mask=m_valid, other=0.0).to(tl.float32)
+            temp = tl.load(
+                TEMP + b * stride_tb + h * stride_th + offs_m * stride_tt,
+                mask=m_valid, other=1.0,
+            ).to(tl.float32)
+            sig = tl.dot(q, tl.trans(k), input_precision=INPUT_PRECISION) * scale
+            valid = (m_valid[:, None] & n_valid[None, :]
+                     & (offs_n[None, :] <= offs_m[:, None] - LOCAL_WINDOW))
+            a = tl.where(valid, sig * temp[:, None], -1e38).to(tl.float32)
+            p = tl.where(valid, tl.exp(a - m_i[:, None]), 0.0)
+            gs_v = tl.dot(gs, tl.trans(v), input_precision=INPUT_PRECISION)
+            dldp = gs_v + g_l[:, None] + g_q2[:, None] * (2.0 * p)
+            da = tl.where(valid, dldp * p, 0.0)
+            gsig = (da * temp[:, None]).to(DOT_DTYPE)
+            dk += tl.dot(tl.trans(gsig), q, input_precision=INPUT_PRECISION) * scale
+            dv += tl.dot(tl.trans(p.to(DOT_DTYPE)), gs, input_precision=INPUT_PRECISION)
+
+        tl.store(
+            DK_OUT + b * stride_kb + h * stride_kh
+            + offs_n[:, None] * stride_kt + offs_d[None, :] * stride_kd,
+            dk, mask=n_valid[:, None],
+        )
+        tl.store(
+            DV_OUT + b * stride_vb + h * stride_vh
+            + offs_n[:, None] * stride_vt + offs_d[None, :] * stride_vd,
+            dv, mask=n_valid[:, None],
+        )
 
 
 def _polar_sparse_forward(
@@ -1537,14 +1717,16 @@ def _polar_sparse_backward(
     a_n = temp * nu
     p_n = torch.exp(a_n - M)
     z = L + p_n
-    zc, q2c = z.clamp_min(eps), Q2.clamp_min(eps)
-    m_eff = (L ** 3) / (q2c * zc)
+    stats_tiny = 1.0e-30
+    zc, q2c = z.clamp_min(stats_tiny), Q2.clamp_min(stats_tiny)
+    n_eff = (L * L) / q2c
+    m_eff = n_eff * (L / zc)
     log1p_m = torch.log1p(m_eff)
     mag = torch.tanh(beta * log1p_m)
     gme = gm * beta * (1.0 - mag * mag) / (1.0 + m_eff)
-    dm_dl = 3.0 * L * L / (q2c * zc)
-    dm_dq2 = -(L ** 3) / (q2c * q2c * zc)
-    dm_dz = -(L ** 3) / (q2c * zc * zc)
+    dm_dl = torch.where(L > 0, 3.0 * m_eff / L, torch.zeros_like(L))
+    dm_dq2 = -(m_eff / q2c) * (Q2 > stats_tiny)
+    dm_dz = -(m_eff / zc) * (z > stats_tiny)
     g_l = gme * (dm_dl + dm_dz)
     g_q2 = gme * dm_dq2
     gpn = gme * dm_dz
@@ -1574,7 +1756,32 @@ def _polar_sparse_backward(
     dt_real = torch.zeros((B, H, T), device=dev, dtype=fdt)
     local_blocks = local_window // page_size + 1
     remote_capacity = page_indices.shape[-1]
-    cfg = _bwd_config(dk, is_fp32, dev)["dq"]
+    query_pages = T // page_size
+
+    # Invert the arbitrary query->remote-page lists into contiguous per-key
+    # query lists. This fixed-shape GPU sort is tiny relative to attention and
+    # enables a key-page-parallel dK/dV kernel with no atomic accumulation.
+    slots = torch.arange(remote_capacity, device=dev).view(1, 1, -1)
+    route_valid = slots < page_counts[..., None]
+    route_keys = torch.where(
+        route_valid,
+        page_indices.to(torch.int64),
+        page_indices.new_full((), query_pages, dtype=torch.int64),
+    ).reshape(B, -1)
+    _, permutation = route_keys.sort(dim=1)
+    query_ids = torch.arange(query_pages, device=dev, dtype=torch.int64)
+    query_ids = query_ids.view(1, query_pages, 1).expand(B, -1, remote_capacity).reshape(B, -1)
+    reverse_queries = query_ids.gather(1, permutation).to(torch.int32).contiguous()
+    reverse_counts_all = torch.zeros(
+        (B, query_pages + 1), device=dev, dtype=torch.int64
+    ).scatter_add(1, route_keys, route_valid.reshape(B, -1).to(torch.int64))
+    reverse_counts = reverse_counts_all[:, :query_pages].to(torch.int32).contiguous()
+    reverse_offsets = (
+        reverse_counts.to(torch.int64).cumsum(dim=1) - reverse_counts
+    ).to(torch.int32).contiguous()
+
+    configs = _bwd_config(dk, is_fp32, dev)
+    cfg = configs["dq"]
     _polar_sparse_bwd_kernel[(T // page_size, B * H)](
         q, k, v, page_indices, page_counts, gs_kernel, g_l, g_q2, temp, M,
         dq, dk_out, dv_out, dt_real,
@@ -1589,7 +1796,26 @@ def _polar_sparse_backward(
         B, H, T, 1.0 / math.sqrt(dk),
         PAGE_SIZE=page_size, LOCAL_WINDOW=local_window, LOCAL_BLOCKS=local_blocks,
         REMOTE_CAPACITY=remote_capacity, DK=dk, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        DQ_ONLY=True,
         num_warps=cfg["num_warps"], num_stages=cfg["num_stages"],
+    )
+    cfg_kv = configs["kv"]
+    _polar_sparse_bwd_kv_kernel[(query_pages, B * H)](
+        q, k, v, reverse_queries, reverse_offsets, reverse_counts,
+        gs_kernel, g_l, g_q2, temp, M, dk_out, dv_out,
+        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+        k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+        v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+        reverse_queries.stride(0), reverse_queries.stride(1),
+        reverse_offsets.stride(0), reverse_offsets.stride(1),
+        reverse_counts.stride(0), reverse_counts.stride(1),
+        gs_kernel.stride(0), gs_kernel.stride(1), gs_kernel.stride(2), gs_kernel.stride(3),
+        g_l.stride(0), g_l.stride(1), g_l.stride(2),
+        temp.stride(0), temp.stride(1), temp.stride(2),
+        B, H, T, 1.0 / math.sqrt(dk),
+        PAGE_SIZE=page_size, LOCAL_WINDOW=local_window, LOCAL_BLOCKS=local_blocks,
+        REVERSE_CAPACITY=query_pages, DK=dk, INPUT_PRECISION=ip, DOT_DTYPE=dot_dtype,
+        num_warps=cfg_kv["num_warps"], num_stages=cfg_kv["num_stages"],
     )
 
     grad_t = dt_real + grad_t_null

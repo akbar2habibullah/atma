@@ -1,0 +1,23 @@
+{
+  "cap_source": {
+    "half_life_tokens": 256.0,
+    "kind": "absolute_half_life"
+  },
+  "format": "atma-gamma-clamp-v1",
+  "label": "hl-256",
+  "selection": {
+    "checkpoint_repo_id": "ChavyvAkvar/atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0",
+    "checkpoint_revision": "faa10ea68590d57c0869c9dd6d38f40c476cff5d",
+    "kind": "largest_parameter_only_zero_input_logit",
+    "num_target_heads": 1
+  },
+  "targets": [
+    {
+      "heads": [
+        6
+      ],
+      "layer": 2,
+      "max_half_life_tokens": 256.0
+    }
+  ]
+}

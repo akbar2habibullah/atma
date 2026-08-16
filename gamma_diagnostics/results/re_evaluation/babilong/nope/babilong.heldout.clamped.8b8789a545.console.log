@@ -1,0 +1,471 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[run] benchmark=babilong model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-babilong-2k-ft-nope/snapshots/d8cf012152bfaeed2439e83313223bd982b2bdbb tasks=['qa1', 'qa2', 'qa3', 'qa4', 'qa5', 'qa6', 'qa7', 'qa8', 'qa9', 'qa10'] lengths=['0k', '1k', '2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=10 gamma_clamp=/home/sagemaker-user/atma/gamma_diagnostics/results/re_evaluation/checkpoints/babilong/nope/hl-256.gamma-clamp.json
+causal-conv1d kernel not available, using PyTorch fallback
+Applied gamma clamp to 1 layer-head target(s): [{'layer': 2, 'head': 5, 'module': 'blocks.2.attn.mem', 'max_final_logit': 5.910336256510415, 'max_gamma': 0.9972960560854701, 'max_half_life_tokens': 256.00000000000006}]
+[babilong] prompts = builtin-v1
+[babilong] held-out rows = [90, 100); dataset = RMT-team/babilong@ee0d588794c7ac098062ee0d247c733d62e94fe2
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 39042.20 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 57158.68 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 36676.32 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 77874.19 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 62779.58 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 73403.99 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 69350.26 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 70504.35 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 75956.25 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 67205.64 examples/s]
+
+Generating qa11 split: 0 examples [00:00, ? examples/s]
+Generating qa11 split: 100 examples [00:00, 75983.77 examples/s]
+
+Generating qa12 split: 0 examples [00:00, ? examples/s]
+Generating qa12 split: 100 examples [00:00, 74724.82 examples/s]
+
+Generating qa13 split: 0 examples [00:00, ? examples/s]
+Generating qa13 split: 100 examples [00:00, 73275.75 examples/s]
+
+Generating qa14 split: 0 examples [00:00, ? examples/s]
+Generating qa14 split: 100 examples [00:00, 65515.53 examples/s]
+
+Generating qa15 split: 0 examples [00:00, ? examples/s]
+Generating qa15 split: 100 examples [00:00, 75153.27 examples/s]
+
+Generating qa16 split: 0 examples [00:00, ? examples/s]
+Generating qa16 split: 100 examples [00:00, 68045.17 examples/s]
+
+Generating qa17 split: 0 examples [00:00, ? examples/s]
+Generating qa17 split: 100 examples [00:00, 76315.57 examples/s]
+
+Generating qa18 split: 0 examples [00:00, ? examples/s]
+Generating qa18 split: 100 examples [00:00, 69190.10 examples/s]
+
+Generating qa19 split: 0 examples [00:00, ? examples/s]
+Generating qa19 split: 100 examples [00:00, 73687.70 examples/s]
+
+Generating qa20 split: 0 examples [00:00, ? examples/s]
+Generating qa20 split: 100 examples [00:00, 75846.37 examples/s]
+[babilong]  qa1 @   0k: acc=90.0% (n=10)
+[babilong]  qa2 @   0k: acc=60.0% (n=10)
+[babilong]  qa3 @   0k: acc=10.0% (n=10)
+[babilong]  qa4 @   0k: acc=80.0% (n=10)
+[babilong]  qa5 @   0k: acc=70.0% (n=10)
+[babilong]  qa6 @   0k: acc=60.0% (n=10)
+[babilong]  qa7 @   0k: acc=90.0% (n=10)
+[babilong]  qa8 @   0k: acc=40.0% (n=10)
+[babilong]  qa9 @   0k: acc=80.0% (n=10)
+[babilong] qa10 @   0k: acc=50.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 12647.16 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 19071.95 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 23523.86 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 24208.15 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 19872.57 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 21003.02 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 19134.60 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 21823.74 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 20758.74 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 19813.43 examples/s]
+[babilong]  qa1 @   1k: acc=70.0% (n=10)
+[babilong]  qa2 @   1k: acc=60.0% (n=10)
+[babilong]  qa3 @   1k: acc=50.0% (n=10)
+[babilong]  qa4 @   1k: acc=100.0% (n=10)
+[babilong]  qa5 @   1k: acc=50.0% (n=10)
+[babilong]  qa6 @   1k: acc=50.0% (n=10)
+[babilong]  qa7 @   1k: acc=90.0% (n=10)
+[babilong]  qa8 @   1k: acc=20.0% (n=10)
+[babilong]  qa9 @   1k: acc=70.0% (n=10)
+[babilong] qa10 @   1k: acc=40.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 9296.30 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 15646.30 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 16118.30 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 15027.96 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 16003.30 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 16438.58 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 15559.82 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 16001.46 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 15810.86 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 15021.50 examples/s]
+[babilong]  qa1 @   2k: acc=70.0% (n=10)
+[babilong]  qa2 @   2k: acc=60.0% (n=10)
+[babilong]  qa3 @   2k: acc=20.0% (n=10)
+[babilong]  qa4 @   2k: acc=80.0% (n=10)
+[babilong]  qa5 @   2k: acc=70.0% (n=10)
+[babilong]  qa6 @   2k: acc=50.0% (n=10)
+[babilong]  qa7 @   2k: acc=90.0% (n=10)
+[babilong]  qa8 @   2k: acc=10.0% (n=10)
+[babilong]  qa9 @   2k: acc=70.0% (n=10)
+[babilong] qa10 @   2k: acc=30.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 5222.19 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 8516.01 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 8429.07 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 8622.27 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 8563.82 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 8362.02 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 8456.26 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 8562.25 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 8591.36 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 8580.82 examples/s]
+[babilong]  qa1 @   4k: acc=70.0% (n=10)
+[babilong]  qa2 @   4k: acc=50.0% (n=10)
+[babilong]  qa3 @   4k: acc=20.0% (n=10)
+[babilong]  qa4 @   4k: acc=70.0% (n=10)
+[babilong]  qa5 @   4k: acc=60.0% (n=10)
+[babilong]  qa6 @   4k: acc=50.0% (n=10)
+[babilong]  qa7 @   4k: acc=90.0% (n=10)
+[babilong]  qa8 @   4k: acc=30.0% (n=10)
+[babilong]  qa9 @   4k: acc=70.0% (n=10)
+[babilong] qa10 @   4k: acc=50.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 2422.72 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 3702.79 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 3666.99 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 4005.26 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 3812.66 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 4020.61 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 4031.05 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 3963.73 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 3977.83 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 4006.94 examples/s]
+[babilong]  qa1 @   8k: acc=80.0% (n=10)
+[babilong]  qa2 @   8k: acc=70.0% (n=10)
+[babilong]  qa3 @   8k: acc=30.0% (n=10)
+[babilong]  qa4 @   8k: acc=70.0% (n=10)
+[babilong]  qa5 @   8k: acc=50.0% (n=10)
+[babilong]  qa6 @   8k: acc=60.0% (n=10)
+[babilong]  qa7 @   8k: acc=90.0% (n=10)
+[babilong]  qa8 @   8k: acc=20.0% (n=10)
+[babilong]  qa9 @   8k: acc=70.0% (n=10)
+[babilong] qa10 @   8k: acc=30.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 1252.95 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 1871.05 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 1907.73 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 2032.20 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 2052.56 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 2039.31 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 2026.18 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 2034.52 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 1954.15 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 1963.29 examples/s]
+[babilong]  qa1 @  16k: acc=80.0% (n=10)
+[babilong]  qa2 @  16k: acc=40.0% (n=10)
+[babilong]  qa3 @  16k: acc=30.0% (n=10)
+[babilong]  qa4 @  16k: acc=70.0% (n=10)
+[babilong]  qa5 @  16k: acc=30.0% (n=10)
+[babilong]  qa6 @  16k: acc=50.0% (n=10)
+[babilong]  qa7 @  16k: acc=90.0% (n=10)
+[babilong]  qa8 @  16k: acc=40.0% (n=10)
+[babilong]  qa9 @  16k: acc=80.0% (n=10)
+[babilong] qa10 @  16k: acc=30.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 595.81 examples/s]
+Generating qa1 split: 100 examples [00:00, 594.69 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 966.48 examples/s]
+Generating qa2 split: 100 examples [00:00, 964.16 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 1013.42 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 962.02 examples/s]
+Generating qa4 split: 100 examples [00:00, 959.86 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 1029.74 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 1029.52 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 1025.36 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 1032.33 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 985.98 examples/s]
+Generating qa9 split: 100 examples [00:00, 983.72 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 1020.61 examples/s]
+[babilong]  qa1 @  32k: acc=50.0% (n=10)
+[babilong]  qa2 @  32k: acc=40.0% (n=10)
+[babilong]  qa3 @  32k: acc=20.0% (n=10)
+[babilong]  qa4 @  32k: acc=50.0% (n=10)
+[babilong]  qa5 @  32k: acc=0.0% (n=10)
+[babilong]  qa6 @  32k: acc=40.0% (n=10)
+[babilong]  qa7 @  32k: acc=90.0% (n=10)
+[babilong]  qa8 @  32k: acc=40.0% (n=10)
+[babilong]  qa9 @  32k: acc=90.0% (n=10)
+[babilong] qa10 @  32k: acc=30.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 278.06 examples/s]
+Generating qa1 split: 100 examples [00:00, 275.22 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 373.83 examples/s]
+Generating qa2 split: 100 examples [00:00, 368.45 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 397.67 examples/s]
+Generating qa3 split: 100 examples [00:00, 388.00 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 393.54 examples/s]
+Generating qa4 split: 100 examples [00:00, 381.04 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 423.35 examples/s]
+Generating qa5 split: 100 examples [00:00, 411.90 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 384.05 examples/s]
+Generating qa6 split: 100 examples [00:00, 373.48 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 408.33 examples/s]
+Generating qa7 split: 100 examples [00:00, 397.30 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 414.26 examples/s]
+Generating qa8 split: 100 examples [00:00, 403.78 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 407.23 examples/s]
+Generating qa9 split: 100 examples [00:00, 404.07 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 453.86 examples/s]
+Generating qa10 split: 100 examples [00:00, 441.11 examples/s]
+[babilong]  qa1 @  64k: acc=50.0% (n=10)
+[babilong]  qa2 @  64k: acc=20.0% (n=10)
+[babilong]  qa3 @  64k: acc=0.0% (n=10)
+[babilong]  qa4 @  64k: acc=10.0% (n=10)
+[babilong]  qa5 @  64k: acc=20.0% (n=10)
+[babilong]  qa6 @  64k: acc=30.0% (n=10)
+[babilong]  qa7 @  64k: acc=90.0% (n=10)
+[babilong]  qa8 @  64k: acc=40.0% (n=10)
+[babilong]  qa9 @  64k: acc=80.0% (n=10)
+[babilong] qa10 @  64k: acc=30.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:00, 128.82 examples/s]
+Generating qa1 split: 100 examples [00:00, 125.82 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:00, 175.76 examples/s]
+Generating qa2 split: 100 examples [00:00, 173.49 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:00, 175.77 examples/s]
+Generating qa3 split: 100 examples [00:00, 172.28 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:00, 165.32 examples/s]
+Generating qa4 split: 100 examples [00:00, 163.15 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:00, 173.49 examples/s]
+Generating qa5 split: 100 examples [00:00, 171.43 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:00, 175.39 examples/s]
+Generating qa6 split: 100 examples [00:00, 173.10 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:00, 179.35 examples/s]
+Generating qa7 split: 100 examples [00:00, 176.93 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:00, 171.80 examples/s]
+Generating qa8 split: 100 examples [00:00, 169.50 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:00, 175.92 examples/s]
+Generating qa9 split: 100 examples [00:00, 173.55 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:00, 165.44 examples/s]
+Generating qa10 split: 100 examples [00:00, 163.04 examples/s]
+[babilong]  qa1 @ 128k: acc=50.0% (n=10)
+[babilong]  qa2 @ 128k: acc=10.0% (n=10)
+[babilong]  qa3 @ 128k: acc=20.0% (n=10)
+[babilong]  qa4 @ 128k: acc=0.0% (n=10)
+[babilong]  qa5 @ 128k: acc=0.0% (n=10)
+[babilong]  qa6 @ 128k: acc=40.0% (n=10)
+[babilong]  qa7 @ 128k: acc=90.0% (n=10)
+[babilong]  qa8 @ 128k: acc=40.0% (n=10)
+[babilong]  qa9 @ 128k: acc=80.0% (n=10)
+[babilong] qa10 @ 128k: acc=20.0% (n=10)
+
+Generating qa1 split: 0 examples [00:00, ? examples/s]
+Generating qa1 split: 100 examples [00:01, 58.00 examples/s]
+Generating qa1 split: 100 examples [00:01, 56.68 examples/s]
+
+Generating qa2 split: 0 examples [00:00, ? examples/s]
+Generating qa2 split: 100 examples [00:01, 78.42 examples/s]
+Generating qa2 split: 100 examples [00:01, 76.98 examples/s]
+
+Generating qa3 split: 0 examples [00:00, ? examples/s]
+Generating qa3 split: 100 examples [00:01, 78.74 examples/s]
+Generating qa3 split: 100 examples [00:01, 76.65 examples/s]
+
+Generating qa4 split: 0 examples [00:00, ? examples/s]
+Generating qa4 split: 100 examples [00:01, 78.93 examples/s]
+Generating qa4 split: 100 examples [00:01, 77.49 examples/s]
+
+Generating qa5 split: 0 examples [00:00, ? examples/s]
+Generating qa5 split: 100 examples [00:01, 78.13 examples/s]
+Generating qa5 split: 100 examples [00:01, 76.90 examples/s]
+
+Generating qa6 split: 0 examples [00:00, ? examples/s]
+Generating qa6 split: 100 examples [00:01, 78.56 examples/s]
+Generating qa6 split: 100 examples [00:01, 77.15 examples/s]
+
+Generating qa7 split: 0 examples [00:00, ? examples/s]
+Generating qa7 split: 100 examples [00:01, 79.07 examples/s]
+Generating qa7 split: 100 examples [00:01, 77.56 examples/s]
+
+Generating qa8 split: 0 examples [00:00, ? examples/s]
+Generating qa8 split: 100 examples [00:01, 77.51 examples/s]
+Generating qa8 split: 100 examples [00:01, 76.19 examples/s]
+
+Generating qa9 split: 0 examples [00:00, ? examples/s]
+Generating qa9 split: 100 examples [00:01, 77.50 examples/s]
+Generating qa9 split: 100 examples [00:01, 76.15 examples/s]
+
+Generating qa10 split: 0 examples [00:00, ? examples/s]
+Generating qa10 split: 100 examples [00:01, 77.92 examples/s]
+Generating qa10 split: 100 examples [00:01, 76.48 examples/s]
+[babilong]  qa1 @ 256k: acc=30.0% (n=10)
+[babilong]  qa2 @ 256k: acc=30.0% (n=10)
+[babilong]  qa3 @ 256k: acc=20.0% (n=10)
+[babilong]  qa4 @ 256k: acc=20.0% (n=10)
+[babilong]  qa5 @ 256k: acc=10.0% (n=10)
+[babilong]  qa6 @ 256k: acc=40.0% (n=10)
+[babilong]  qa7 @ 256k: acc=90.0% (n=10)
+[babilong]  qa8 @ 256k: acc=40.0% (n=10)
+[babilong]  qa9 @ 256k: acc=80.0% (n=10)
+[babilong] qa10 @ 256k: acc=30.0% (n=10)
+[run] done in 56259.0s -> /home/sagemaker-user/atma/gamma_diagnostics/results/re_evaluation/babilong/nope/babilong.heldout.clamped.8b8789a545.log

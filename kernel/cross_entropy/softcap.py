@@ -108,19 +108,19 @@ def _chunked_forward(
     if n_tokens == 0:
         return losses, lse
 
-    x_f = x2d.float()
-    weight_f = weight.float()
-    bias_f = None if bias is None else bias.float()
-
     running_m = torch.full((n_tokens,), -torch.inf, device=device, dtype=torch.float32)
     running_l = torch.zeros((n_tokens,), device=device, dtype=torch.float32)
     target_z = torch.zeros((n_tokens,), device=device, dtype=torch.float32)
 
     for v0 in range(0, vocab_size, vocab_chunk_size):
         v1 = min(v0 + vocab_chunk_size, vocab_size)
-        raw = x_f @ weight_f[v0:v1].T
-        if bias_f is not None:
-            raw = raw + bias_f[v0:v1]
+        # Match the eager model's native-precision output projection so this
+        # uses tensor cores instead of recomputing the classifier in FP32.
+        raw = F.linear(
+            x2d,
+            weight[v0:v1].type_as(x2d),
+            None if bias is None else bias[v0:v1].type_as(x2d),
+        ).float()
         z = _softcap(raw, softcap)
 
         block_m = z.max(dim=1).values
@@ -285,27 +285,25 @@ def _chunked_backward(
     grad_w = torch.zeros_like(weight, dtype=torch.float32)
     grad_b = None if bias is None else torch.zeros_like(bias, dtype=torch.float32)
 
-    x_f = x2d.float()
-    weight_f = weight.float()
-    bias_f = None if bias is None else bias.float()
-
     for t0 in range(0, n_tokens, token_chunk_size):
         t1 = min(t0 + token_chunk_size, n_tokens)
-        x_blk = x_f[t0:t1]
+        x_blk = x2d[t0:t1]
         y_blk = targets[t0:t1]
         scale_blk = row_scale[t0:t1]
         lse_blk = lse[t0:t1]
-        gx_blk = torch.zeros_like(x_blk)
+        gx_blk = torch.zeros_like(x_blk, dtype=torch.float32)
 
         if not torch.any(scale_blk != 0):
             continue
 
         for v0 in range(0, vocab_size, vocab_chunk_size):
             v1 = min(v0 + vocab_chunk_size, vocab_size)
-            w_blk = weight_f[v0:v1]
-            raw = x_blk @ w_blk.T
-            if bias_f is not None:
-                raw = raw + bias_f[v0:v1]
+            w_blk = weight[v0:v1].type_as(x_blk)
+            raw = F.linear(
+                x_blk,
+                w_blk,
+                None if bias is None else bias[v0:v1].type_as(x_blk),
+            ).float()
 
             z = _softcap(raw, softcap)
             grad_z = torch.exp(z - lse_blk[:, None])
@@ -318,8 +316,12 @@ def _chunked_backward(
             grad_raw = grad_z * _softcap_grad(raw, softcap)
             grad_raw = grad_raw * scale_blk[:, None]
 
-            gx_blk += grad_raw @ w_blk
-            grad_w[v0:v1] += grad_raw.T @ x_blk
+            # The eager graph casts the gradient through the BF16 logits
+            # before the linear backward. Do that explicitly, retaining FP32
+            # accumulators across chunks.
+            grad_raw_native = grad_raw.to(x_blk.dtype)
+            gx_blk += (grad_raw_native @ w_blk).float()
+            grad_w[v0:v1] += (grad_raw_native.T @ x_blk).float()
             if grad_b is not None:
                 grad_b[v0:v1] += grad_raw.sum(dim=0)
 

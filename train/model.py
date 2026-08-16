@@ -116,8 +116,18 @@ def _causal_conv1d_fallback(x: Tensor, weight: Tensor) -> Tensor:
     return F.conv1d(x_padded, weight.unsqueeze(1), groups=weight.shape[0])
 
 try:
-    kernel_module = get_kernel("kernels-community/causal-conv1d")
-    causal_conv1d_fn = kernel_module.causal_conv1d_fn
+    # kernels>=0.16 requires callers to select a stable API version.  Omitting
+    # it raises before loading and silently sends every training run through
+    # the much slower PyTorch fallback below.
+    kernel_module = get_kernel("kernels-community/causal-conv1d", version=1)
+    _causal_conv1d_cuda_fn = kernel_module.causal_conv1d_fn
+
+    def causal_conv1d_fn(x: Tensor, weight: Tensor) -> Tensor:
+        # The Hub kernel registers CUDA only; keep CPU/reference execution
+        # portable even when the extension imports successfully on a GPU host.
+        if x.is_cuda:
+            return _causal_conv1d_cuda_fn(x, weight)
+        return _causal_conv1d_fallback(x, weight)
 except Exception:
     print("causal-conv1d kernel not available, using PyTorch fallback")
     causal_conv1d_fn = _causal_conv1d_fallback

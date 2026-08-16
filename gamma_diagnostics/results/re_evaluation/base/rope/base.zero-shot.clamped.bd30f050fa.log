@@ -1,0 +1,92 @@
+[run] benchmark=base model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0/snapshots/de0a2f1c63b0631a040a2d6adac9e2d43fd5c581 tasks=['lambada', 'hellaswag', 'piqa', 'winogrande', 'arc_easy', 'arc_challenge', 'openbookqa', 'boolq'] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=100 gamma_clamp=/home/sagemaker-user/atma/gamma_diagnostics/results/re_evaluation/checkpoints/base/rope/hl-256.gamma-clamp.json
+[base] task=lambada dataset=EleutherAI/lambada_openai@900124bf3b8235c6daf21033af9948b3f07346c4 samples=5153
+[base] lambada samples=5153 acc=30.16% target_ppl=21.088
+[base] task=hellaswag dataset=Rowan/hellaswag@218ec52e09a7e7462a5400043bb9a69a41d06b76 samples=10042
+[base] hellaswag: 250/10042
+[base] hellaswag: 500/10042
+[base] hellaswag: 750/10042
+[base] hellaswag: 1000/10042
+[base] hellaswag: 1250/10042
+[base] hellaswag: 1500/10042
+[base] hellaswag: 1750/10042
+[base] hellaswag: 2000/10042
+[base] hellaswag: 2250/10042
+[base] hellaswag: 2500/10042
+[base] hellaswag: 2750/10042
+[base] hellaswag: 3000/10042
+[base] hellaswag: 3250/10042
+[base] hellaswag: 3500/10042
+[base] hellaswag: 3750/10042
+[base] hellaswag: 4000/10042
+[base] hellaswag: 4250/10042
+[base] hellaswag: 4500/10042
+[base] hellaswag: 4750/10042
+[base] hellaswag: 5000/10042
+[base] hellaswag: 5250/10042
+[base] hellaswag: 5500/10042
+[base] hellaswag: 5750/10042
+[base] hellaswag: 6000/10042
+[base] hellaswag: 6250/10042
+[base] hellaswag: 6500/10042
+[base] hellaswag: 6750/10042
+[base] hellaswag: 7000/10042
+[base] hellaswag: 7250/10042
+[base] hellaswag: 7500/10042
+[base] hellaswag: 7750/10042
+[base] hellaswag: 8000/10042
+[base] hellaswag: 8250/10042
+[base] hellaswag: 8500/10042
+[base] hellaswag: 8750/10042
+[base] hellaswag: 9000/10042
+[base] hellaswag: 9250/10042
+[base] hellaswag: 9500/10042
+[base] hellaswag: 9750/10042
+[base] hellaswag: 10000/10042
+[base] hellaswag samples=10042 acc=32.38% acc_norm=37.17% primary=accuracy_norm
+[base] task=piqa dataset=lighteval/piqa@41782e6bf0ef7de82a2ca8a9feb1dca042837fae samples=1838
+[base] piqa: 250/1838
+[base] piqa: 500/1838
+[base] piqa: 750/1838
+[base] piqa: 1000/1838
+[base] piqa: 1250/1838
+[base] piqa: 1500/1838
+[base] piqa: 1750/1838
+[base] piqa samples=1838 acc=66.49% acc_norm=66.97% primary=accuracy_norm
+[base] task=winogrande dataset=allenai/winogrande@01e74176c63542e6b0bcb004dcdea22d94fb67b5 samples=1267
+[base] winogrande: 250/1267
+[base] winogrande: 500/1267
+[base] winogrande: 750/1267
+[base] winogrande: 1000/1267
+[base] winogrande: 1250/1267
+[base] winogrande samples=1267 acc=51.07% acc_norm=50.67% primary=accuracy
+[base] task=arc_easy dataset=allenai/ai2_arc@210d026faf9955653af8916fad021475a3f00453 samples=570
+[base] arc_easy: 250/570
+[base] arc_easy: 500/570
+[base] arc_easy samples=570 acc=59.30% acc_norm=48.95% primary=accuracy_norm
+[base] task=arc_challenge dataset=allenai/ai2_arc@210d026faf9955653af8916fad021475a3f00453 samples=299
+[base] arc_challenge: 250/299
+[base] arc_challenge samples=299 acc=24.41% acc_norm=29.77% primary=accuracy_norm
+[base] task=openbookqa dataset=allenai/openbookqa@388097ea7776314e93a529163e0fea805b8a6454 samples=500
+[base] openbookqa: 250/500
+[base] openbookqa: 500/500
+[base] openbookqa samples=500 acc=19.20% acc_norm=32.20% primary=accuracy_norm
+[base] task=boolq dataset=google/boolq@35b264d03638db9f4ce671b711558bf7ff0f80d5 samples=3270
+[base] boolq: 250/3270
+[base] boolq: 500/3270
+[base] boolq: 750/3270
+[base] boolq: 1000/3270
+[base] boolq: 1250/3270
+[base] boolq: 1500/3270
+[base] boolq: 1750/3270
+[base] boolq: 2000/3270
+[base] boolq: 2250/3270
+[base] boolq: 2500/3270
+[base] boolq: 2750/3270
+[base] boolq: 3000/3270
+[base] boolq: 3250/3270
+[base] boolq samples=3270 acc=61.01% acc_norm=61.01% primary=accuracy
+
+===BASE_RESULTS_JSON===
+{"benchmark": "base", "protocol": "atma-base-loglikelihood-v1", "tasks": ["lambada", "hellaswag", "piqa", "winogrande", "arc_easy", "arc_challenge", "openbookqa", "boolq"], "limit": null, "dataset_revisions": {"EleutherAI/lambada_openai": "900124bf3b8235c6daf21033af9948b3f07346c4", "Rowan/hellaswag": "218ec52e09a7e7462a5400043bb9a69a41d06b76", "allenai/ai2_arc": "210d026faf9955653af8916fad021475a3f00453", "allenai/openbookqa": "388097ea7776314e93a529163e0fea805b8a6454", "allenai/winogrande": "01e74176c63542e6b0bcb004dcdea22d94fb67b5", "codelion/finepdfs-1B": "6fbca6dd53e3e794f607cfe1f5a91c07e17b01ab", "emozilla/pg19": "c021754c8e01c5b1cc83a1f549c1f97fbbb756b8", "google/boolq": "35b264d03638db9f4ce671b711558bf7ff0f80d5", "hoskinson-center/proof-pile": "490b980249446f2f3bd2df3a8cf085d0f2de240a", "lighteval/piqa": "41782e6bf0ef7de82a2ca8a9feb1dca042837fae"}, "results": {"lambada": {"samples": 5153, "accuracy": 0.3015718998641568, "accuracy_se": 0.0063933166800382675, "target_tokens": 6555, "target_nll": 3.048698530422309, "target_perplexity": 21.087881319225417, "primary_metric": "accuracy"}, "hellaswag": {"samples": 10042, "accuracy": 0.3238398725353515, "accuracy_se": 0.004669601610045381, "accuracy_norm": 0.3717386974706234, "accuracy_norm_se": 0.004822574363210407, "primary_metric": "accuracy_norm", "primary_value": 0.3717386974706234}, "piqa": {"samples": 1838, "accuracy": 0.6648531011969532, "accuracy_se": 0.011010516661950215, "accuracy_norm": 0.6697497279651795, "accuracy_norm_se": 0.010969961703177324, "primary_metric": "accuracy_norm", "primary_value": 0.6697497279651795}, "winogrande": {"samples": 1267, "accuracy": 0.510655090765588, "accuracy_se": 0.014043749126744838, "accuracy_norm": 0.5067087608524072, "accuracy_norm_se": 0.01404567452250995, "primary_metric": "accuracy", "primary_value": 0.510655090765588}, "arc_easy": {"samples": 570, "accuracy": 0.5929824561403508, "accuracy_se": 0.02057737911678692, "accuracy_norm": 0.48947368421052634, "accuracy_norm_se": 0.020938053859692978, "primary_metric": "accuracy_norm", "primary_value": 0.48947368421052634}, "arc_challenge": {"samples": 299, "accuracy": 0.24414715719063546, "accuracy_se": 0.024843276165931585, "accuracy_norm": 0.2976588628762542, "accuracy_norm_se": 0.026442217196352792, "primary_metric": "accuracy_norm", "primary_value": 0.2976588628762542}, "openbookqa": {"samples": 500, "accuracy": 0.192, "accuracy_se": 0.017614539448989292, "accuracy_norm": 0.322, "accuracy_norm_se": 0.020895741192884256, "primary_metric": "accuracy_norm", "primary_value": 0.322}, "boolq": {"samples": 3270, "accuracy": 0.6100917431192661, "accuracy_se": 0.008529133524812828, "accuracy_norm": 0.6100917431192661, "accuracy_norm_se": 0.008529133524812828, "primary_metric": "accuracy", "primary_value": 0.6100917431192661}}, "elapsed_s": 351.4, "model_config": {"vocab_size": 50304, "num_hidden_layers": 16, "hidden_size": 1024, "head_dim": 128, "attn_kernel_size": 4, "conv_kernel_size": 3, "max_position_embeddings": 2048, "rms_norm_eps": 1e-06, "dtype": "bfloat16", "tie_word_embeddings": false, "num_random_keys": 0, "attn_online": false, "attn_k_block": 512, "attn_kernel": "triton", "attn_type": "rope", "wall_gate_bias": null, "attn_window": null, "mem_enabled": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto"}, "scoring_max_length": 2048}
+===END===
+[run] done in 351.4s -> /home/sagemaker-user/atma/gamma_diagnostics/results/re_evaluation/base/rope/base.zero-shot.clamped.bd30f050fa.log
