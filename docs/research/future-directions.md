@@ -43,6 +43,9 @@ before attempting the extreme-context hierarchy.
 - Pick the best non-harmful shared-bank setting, likely `N=2` or `N=4`, for the extreme-context
   hierarchy experiments.
 - Add HOLA-style sparse KV filtering following the ablation ladder in section 7.
+- After the write-side sparse cache is understood, test the query-side Foveal Polar retriever in
+  section 9. Treat it as an alternative deployment path first, not another axis in the initial
+  HOLA grid.
 - Add hierarchical memory alignment up to `512x` training length (`2048 * 512 = 1,048,576` tokens).
 - Initial sparse budgets: capped top-P bank at `4096` or `8192` slots; per-layer top-K read around
   `256` or `512` slots.
@@ -1067,7 +1070,380 @@ is strong enough to deploy without it.
 
 ---
 
-## 9. Two unifications our project already spans
+## 9. Foveal ATMA: query-sparse Polar, resolution-tiered MoE, and quantization
+
+**Status and scope.** This track adapts the Foveal Transformer proposal into ATMA-sized,
+falsifiable experiments. It does **not** commit ATMA to the proposal's 64-layer, 367B-parameter
+target. The useful contribution here is the experimental decomposition:
+
+1. a cheap full-context signal chooses which full-resolution KV pages deserve a read;
+2. expert width and routing frequency form a regular multi-resolution compute hierarchy;
+3. weight precision follows expert width and activation frequency.
+
+These are three independent hypotheses. Prove each against a simpler matched baseline before
+composing them. Sparse Polar belongs to the hierarchical-memory sequel; MoE and microscaling are a
+separate model-scaling/systems track and must not block that paper.
+
+### 9.1 Query-aware sparse Polar over a full host KV store
+
+**Goal.** Bound long-context Polar read bandwidth while retaining a recoverable copy of every KV
+page. Keep a low-dimensional learned index resident on GPU, exact recent GQA KV in a local window,
+and old full-rank GQA KV in pinned host memory behind a GPU page cache.
+
+| Path | Scope | Representation | Initial residency |
+|---|---|---|---|
+| Peripheral index | all causal pages | learned 16D MQA key; optional value | GPU |
+| Local Polar | most recent `W` tokens | normal GQA KV | GPU |
+| Remote Polar | selected old pages | normal GQA KV | pinned CPU RAM + GPU cache |
+
+This is complementary to section 7 rather than a renamed HOLA cache:
+
+| Question | HOLA-style sparse cache | Foveal Polar retriever |
+|---|---|---|
+| Where is sparsity decided? | write/eviction time | query/read time |
+| Is all old full-rank KV recoverable? | no | yes, from host memory |
+| Per-query support | shared bounded bank | dynamic selected pages |
+| Dominant risk | irreversible eviction | index misses and PCIe latency |
+
+The first combined design, only after both work independently, can use the HOLA bank as the GPU
+episodic cache and the Foveal index as a host-store fallback. Do not begin with that composition.
+
+**Polar-specific selection target.** Polar uses temperature-sharpened softmax weights plus a null
+sink, so a predicted-mass controller is still meaningful, but the target must preserve both the
+direction and participation-ratio channels. For query `t`, train the index against full-Polar
+teacher statistics and select the smallest remote page set that reaches target real-key mass `p`,
+subject to `K_min <= pages <= K_max`. If the predicted null confidence plus resident-local mass
+already satisfies the controller, allow a no-fetch decision.
+
+Selection loss should report behavior, not only page labels:
+
+- recall of pages covering 90%, 95%, and 99% of teacher real-key mass;
+- omitted mass and the cosine error of the unprojected direction accumulator;
+- error in `n_eff`, `mag`, and `w_null`;
+- selected pages, late fetches, and speculative overfetch bytes per query;
+- per-GQA-group recall when one shared MQA index chooses the support.
+
+Start with index-only retrieval. Add the optional low-dimensional value/residual path only as an
+ablation; otherwise it can hide retrieval failure by becoming a second approximate attention
+mechanism.
+
+**Exact Polar merge on selected support.** Reuse the online Polar reduction rather than applying a
+softmax-attention merge unchanged. Each local or remote block returns:
+
+```text
+M  = max scaled score
+L  = sum exp(score - M)
+S  = sum exp(score - M) * value
+Q2 = sum exp(2 * (score - M))
+```
+
+When combining blocks at `M_new = max(M_a, M_b)`, rescale `L` and `S` by
+`exp(M_old - M_new)` and `Q2` by its square. Fold in the null sink once after all selected blocks
+arrive, then recover `direction`, `n_eff`, `mag`, and `w_null`. This is exact on the selected
+support; omission of unselected remote pages is the only read approximation.
+
+**Decode pipeline.** At each attention layer and autoregressive step:
+
+1. form the 16D index query and scan page scores;
+2. run exact local-window Polar immediately;
+3. speculatively copy high-scoring remote pages on a second CUDA stream;
+4. finalize capped top-P after the complete index scan;
+5. run each arriving remote tile and merge its `M/L/S/Q2` statistics;
+6. append new full KV to the local window and host store, and append its compact index state.
+
+Top-P is a quality target, not a latency guarantee: exact top-P still needs the complete index
+score distribution. `K_max` is the service-level guardrail. Report index scan time, unhidden DMA,
+remote reduction time, cache hit rate, and wasted prefetch bytes separately.
+
+The full index scan is still `O(N)` per decode step and its straightforward prefill is still
+quadratic in sequence length. Treat this first as a decode-bandwidth and memory-capacity proposal;
+hierarchical page indexes or approximate retrieval are later work, not implied wins.
+
+**Ablation ladder.** Keep the modeling and systems questions separate:
+
+1. On-GPU teacher experiment: dense/full Polar vs. local window vs. oracle page support vs. learned
+   fixed top-K vs. learned capped top-P. No CPU offload yet.
+2. Index structure: 16D shared MQA vs. 32D shared MQA vs. one index per KV group.
+3. Retrieval controls: recency pages, random pages, score threshold, entropy-conditioned `p`, and
+   HOLA's query-independent retained bank at the same read budget.
+4. Runtime experiment: pinned-memory page store, GPU LRU cache, and overlapped copies; compare
+   end-to-end decode against full resident Polar and windowed Polar.
+5. Only if query-time retrieval wins, test HOLA-as-L1 plus host fallback.
+
+**Checkpoint-CPT pilot (preferred first experiment).** Reuse the completed 9.816B-token L40S
+checkpoints rather than relearning the base model. The isolated runnable implementation and launch
+instructions live in [`foveal_cpt/`](../../foveal_cpt/README.md):
+
+| Core | Starting checkpoint | Pilot role |
+|---|---|---|
+| Polar | [`atma-10b-L40S-mbs16-polar`](https://huggingface.co/ChavyvAkvar/atma-10b-L40S-mbs16-polar__reg-baseline__distr-0__mem-1__win-0) | primary Foveal run |
+| RoPE | [`atma-10b-L40S-mbs16-rope`](https://huggingface.co/ChavyvAkvar/atma-10b-L40S-mbs16-rope__reg-baseline__distr-0__mem-1__win-0) | softmax transfer control |
+| NoPE | [`atma-10b-L40S-mbs16-nope`](https://huggingface.co/ChavyvAkvar/atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0) | instability diagnostic |
+
+All three checkpoints have the same 16-layer, `hidden_size=1024`, `head_dim=128`, four-attention-
+layer shape, GQA 1:4, enabled Titans memory, and no training window. Only the attention core
+differs. This makes weight loading straightforward: load the existing state dict non-strictly,
+or, equivalently, load the unmodified base model strictly before wrapping its attention layers with
+the new indexer. The implementation uses the latter so any base-checkpoint mismatch fails early.
+
+The NoPE checkpoint is not an equal-confidence candidate. Existing checkpoint stress shows its
+clean-document loss rising sharply by 32K, while Polar remains stable and RoPE degrades gradually.
+Use NoPE to learn whether sparse CPT can repair or worsens that stored failure mode; do not treat a
+NoPE failure alone as falsification of Foveal retrieval.
+
+**Initial 32K operating point.** Use one learned index per attention layer:
+
+```text
+sequence length             = 32768
+local exact window          = 512 tokens
+KV page / query block       = 64 / 64 tokens
+index                       = 16D MQA q/k routing, optional 16D value output
+train top-P                 = 0.95 after warm-up
+remote K_min / K_max        = 0 / 32 pages
+maximum remote support      = 2048 tokens
+maximum exact support       = 512 local + 2048 remote = 2560 tokens
+global batch                = 524288 tokens = 16 sequences
+microbatch / accumulation   = 1 sequence / 16 microbatches
+CPT budget                  = 1908 steps = 1,000,341,504 tokens
+```
+
+A 32K retrieval pilot needs document-coherent training examples. Do not simply slice a flat token
+stream across unrelated document boundaries: either build packs from sufficiently long documents
+or carry an explicit end-of-document reset mask through attention and Titans memory. Otherwise the
+index can look successful by learning recency and document-boundary artifacts rather than remote
+semantic retrieval.
+
+The executable sweep currently uses the GPT-2-tokenized FineWeb-Edu shards from
+[`kjj0/finewebedu10B-gpt2`](https://huggingface.co/datasets/kjj0/finewebedu10B-gpt2). Its data
+preflight downloads train shards `000001` through `000011` plus validation shard `000000`, verifies
+their binary headers and sizes, and reuses them across all 12 cells. Eleven train shards are needed
+for 1,908 whole 524,288-token batches because a batch is not allowed to cross a shard boundary.
+
+A direct `hidden_size -> 16` query/key pair adds only about 32.8K weights per attention layer. The
+LM-output conditions add a matching 16D value projection and `16 -> hidden_size` output projection,
+for about 65.5K weights per layer, or 262K across ATMA's four attention layers. At 32K, a BF16
+16D stream is 1 MiB per layer and sequence. The index is therefore not the capacity risk; sparse
+gather/reduction kernels, activation memory, and the Titans backward are the items to profile.
+
+Share one remote page set across each 64-token query block during prefill. Per-token selection is
+appropriate for decode but makes 32K training irregular and difficult to fuse. Use the block's
+first query token as its causal routing representative, aggregate full-rank teacher mass across
+heads conservatively, and report head-wise recall so mean aggregation cannot silently erase a
+specialized head.
+
+For Polar, preserve the original full causal `n_keys=t+1` when computing temperature and the null
+floor. Do not replace it with the number of selected tokens. The sparse kernel reduces over the
+selected local/remote support, but the length calibration must still describe the full visible
+context.
+
+**Indexer warm start and loss.** Hard page selection does not pass a useful LM gradient into the
+router. Before 32K CPT, freeze the checkpoint and calibrate only `W_Q_index/W_K_index` for roughly
+10M-25M tokens at 2K-8K, where the original full attention is affordable. Distill the full-rank
+teacher's page distribution:
+
+```text
+L_index = KL(stopgrad(full_rank_page_mass) || softmax(index_page_logits))
+```
+
+For the shared MQA index, aggregate teacher mass across query heads with a mean-plus-maximum or
+log-sum-exp target and retain head-wise recall as a diagnostic. Initialize each checkpoint's index
+independently. RoPE should give the index its own trained positional treatment; do not assume that
+post-RoPE full-rank keys can be projected to 16D without changing their ranking.
+
+During 32K CPT, the KL conditions keep the auxiliary objective on a rotating sample of query
+blocks. Use the first query in each block as a causal routing anchor and gather only the selected
+local/remote pages for the full-rank page-mass target. The LM path remains sparse for all tokens;
+there is no dense full-attention teacher in the 32K loop. Using future queries in the block to
+choose support for its first query would leak information through the sparsity pattern. This
+first-query rule avoids that leak.
+
+Separately test the simpler end-to-end gradient path: add a 16D MQA value projection, use the soft
+causal index distribution to read page values, project the result back to model width, and add it
+to the attention residual. This gives index q/k/v/output parameters ordinary LM gradients even
+though the hard top-P page indices passed to the sparse kernel remain detached.
+
+Use a conservative sparsity handoff to avoid changing full attention to `SWA=512` in one step:
+
+1. first 50M tokens: `p=0.98`, `K_min=8`, `K_max=64` remote pages;
+2. next 150M tokens: anneal to `p=0.95`, `K_min=0`, `K_max=32`;
+3. final 800M tokens: hold `p=0.95`, `K_max=32`, adjusting only if the cap-hit or miss rate trips
+   a predeclared gate.
+
+At evaluation, sweep `p in {0.90, 0.95, 0.98}` and fixed remote `K in {8, 16, 32, 64}` from the
+same trained checkpoint. This estimates the quality/bandwidth curve without training a Cartesian
+grid. If more than roughly 25% of query blocks hit `K_max=32`, report that top-P is cap-dominated
+and evaluate `K_max=48/64`; do not describe the run as genuinely adaptive.
+
+The Hugging Face artifacts contain model weights but not optimizer state, so this is CPT from a
+weight initialization, not an exact optimizer resume. Give the calibrated indexer a separate
+learning-rate group. Start existing parameters at about one tenth of the original peak learning
+rates, keep the indexer's rate higher, and select the exact pair with a short loss/gradient-norm
+smoke sweep. Profile microbatch 1 before committing the run; add per-block activation checkpointing
+if the 32K backward does not fit comfortably on the L40S.
+
+This requires a dedicated CPT entry point. The current scaled-ablation trainer initializes a fresh
+model and has no non-strict checkpoint-load path, while the NoPE/RoPE training window constructs a
+dense `T x T` mask. Changing only `seq_len` and `attn_window` to 32K is therefore neither a resume
+nor a memory-safe sparse experiment. Add explicit checkpoint loading, index-only missing-key
+validation, the block-sparse local-plus-remote kernel, sampled-teacher loss, and restartable CPT
+state before launching the budgeted runs.
+
+**Complete run matrix.** Run the full Cartesian product, with 1B-token 32K CPT in every cell:
+
+| attention core | SWA-512 local only | LM index output | index KL | LM output + KL |
+| --- | --- | --- | --- | --- |
+| Polar | 1B | 1B | 1B | 1B |
+| RoPE | 1B | 1B | 1B | 1B |
+| NoPE | 1B | 1B | 1B | 1B |
+
+This is 12 CPT runs, 12B total training tokens, and 22,896 optimizer steps. The two KL conditions
+for each attention core may share one 20M-token frozen-backbone index calibration; calibration is
+not part of the 1B CPT budget. At the existing dense run's measured 9 seconds per step, the CPT
+matrix alone is a 57.2 L40S GPU-hour baseline estimate. Use the mandatory two-step CUDA smoke to
+replace that estimate with measured sparse/kernel overhead before scheduling the full sweep.
+
+The control is scientifically necessary: without it, improvements after 32K CPT could come from
+long-sequence adaptation or Titans rather than remote sparse retrieval. Evaluate the untouched
+full-attention checkpoint, the SWA-CPT control, and the Foveal-CPT model on the same 2K-256K
+clean-loss, needle/RULER, and `--diagnose` suite.
+
+Before spending the full 1B tokens, require a short end-to-end gate: sparse forward/backward parity
+on forced supports; index top-K recall materially above recency/random; finite gradients; no
+direction/count/null discontinuity for Polar; and projected wall-clock at an acceptable fraction
+of the original 10B-token training run.
+
+**Go/no-go gate.** Continue beyond the on-GPU phase only if the learned index closes most of the
+gap between fixed-budget selection and oracle support on both retrieval and clean perplexity.
+Continue beyond the runtime phase only if it improves the quality-latency-memory Pareto frontier;
+lower KV capacity alone is already covered more simply by YOCO and HOLA.
+
+### 9.2 Resolution-tiered MoE as an independent ATMA scaling track
+
+**Goal.** Replace the current dense squared-ReLU gated MLP with several regular expert bands whose
+active parameter budgets are equal even though their widths and routing frequencies differ. For
+expert width `r`, expert count `E`, and selected count `k_r`, use the planning invariant
+
+```text
+E * r_dense = k_1 * r_1 = k_2 * r_2 = k_3 * r_3 = B
+```
+
+where `B` is the active bottleneck budget per band. A proposal-style two-matrix expert costs
+approximately `2 * hidden_size * B` active weights per band and token. Preserving ATMA's gated
+squared-ReLU expert requires two input matrices and one output matrix, changing that factor to
+approximately `3 * hidden_size * B`. Choose the expert form explicitly and derive `B` from the
+current MLP's measured active MAC budget; if the pilot is deliberately cheaper, include a
+compute-matched narrower dense MLP rather than attributing a compute reduction to MoE quality.
+
+The proposed organization is:
+
+| Resolution | Ownership | Routing | Purpose |
+|---|---|---|---|
+| narrowest | global/local | all `E` experts | dense training path; no starvation |
+| narrow | global/local | moderate top-K | broad reusable specialization |
+| wide | latent-head-local | small top-K per head | detailed specialization |
+| widest | latent-head-local | very small top-K per head | rare high-resolution compute |
+
+For ATMA's canonical `hidden_size=1024` and `head_dim=128`, the natural latent decomposition is
+eight 128D heads. The wide expert banks can be owned by latent head, so a multi-GPU run exchanges
+complete heads once before both wide bands and once after them. Routing and expert execution then
+stay local. Start with a fixed reshape or fixed orthogonal rotation; learned full
+`hidden_size x hidden_size` input/output mixing adds substantial always-active compute and should
+be introduced only if head factorization measurably hurts quality.
+
+**Implementation order.** Do not start with distributed Head Parallel:
+
+1. Implement a single-device BF16 reference with band-major routing and explicit capacity-free
+   top-K semantics. Verify forward/backward against a slow expert loop.
+2. Compare independent bands against a conventional fixed-width top-2 MoE and parameter-/compute-
+   matched dense MLP. Track load balance, expert starvation, router entropy, overflow, and kernel
+   occupancy.
+3. Add grouped/fused expert kernels. Reject the dense narrowest band if launch or weight-read cost
+   makes it slower than an equivalent dense projection.
+4. Only for a multi-GPU scaling run, shard the two wide bands by latent head and compare Head
+   Parallel with conventional Expert Parallel at equal total parameters and active FLOPs.
+
+The canonical eight-head shape permits Head Parallel group sizes `P in {2, 4, 8}`. Communication
+should be deterministic and approximately one hidden vector per token per direction, independent
+of routed top-K, but latency at batch size one remains a measured risk.
+
+**MoE falsifiers.** Stop or simplify if dense-band fusion loses to the dense MLP, latent-head
+factorization causes a quality gap not recovered by cheap mixing, routing collapses despite the
+dense path, or deterministic head exchange loses to ordinary Expert Parallel on the target
+hardware.
+
+### 9.3 Precision by expert width and activation frequency
+
+**Initial policy.** Establish the BF16 MoE result first, then lower precision one band at a time:
+
+| Band | First execution format | Promotion fallback |
+|---|---|---|
+| dense narrowest | BF16 | remain BF16 |
+| narrow sparse | MXFP8 | BF16 |
+| wide sparse | MXFP4 | MXFP8 |
+| widest sparse | MXFP4 | MXFP8 |
+
+ATMA's existing custom FP8 path uses E4M3/E5M2 operands with scalar scales and is a useful
+low-precision baseline, but it is not OCP MXFP8. MXFP8/MXFP4 require block-scaled storage (one E8M0
+scale per 32 values in the base specification), layout-aware kernels, and separate policies for
+activations, gradients, and optimizer state.
+
+For training, keep sharded BF16 master weights and higher-precision optimizer state. Use quantized
+copies for forward and activation-gradient GEMMs, accumulate weight gradients at tested higher
+precision, update the owner copy, and requantize changed blocks asynchronously. Weight-gradient
+MXFP4 is out of scope for the first experiment.
+
+**Quantization ladder.** Each step must retain the previous step as its matched baseline:
+
+1. BF16 master and execution weights for every band.
+2. Existing ATMA FP8 path or MXFP8 on the narrow sparse band only.
+3. MXFP8 on all sparse bands.
+4. Promote one wide band at a time to MXFP4, beginning with inference-only weight quantization.
+5. Quantized-weight training with BF16/FP32 gradient accumulation and optimizer state.
+
+Track loss delta, output divergence, saturation and zero rates, block-scale distributions,
+gradient cosine similarity, update error, convergence tokens, and run-to-run variance. Add BF16
+shadow checks and automatically promote sensitive experts or layers from MXFP4 to MXFP8. Report
+refresh traffic, quantization time, optimizer time, and weight staleness; host-resident masters
+solve capacity, not necessarily throughput.
+
+### 9.4 Sequencing and composition gate
+
+Use a winner-picking sequence, not a Cartesian product:
+
+```text
+oracle sparse Polar -> learned on-GPU index -> paged/offloaded runtime
+BF16 multi-band MoE -> fused kernels -> optional Head Parallel
+BF16 MoE winner -> MXFP8 -> one-band-at-a-time MXFP4
+independent winners -> pairwise interactions -> complete composition
+```
+
+Before the final composition, run the smallest useful factorial check for interaction effects:
+full vs. sparse Polar, dense MLP vs. BF16 MoE, and BF16 vs. quantized MoE. The combined proposal is
+rejected in its strongest form if approximation errors compound or if it fails to improve the
+quality-latency-memory Pareto frontier over a simpler query-sparse Polar plus conventional
+quantized top-2 MoE baseline.
+
+**Shared evaluation envelope.** Report quality and systems results together:
+
+- validation loss/perplexity, long-context perplexity drift, RULER/needle recall, and generation
+  divergence;
+- direction/count/null fidelity for Polar and utilization/specialization for experts;
+- prefill and decode separately, at batch 1 and throughput-oriented continuous batching;
+- HBM, host RAM, PCIe/NVLink bytes, overlap fraction, page-cache hit rate, grouped-GEMM efficiency,
+  and energy/token where available;
+- equal-quality, equal-active-FLOP, equal-memory, and equal-wall-clock comparisons.
+
+Relevant starting points are [Quest](https://arxiv.org/abs/2406.10774),
+[InfiniGen](https://arxiv.org/abs/2406.19707),
+[RetrievalAttention](https://arxiv.org/abs/2409.10516),
+[Native Sparse Attention](https://arxiv.org/abs/2502.11089),
+[MoBA](https://arxiv.org/abs/2502.13189), the
+[OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf),
+and [Multi-Head LatentMoE / Head Parallel](https://arxiv.org/abs/2602.04870).
+
+---
+
+## 10. Two unifications our project already spans
 
 Context for why these directions fit together:
 

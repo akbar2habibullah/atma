@@ -1,144 +1,107 @@
-"""Generate the grouped vertical bar chart for downstream zero-shot benchmark comparison.
-
-Renders task-by-task grouped vertical bars across the 8 control benchmarks + Mean score
-for NoPE, RoPE, Polar, Atma-Raven-Titans, and Raven Native.
-"""
+"""Generate task-level downstream controls before and after the one-head cap."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from reportlab.lib.colors import HexColor
+from reportlab.lib.colors import HexColor, Color
 from reportlab.pdfgen import canvas
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = Path(os.environ.get("ATMA_DOWNSTREAM_CANDLE_OUT", Path(__file__).with_name("fig_downstream_candle.pdf")))
+from re_evaluation_data import ALL_MODELS, MODELS, REFERENCE_MODELS, TASK_METRICS, baseline_downstream, capped_downstream
 
-MODELS = ["nope", "rope", "polar", "atma_raven_titans", "raven_native"]
+
+OUT = Path(os.environ.get("ATMA_DOWNSTREAM_CANDLE_OUT", Path(__file__).with_name("fig_downstream_candle.pdf")))
 LABELS = {
-    "nope": "NoPE",
-    "rope": "RoPE",
-    "polar": "Polar (ATMA)",
-    "atma_raven_titans": "Atma-Raven+Titans",
-    "raven_native": "Raven Native",
+    "nope": "NoPE", "polar": "Polar", "rope": "RoPE",
+    "raven_native": "Raven Native", "atma_raven_titans": "Atma-Raven-Titans",
 }
 COLORS = {
-    "nope": "#D55E00",
-    "rope": "#CC79A7",
-    "polar": "#0072B2",
-    "atma_raven_titans": "#E69F00",
-    "raven_native": "#009E73",
+    "nope": "#D55E00", "polar": "#0072B2", "rope": "#CC79A7",
+    "raven_native": "#009E73", "atma_raven_titans": "#E69F00",
 }
-
-TASKS = ["lambada", "hellaswag", "piqa", "winogrande", "arc_easy", "arc_challenge", "openbookqa", "boolq", "mean"]
-TASK_LABELS = ["LAMBADA", "HellaSwag", "PIQA", "WinoGrande", "ARC-E", "ARC-C", "OBQA", "BoolQ", "MEAN"]
-
-DATA = {
-    "nope": [30.16, 37.88, 66.27, 51.93, 50.53, 32.44, 31.60, 60.37, 45.15],
-    "rope": [30.25, 37.19, 66.76, 50.67, 49.12, 29.43, 32.40, 60.95, 44.60],
-    "polar": [28.47, 36.19, 66.87, 51.62, 49.12, 26.09, 31.80, 56.21, 43.29],
-    "atma_raven_titans": [26.00, 34.12, 65.56, 52.49, 48.07, 27.76, 29.00, 61.41, 43.05],
-    "raven_native": [27.48, 33.56, 64.69, 51.70, 49.12, 27.09, 28.80, 61.93, 43.05],
-}
+TASKS = tuple(TASK_METRICS)
+TASK_LABELS = ("LAMBADA", "HellaSwag", "PIQA", "WinoGrande", "ARC-E", "ARC-C", "OBQA", "BoolQ", "MEAN")
 
 
-def generate_pdf(out_path: Path):
-    page_w = 504.0
-    page_h = 165.0
+def pale(color):
+    c = HexColor(color)
+    return Color(0.68 + 0.32 * c.red, 0.68 + 0.32 * c.green, 0.68 + 0.32 * c.blue)
 
+
+def generate_pdf(out_path):
+    baseline = baseline_downstream(models=ALL_MODELS)
+    capped = capped_downstream()
+    for values, models in ((baseline, ALL_MODELS), (capped, MODELS)):
+        for model in models:
+            values[model]["mean"] = sum(values[model].values()) / len(TASKS)
+
+    page_w, page_h = 504.0, 165.0
     c = canvas.Canvas(str(out_path), pagesize=(page_w, page_h))
-
-    # Title
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont("Helvetica-Bold", 9.5)
     c.setFillColor(HexColor("#1A2530"))
-    c.drawString(12, page_h - 14, "Zero-Shot Downstream Language Modeling Benchmarks Comparison")
+    c.drawString(12, page_h - 14, "Short-context controls: untouched checkpoint vs. one-head retention cap")
 
-    # Legend at Top Right / Center
-    legend_widths = [48, 45, 65, 82, 70]
-    legend_x = (page_w - sum(legend_widths)) / 2.0
-    legend_y = page_h - 26.0
-    c.setFont("Helvetica-Bold", 6.5)
-
-    for m_key, item_w in zip(MODELS, legend_widths):
-        color = HexColor(COLORS[m_key])
-        c.setFillColor(color)
-        c.setStrokeColor(color)
-        c.rect(legend_x, legend_y - 2.5, 8, 8, stroke=0, fill=1)
-        c.setFillColor(HexColor("#222222"))
-        c.drawString(legend_x + 11, legend_y - 1.5, LABELS[m_key])
-        legend_x += item_w
-
-    x0 = 34.0
-    y0 = 22.0
-    width = page_w - 46.0
-    height = page_h - 58.0
-
-    ymin = 0.0
-    ymax = 75.0
-
-    def proj_y(val: float) -> float:
-        return y0 + height * (val - ymin) / (ymax - ymin)
-
-    # Y-axis Grid
+    legend_x, legend_y = 66, page_h - 26
     c.setFont("Helvetica", 6.0)
-    for yval in range(0, 80, 15):
-        yp = proj_y(float(yval))
+    legend_widths = (47, 47, 45, 74, 111)
+    for model, item_width in zip(ALL_MODELS, legend_widths):
+        c.setFillColor(HexColor(COLORS[model]))
+        c.rect(legend_x, legend_y - 2, 7, 7, stroke=0, fill=1)
+        c.setFillColor(HexColor("#222222"))
+        c.drawString(legend_x + 10, legend_y - 1, LABELS[model])
+        legend_x += item_width
+    legend_x, legend_y = 169, legend_y - 11
+    for label, fill in (("Matched untouched", pale("#555555")), ("Matched cap", HexColor("#555555")), ("Raven references: untouched only", HexColor("#888888"))):
+        c.setFillColor(fill)
+        c.rect(legend_x, legend_y - 2, 7, 7, stroke=0, fill=1)
+        c.setFillColor(HexColor("#222222"))
+        c.drawString(legend_x + 10, legend_y - 1, label)
+        legend_x += 92 if "Raven" not in label else 0
+
+    x0, y0 = 34.0, 22.0
+    width, height = page_w - 46.0, page_h - 69.0
+    project_y = lambda value: y0 + height * value / 75.0
+    c.setFont("Helvetica", 6.0)
+    for value in range(0, 76, 15):
+        y = project_y(value)
         c.setStrokeColor(HexColor("#E2E8F0"))
         c.setLineWidth(0.4)
-        c.line(x0, yp, x0 + width, yp)
+        c.line(x0, y, x0 + width, y)
         c.setFillColor(HexColor("#444444"))
-        c.drawRightString(x0 - 4, yp - 2, f"{yval}%")
-
-    # Y-axis Label
+        c.drawRightString(x0 - 4, y - 2, f"{value}%")
     c.saveState()
-    c.setFont("Helvetica-Bold", 6.5)
+    c.setFont("Helvetica-Bold", 6.2)
     c.setFillColor(HexColor("#2D3748"))
-    c.translate(x0 - 22, y0 + height / 2.0)
+    c.translate(x0 - 22, y0 + height / 2)
     c.rotate(90)
-    c.drawCentredString(0, 0, "Zero-Shot Accuracy (%)")
+    c.drawCentredString(0, 0, "Zero-shot accuracy (%)")
     c.restoreState()
 
-    # Draw Grouped Vertical Bars
-    num_tasks = len(TASKS)
-    num_models = len(MODELS)
-
-    group_w = width / num_tasks
-    bar_w = (group_w - 8.0) / num_models
-
-    for t_idx, t_lbl in enumerate(TASK_LABELS):
-        gx = x0 + t_idx * group_w + 4.0
-
-        # Separator line before MEAN
-        if t_lbl == "MEAN":
+    fields = TASKS + ("mean",)
+    group_w = width / len(fields)
+    slots = 2 * len(MODELS) + len(REFERENCE_MODELS)
+    bar_w = (group_w - 7.0) / slots
+    for task_i, (task, label) in enumerate(zip(fields, TASK_LABELS)):
+        gx = x0 + task_i * group_w + 3.5
+        if task == "mean":
             c.setStrokeColor(HexColor("#CBD5E0"))
-            c.setLineWidth(0.8)
             c.setDash(2, 2)
-            c.line(gx - 4.0, y0, gx - 4.0, y0 + height)
+            c.line(gx - 3.5, y0, gx - 3.5, y0 + height)
             c.setDash()
-
-        for m_idx, m_key in enumerate(MODELS):
-            val = DATA[m_key][t_idx]
-            bx = gx + m_idx * bar_w
-            by = y0
-            bh = proj_y(val) - y0
-
-            color = HexColor(COLORS[m_key])
-            c.setFillColor(color)
-            c.setStrokeColor(color)
-            c.rect(bx, by, bar_w - 0.5, bh, stroke=0, fill=1)
-
-            # Draw value on top of MEAN bars
-            if t_lbl == "MEAN":
-                c.setFont("Helvetica-Bold", 4.5)
-                c.setFillColor(color)
-                c.drawCentredString(bx + bar_w / 2.0, by + bh + 2.5, f"{val:.1f}")
-
-        # X-axis Task Label
-        c.setFont("Helvetica-Bold" if t_lbl == "MEAN" else "Helvetica", 6.2)
-        c.setFillColor(HexColor("#0F2942") if t_lbl == "MEAN" else HexColor("#2D3748"))
-        c.drawCentredString(gx + (group_w - 8.0) / 2.0, y0 - 10, t_lbl)
-
+        slot_i = 0
+        for model in ALL_MODELS:
+            conditions = (baseline, capped) if model in MODELS else (baseline,)
+            for condition_i, values in enumerate(conditions):
+                value = values[model][task]
+                x = gx + slot_i * bar_w
+                is_untouched_matched = model in MODELS and condition_i == 0
+                c.setFillColor(pale(COLORS[model]) if is_untouched_matched else HexColor(COLORS[model]))
+                c.rect(x, y0, bar_w - 0.35, project_y(value) - y0, stroke=0, fill=1)
+                slot_i += 1
+        c.setFont("Helvetica-Bold" if task == "mean" else "Helvetica", 6.0)
+        c.setFillColor(HexColor("#0F2942") if task == "mean" else HexColor("#2D3748"))
+        c.drawCentredString(gx + (group_w - 7.0) / 2, y0 - 10, label)
     c.save()
     print(f"wrote {out_path.resolve()}")
 

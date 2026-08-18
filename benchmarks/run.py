@@ -97,9 +97,20 @@ def main():
     ap.add_argument("--max_num_batched_tokens", type=int, default=None,
                     help="prefill token budget; default is at least max_model_len")
     ap.add_argument("--out", default=None)
+    ap.add_argument(
+        "--gamma-clamp",
+        default=None,
+        help="JSON clamp spec from gamma_diagnostics (direct/correctness backends only)",
+    )
     ap.add_argument("--strict", action="store_true",
                     help="hard-fail if the benchmark inference path can't run this checkpoint")
     args = ap.parse_args()
+
+    if args.gamma_clamp and (
+        args.benchmark == "serving"
+        or (args.benchmark == "babilong" and args.babilong_backend == "paged")
+    ):
+        ap.error("--gamma-clamp currently supports only DirectScorer correctness benchmarks")
 
     if args.tasks is None:
         if args.benchmark == "babilong":
@@ -135,7 +146,7 @@ def main():
         fh.write(str(s) + "\n")
 
     log(f"[run] benchmark={args.benchmark} model={args.model} tasks={args.tasks} "
-        f"lengths={args.lengths} samples={args.samples}")
+        f"lengths={args.lengths} samples={args.samples} gamma_clamp={args.gamma_clamp}")
 
     model = None
     scorer = None
@@ -147,7 +158,8 @@ def main():
             if args.babilong_backend == "direct":
                 from benchmarks.scoring import DirectScorer
                 model = DirectScorer(
-                    args.model, max_length=max_model_len, batch_size=1
+                    args.model, max_length=max_model_len, batch_size=1,
+                    gamma_clamp=args.gamma_clamp,
                 )
             else:
                 from benchmarks.model import EvalModel
@@ -183,6 +195,7 @@ def main():
                 max_length=max(_parse_len(length) for length in args.lengths)
                 + args.retrieval_value_tokens,
                 batch_size=1,
+                gamma_clamp=args.gamma_clamp,
             )
             res = run_retrieval(
                 scorer, kinds, args.lengths, args.depths, num_samples=args.samples,
@@ -196,7 +209,7 @@ def main():
 
             scorer = DirectScorer(
                 args.model, max_length=args.scoring_max_length or 2048,
-                batch_size=args.batch_size
+                batch_size=args.batch_size, gamma_clamp=args.gamma_clamp,
             )
             res = run_base_tasks(
                 scorer, args.tasks, limit=args.limit,
@@ -214,6 +227,7 @@ def main():
                     max(_parse_len(length) for length in args.lengths) + args.target_tokens
                 ),
                 batch_size=1,
+                gamma_clamp=args.gamma_clamp,
             )
             res = run_longdoc(
                 scorer, args.datasets, args.lengths, target_tokens=args.target_tokens,

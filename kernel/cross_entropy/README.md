@@ -21,12 +21,16 @@ Current implementation:
 
 - CUDA/Triton forward streams over vocabulary blocks and writes only per-token
   losses plus log-sum-exp values.
-- Backward recomputes logits in bounded token/vocab chunks, accumulating exact
-  gradients for hidden states, classifier weights, and classifier bias.
+- The portable chunked path uses native-precision classifier GEMMs, applies the
+  softcap/log-sum-exp math in FP32, and accumulates bounded token/vocab chunks.
+- Backward recomputes native-precision logits in bounded chunks and retains FP32
+  accumulators for hidden-state, classifier-weight, and bias gradients.
 - CPU and non-Triton CUDA fallback use the same chunked math.
 - `impl="eager"` materializes logits and is kept as a parity reference.
 
 For the default training microbatch (`mbs=8`, `seq_len=1024`, `vocab=50304`), a
 single fp32 logits-sized tensor is about 1.54 GiB. This path replaces that with
 `token_chunk_size * vocab_chunk_size` temporary logits during backward and no
-full logits tensor in forward.
+full logits tensor in forward. The 32K Foveal CPT pilot explicitly selects the
+chunked tensor-core path because the row-wise Triton prototype is slower at its
+32,768-token by 50,304-vocabulary output shape.

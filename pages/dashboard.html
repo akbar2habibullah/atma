@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ATMA Ablation Archive | Kreasof AI</title>
-  <meta name="description" content="Interactive evidence archive for the complete 120-cell ATMA recipe-selection sweep and current matched experiment results.">
+  <meta name="description" content="Interactive evidence archive for the complete 120-cell ATMA recipe sweep, matched experiment results, and retention-horizon diagnostic.">
   <link rel="stylesheet" href="assets/site.css?v=20260812-3">
   <link rel="stylesheet" href="assets/dashboard.css?v=20260812-3">
 </head>
@@ -35,7 +35,7 @@
       <div><strong>92.5%</strong><span>selected Stage I cell at 64K</span></div>
     </section>
 
-    <aside class="reading-note"><strong>How to read this archive.</strong> Stage I uses 16 teacher-forced trials per cell. “Needle accuracy” is per-token teacher-forced accuracy, not autoregressive generation. The selected-cell result is not interchangeable with the 24,000-trial Stage II benchmark.</aside>
+    <aside class="reading-note"><strong>How to read this archive.</strong> Stage I uses 16 teacher-forced trials per cell. “Needle accuracy” is per-token teacher-forced accuracy, not autoregressive generation. The selected-cell result is not interchangeable with the 24,000-trial Stage II benchmark. The retention audit is an inference-only checkpoint diagnostic and does not replace the untouched Stage II results.</aside>
 
     <section class="explorer" id="explorer">
       <header class="section-heading">
@@ -93,6 +93,29 @@
         </table>
       </div>
       <p class="fine-print">Retrieval averages tasks, haystack suites, and needle depths. Exact requires all five target tokens under teacher forcing. BPB averages three fixed-target datasets. Base mean averages eight 2K zero-shot tasks.</p>
+    </section>
+
+    <section class="stage-two" id="retention-audit">
+      <header class="section-heading">
+        <p class="article-label">Post-hoc diagnostic · inference only</p>
+        <h2>One extreme retention head mediates part of the extrapolation failure</h2>
+        <p>A parameter scan found maximum zero-input half-lives of 21.01M tokens in NoPE, 3.07M in Polar, and 682 in RoPE. We capped only the largest runtime head at a 256-token half-life without rewriting checkpoint weights, then reran downstream, retrieval, fixed-target BPB, and BABILong.</p>
+      </header>
+      <figure class="wide-figure">
+        <a href="assets/figures/retention-recovery.svg" title="Open the full-resolution recovery curves"><img src="assets/figures/retention-recovery.svg" width="1050" height="650" alt="Length-wise untouched and capped curves for retrieval, BABILong, and long-document bits per byte." loading="lazy" decoding="async"></a>
+        <figcaption>The recovery is length-wide rather than an endpoint artifact. NoPE BABILong changes from 21/6/0/0/0% to 54/45/37/35/39% at 16/32/64/128/256K, while Raven Native and Atma-Raven-Titans remain visible as untouched recurrent-family references.</figcaption>
+      </figure>
+      <div class="table-wrap">
+        <table class="result-table">
+          <thead><tr><th>Model</th><th>Max half-life</th><th>Base mean</th><th>BPB @256K</th><th>Retrieval @256K<br>token / exact</th><th>BABILong @256K</th></tr></thead>
+          <tbody>
+            <tr><td>NoPE</td><td>21.01M</td><td>45.15 → 45.10</td><td class="good">8.097 → 1.595</td><td>0.60 / 0.00 → 0.93 / 0.00</td><td class="good">0 → 39</td></tr>
+            <tr><td>Polar</td><td>3.07M</td><td>43.29 → 43.25</td><td class="good">1.825 → 1.501</td><td class="good">34.37 / 9.00 → 47.07 / 16.33</td><td class="good">28 → 42</td></tr>
+            <tr><td>RoPE</td><td>682</td><td>44.60 → 44.66</td><td>2.512 → 2.460</td><td>0.00 / 0.00 → 0.00 / 0.00</td><td>14 → 11</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fine-print">Baseline → capped. The full rerun compares clamped jobs with pinned archived baselines; a separate same-process paired sweep establishes the intervention. NoPE exact retrieval remains zero and RoPE does not recover, so the cap is a selective mechanism probe rather than a universal improvement. The paper appendix reports every downstream task and every retrieval, BPB, and BABILong length cell.</p>
     </section>
 
     <details class="notes">

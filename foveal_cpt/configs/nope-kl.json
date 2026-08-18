@@ -1,0 +1,15 @@
+{
+  "checkpoint": "ChavyvAkvar/atma-10b-L40S-mbs16-nope__reg-baseline__distr-0__mem-1__win-0",
+  "dataset_repo": "kjj0/finewebedu10B-gpt2",
+  "output_dir": "foveal_cpt/output/nope/kl",
+  "adaptation_mode": "kl",
+  "sequence_length": 32768,
+  "batch_tokens": 524288,
+  "train_tokens": 1000000000,
+  "index_dim": 16,
+  "page_size": 64,
+  "query_block_size": 64,
+  "local_window": 512,
+  "remote_capacity": 64,
+  "flex_kernel_options": {"BLOCK_M": 64, "BLOCK_N": 64, "PRESCALE_QK": true}
+}

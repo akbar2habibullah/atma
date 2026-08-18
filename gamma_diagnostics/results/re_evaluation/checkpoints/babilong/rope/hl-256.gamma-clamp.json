@@ -1,0 +1,23 @@
+{
+  "cap_source": {
+    "half_life_tokens": 256.0,
+    "kind": "absolute_half_life"
+  },
+  "format": "atma-gamma-clamp-v1",
+  "label": "hl-256",
+  "selection": {
+    "checkpoint_repo_id": "ChavyvAkvar/atma-10b-babilong-2k-ft-rope",
+    "checkpoint_revision": "a2262bb0d50f825f12e47a4974a1c56d9496df34",
+    "kind": "largest_parameter_only_zero_input_logit",
+    "num_target_heads": 1
+  },
+  "targets": [
+    {
+      "heads": [
+        1
+      ],
+      "layer": 2,
+      "max_half_life_tokens": 256.0
+    }
+  ]
+}
