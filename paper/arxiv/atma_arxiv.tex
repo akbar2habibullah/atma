@@ -1,5 +1,5 @@
 \documentclass{article}
-\usepackage{iclr2027_conference,times}
+\usepackage{atma_arxiv,times}
 \input{math_commands.tex}
 
 \usepackage{microtype}
@@ -17,7 +17,7 @@
 \usepackage{listings}
 \usepackage{placeins}
 \usepackage{multirow}
-\graphicspath{{../}}
+\graphicspath{{./}}
 
 \definecolor{darkblue}{rgb}{0,0,0.5}
 \hypersetup{colorlinks=true,citecolor=darkblue,linkcolor=darkblue,urlcolor=darkblue}
@@ -39,14 +39,17 @@
 \newtheorem{corollary}{Corollary}
 
 \title{ATMA: Long-Context Language Modeling via Polar Attention and Gated-Delta Compression Memory}
-\author{Anonymous Authors}
+\author{Habibullah Akbar \\
+Kreasof AI \\
+Jakarta, Indonesia \\
+\texttt{habibullah.akbar@kreasof.my.id}}
 
-% \iclrfinalcopy
+\iclrfinalcopy
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Length extrapolation in language models involves competing objectives: retrieval fidelity, long-document likelihood, short-context quality, and inference cost. We present \textbf{ATMA}, a 378M-parameter hybrid recipe that combines Polar Attention with gated-delta recurrent memory, and study these objectives as a Pareto problem rather than claiming general architectural dominance. Polar Attention separates a normalized direction channel from a bounded participation-ratio magnitude channel. We select the recipe with a complete 120-cell, 1B-token factorial sweep, then train matched NoPE, RoPE, and Polar variants for 9.816B tokens at length 2K and evaluate them through 256K. Across the factorial, memory improves Polar's 64K retrieval score in all 20 matched cells (mean $+47.8$ points), whereas its effect on NoPE is small and inconsistent. At 256K, Polar retains 34.4\% teacher-forced target-token accuracy and 9.0\% exact five-token accuracy; exact retrieval is 18.0\% on synthetic contexts but 0.0\% on FinePDFs contexts. Polar also limits mean fixed-target bits-per-byte degradation to $1.26\times$, at a 1.9-point mean cost on eight short-context tasks. Raven baselines lead BABILong and have length-independent decode state, illustrating a different point on the frontier. Finally, a post-hoc audit finds isolated near-unit retention gates with zero-input half-lives of 21.0M tokens in NoPE and 3.07M in Polar. Capping one runtime head at a 256-token half-life, without changing checkpoint weights, reduces mean 256K BPB from 8.097 to 1.595 for NoPE and from 1.825 to 1.501 for Polar. NoPE BABILong recovers from 0\% to 39\% and Polar from 28\% to 42\%; Polar retrieval rises from 34.4/9.0\% token/exact to 47.1/16.3\%. RoPE does not recover retrieval. We interpret excessive retention as a major checkpoint-specific mediator, not a complete explanation or a validated training method.
+Length extrapolation in language models involves competing objectives: retrieval fidelity, long-document likelihood, short-context quality, and inference cost. We present \textbf{ATMA}, a 378M-parameter hybrid recipe that combines Polar Attention with gated-delta recurrent memory, and study these objectives as a Pareto problem rather than claiming general architectural dominance. Polar Attention separates a normalized direction channel from a bounded participation-ratio magnitude channel. We select the recipe with a complete 120-cell, 1B-token factorial sweep, then train matched NoPE, RoPE, and Polar variants for 9.816B tokens at length 2K and evaluate them through 256K. Across the factorial, memory improves Polar's 64K retrieval score in all 20 matched cells (mean $+47.8$ points), whereas its effect on NoPE is small and inconsistent. At 256K, Polar retains 34.4\% teacher-forced target-token accuracy and 9.0\% exact five-token accuracy; exact retrieval is 18.0\% on synthetic contexts but 0.0\% on FinePDFs contexts. Polar also limits mean fixed-target bits-per-byte degradation to $1.26\times$, at a 1.9-point mean cost on eight short-context tasks. Raven baselines lead BABILong and have length-independent decode state, illustrating a different point on the frontier. Finally, a post-hoc audit finds isolated near-unit retention gates with zero-input half-lives of 21.0M tokens in NoPE and 3.07M in Polar. Capping one runtime head at a 256-token half-life, without changing checkpoint weights, reduces mean 256K BPB from 8.097 to 1.595 for NoPE and from 1.825 to 1.501 for Polar. NoPE BABILong recovers from 0\% to 39\% and Polar from 28\% to 42\%; Polar retrieval rises from 34.4/9.0\% token/exact to 47.1/16.3\%. RoPE does not recover retrieval. We interpret excessive retention as a major checkpoint-specific mediator, not a complete explanation or a validated training method. Code: \url{https://github.com/kreasof-ai/atma}
 \end{abstract}
 
 \section{Introduction}
@@ -308,7 +311,7 @@ Within those limits, ATMA establishes a reproducible operating point for bounded
 Generative AI tools were used in this revision to assist diagnostic-script implementation, edit and structure the manuscript, and aggregate archived and newly produced evaluation logs. The benchmark jobs themselves were executed by the authors on the listed checkpoints and hardware; AI was not used to generate evaluation datasets or train the reported models. The authors manually compare all AI-assisted mathematical text with the original derivations and proof artifacts, verify empirical values against source logs, and take responsibility for every claim and artifact in the submission. This statement describes the present version as required by the ICLR 2027 policy.
 
 \subsection*{Reproducibility Statement}
-Model definitions and training settings are described in Sections 3--4. Appendix~\ref{appendix:protocol} specifies evaluation protocols and denominators, Appendix~\ref{appendix:retention_audit} records the parameter scan, paired intervention, and full re-evaluation, and Appendices~\ref{appendix:full_ablation}--\ref{appendix:diagnostics} provide detailed tables and diagnostics. The anonymous artifact at \url{https://anonymous.4open.science/r/atma} contains configurations, logs, checkpoint manifests, benchmark payloads, clamp specifications, and machine-checked proof skeletons.
+Model definitions and training settings are described in Sections 3--4. Appendix~\ref{appendix:protocol} specifies evaluation protocols and denominators, Appendix~\ref{appendix:retention_audit} records the parameter scan, paired intervention, and full re-evaluation, and Appendices~\ref{appendix:full_ablation}--\ref{appendix:diagnostics} provide detailed tables and diagnostics. The public artifact at \url{https://github.com/kreasof-ai/atma} contains configurations, logs, checkpoint manifests, benchmark payloads, clamp specifications, and machine-checked proof skeletons.
 
 \clearpage
 \bibliography{colm2026_conference,iclr2027_additions}

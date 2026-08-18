@@ -1,0 +1,138 @@
+\begin{longtable}{llcccrrrrrrrr}
+\caption{Complete Results of the 120-Run Ablation Sweep. All models are 370M parameters, trained on FineWeb-Edu for 1B tokens ($seq\_len=2048$). Evaluated from 2K to 64K context length. Clean NLL is measured on coherent FinePDFs documents; junk NLL is measured on the concatenated validation stream. NLL is in nats/token (lower is better), Needle is greedy per-digit accuracy in \% (higher is better), and MFU is training model flops utilization in \%. \label{table:ablation_appendix}}\\
+\toprule
+Type & Reg & Dist & Mem & Win & Val & Clean2K & Clean64K & Junk2K & Junk64K & Ndl2K & Ndl64K & MFU \\
+\midrule
+\endfirsthead
+\caption[]{Complete Results of the 120-Run Ablation Sweep (continued).}\\
+\toprule
+Type & Reg & Dist & Mem & Win & Val & Clean2K & Clean64K & Junk2K & Junk64K & Ndl2K & Ndl64K & MFU \\
+\midrule
+\endhead
+\midrule
+\multicolumn{13}{r}{{Continued on next page}} \\
+\bottomrule
+\endfoot
+\bottomrule
+\endlastfoot
+POLAR & baseline & Off & Off & Off & 3.323 & 2.83 & 3.60 & 3.27 & 5.68 & 96.3 & 0.0 & 40.1 \\
+POLAR & baseline & Off & Off & On & 3.343 & 2.83 & 2.66 & 3.30 & 4.74 & 67.5 & 0.0 & 39.6 \\
+POLAR & baseline & Off & On & Off & 3.169 & 2.70 & 1.96 & 3.11 & 3.13 & 91.3 & 92.5 & 35.6 \\
+POLAR & baseline & Off & On & On & 3.174 & 2.71 & 2.01 & 3.12 & 3.13 & 51.3 & 30.0 & 35.6 \\
+POLAR & baseline & On & Off & Off & 3.332 & 2.81 & 5.56 & 3.28 & 6.54 & 85.0 & 0.0 & 33.3 \\
+POLAR & baseline & On & Off & On & 3.361 & 2.85 & 2.89 & 3.35 & 4.97 & 91.3 & 2.5 & 34.5 \\
+POLAR & baseline & On & On & Off & 3.178 & 2.72 & 1.98 & 3.12 & 3.14 & 73.8 & 58.8 & 31.8 \\
+POLAR & baseline & On & On & On & 3.182 & 2.73 & 1.97 & 3.12 & 3.14 & 56.3 & 21.3 & 31.2 \\
+POLAR & weak & Off & Off & Off & 3.333 & 2.82 & 2.86 & 3.28 & 5.35 & 88.8 & 0.0 & 39.0 \\
+POLAR & weak & Off & Off & On & 3.348 & 2.90 & 3.76 & 3.38 & 5.24 & 93.8 & 0.0 & 37.9 \\
+POLAR & weak & Off & On & Off & 3.179 & 2.74 & 1.95 & 3.12 & 3.14 & 70.0 & 51.3 & 36.2 \\
+POLAR & weak & Off & On & On & 3.187 & 2.74 & 1.99 & 3.13 & 3.15 & 41.3 & 41.3 & 36.2 \\
+POLAR & weak & On & Off & Off & 3.335 & 2.82 & 3.47 & 3.28 & 5.56 & 91.3 & 0.0 & 32.8 \\
+POLAR & weak & On & Off & On & 3.353 & 2.82 & 2.58 & 3.32 & 4.81 & 96.3 & 1.3 & 32.8 \\
+POLAR & weak & On & On & Off & 3.178 & 2.74 & 1.95 & 3.12 & 3.14 & 33.8 & 32.5 & 30.7 \\
+POLAR & weak & On & On & On & 3.183 & 2.74 & 1.94 & 3.13 & 3.15 & 81.3 & 78.8 & 30.7 \\
+POLAR & strong & Off & Off & Off & 3.338 & 2.85 & 3.79 & 3.28 & 5.83 & 98.8 & 1.3 & 37.3 \\
+POLAR & strong & Off & Off & On & 3.360 & 2.85 & 2.99 & 3.32 & 5.01 & 91.3 & 0.0 & 37.9 \\
+POLAR & strong & Off & On & Off & 3.172 & 2.72 & 1.96 & 3.11 & 3.13 & 80.0 & 52.5 & 35.8 \\
+POLAR & strong & Off & On & On & 3.181 & 2.72 & 1.94 & 3.12 & 3.15 & 76.3 & 68.8 & 34.6 \\
+POLAR & strong & On & Off & Off & 3.337 & 2.87 & 3.22 & 3.28 & 5.52 & 83.8 & 1.3 & 32.8 \\
+POLAR & strong & On & Off & On & 3.347 & 2.82 & 2.64 & 3.30 & 4.88 & 97.5 & 16.3 & 32.2 \\
+POLAR & strong & On & On & Off & 3.179 & 2.73 & 1.94 & 3.12 & 3.14 & 86.3 & 83.8 & 30.9 \\
+POLAR & strong & On & On & On & 3.182 & 2.72 & 1.94 & 3.12 & 3.14 & 25.0 & 23.8 & 30.9 \\
+POLAR & discrete & Off & Off & Off & 3.338 & 2.82 & 2.80 & 3.29 & 5.12 & 93.8 & 2.5 & 37.9 \\
+POLAR & discrete & Off & Off & On & 3.349 & 2.87 & 2.90 & 3.33 & 5.25 & 93.8 & 6.3 & 37.9 \\
+POLAR & discrete & Off & On & Off & 3.184 & 2.75 & 2.03 & 3.12 & 3.14 & 76.3 & 73.8 & 36.4 \\
+POLAR & discrete & Off & On & On & 3.178 & 2.71 & 1.92 & 3.12 & 3.15 & 31.3 & 18.8 & 35.8 \\
+POLAR & discrete & On & Off & Off & 3.333 & 2.80 & 4.13 & 3.28 & 6.12 & 97.5 & 0.0 & 32.6 \\
+POLAR & discrete & On & Off & On & 3.351 & 2.87 & 2.72 & 3.33 & 4.89 & 85.0 & 2.5 & 33.3 \\
+POLAR & discrete & On & On & Off & 3.189 & 2.74 & 1.96 & 3.13 & 3.15 & 87.5 & 53.8 & 31.8 \\
+POLAR & discrete & On & On & On & 3.192 & 2.74 & 2.07 & 3.13 & 3.15 & 21.3 & 26.3 & 31.7 \\
+POLAR & zipfian & Off & Off & Off & 3.338 & 2.85 & 4.83 & 3.28 & 6.55 & 96.3 & 11.3 & 37.9 \\
+POLAR & zipfian & Off & Off & On & 3.350 & 2.83 & 2.58 & 3.32 & 4.63 & 88.8 & 3.8 & 39.4 \\
+POLAR & zipfian & Off & On & Off & 3.171 & 2.70 & 1.92 & 3.11 & 3.13 & 52.5 & 63.8 & 36.2 \\
+POLAR & zipfian & Off & On & On & 3.180 & 2.75 & 1.95 & 3.12 & 3.15 & 46.3 & 40.0 & 35.2 \\
+POLAR & zipfian & On & Off & Off & 3.340 & 2.83 & 3.77 & 3.28 & 5.64 & 98.8 & 1.3 & 33.8 \\
+POLAR & zipfian & On & Off & On & 3.352 & 2.85 & 3.13 & 3.36 & 5.23 & 90.0 & 0.0 & 33.5 \\
+POLAR & zipfian & On & On & Off & 3.177 & 2.72 & 1.94 & 3.12 & 3.14 & 91.3 & 67.5 & 31.8 \\
+POLAR & zipfian & On & On & On & 3.192 & 2.74 & 2.00 & 3.13 & 3.15 & 40.0 & 26.3 & 31.8 \\
+NOPE & baseline & Off & Off & Off & 3.224 & 2.76 & 3.71 & 3.16 & 6.68 & 97.5 & 1.3 & 41.5 \\
+NOPE & baseline & Off & Off & On & 3.219 & 2.75 & 2.76 & 3.17 & 5.49 & 92.5 & 10.0 & 36.5 \\
+NOPE & baseline & Off & On & Off & 3.140 & 2.66 & 2.34 & 3.09 & 3.23 & 97.5 & 16.3 & 36.8 \\
+NOPE & baseline & Off & On & On & 3.150 & 2.70 & 2.14 & 3.09 & 3.24 & 81.3 & 0.0 & 34.2 \\
+NOPE & baseline & On & Off & Off & 3.209 & 2.74 & 2.99 & 3.15 & 6.13 & 90.0 & 18.8 & 32.5 \\
+NOPE & baseline & On & Off & On & 3.212 & 2.77 & 2.90 & 3.17 & 5.65 & 81.3 & 0.0 & 30.3 \\
+NOPE & baseline & On & On & Off & 3.149 & 2.67 & 2.35 & 3.10 & 3.28 & 80.0 & 16.3 & 30.0 \\
+NOPE & baseline & On & On & On & 3.147 & 2.68 & 2.09 & 3.09 & 3.23 & 88.8 & 21.3 & 28.2 \\
+NOPE & weak & Off & Off & Off & 3.214 & 2.77 & 3.10 & 3.16 & 6.34 & 95.0 & 0.0 & 40.9 \\
+NOPE & weak & Off & Off & On & 3.222 & 2.75 & 3.05 & 3.19 & 5.81 & 81.3 & 0.0 & 36.1 \\
+NOPE & weak & Off & On & Off & 3.147 & 2.68 & 2.07 & 3.09 & 3.19 & 88.8 & 21.3 & 37.5 \\
+NOPE & weak & Off & On & On & 3.142 & 2.68 & 2.12 & 3.08 & 3.23 & 82.5 & 0.0 & 33.7 \\
+NOPE & weak & On & Off & Off & 3.215 & 2.75 & 4.87 & 3.16 & 12.48 & 95.0 & 5.0 & 32.0 \\
+NOPE & weak & On & Off & On & 3.221 & 2.73 & 2.63 & 3.18 & 4.84 & 81.3 & 0.0 & 29.3 \\
+NOPE & weak & On & On & Off & 3.147 & 2.67 & 2.48 & 3.09 & 3.23 & 97.5 & 1.3 & 30.8 \\
+NOPE & weak & On & On & On & 3.148 & 2.68 & 2.14 & 3.09 & 3.24 & 93.8 & 1.3 & 28.4 \\
+NOPE & strong & Off & Off & Off & 3.231 & 2.74 & 4.88 & 3.18 & 11.85 & 90.0 & 2.5 & 38.4 \\
+NOPE & strong & Off & Off & On & 3.214 & 2.72 & 2.68 & 3.17 & 5.28 & 82.5 & 0.0 & 36.4 \\
+NOPE & strong & Off & On & Off & 3.144 & 2.68 & 2.37 & 3.09 & 3.24 & 96.3 & 6.3 & 35.7 \\
+NOPE & strong & Off & On & On & 3.150 & 2.70 & 2.10 & 3.10 & 3.25 & 93.8 & 7.5 & 33.8 \\
+NOPE & strong & On & Off & Off & 3.207 & 2.72 & 3.13 & 3.15 & 6.20 & 73.8 & 0.0 & 31.4 \\
+NOPE & strong & On & Off & On & 3.214 & 2.74 & 2.49 & 3.17 & 4.36 & 86.3 & 8.8 & 28.9 \\
+NOPE & strong & On & On & Off & 3.146 & 2.67 & 2.24 & 3.09 & 3.23 & 83.8 & 17.5 & 29.1 \\
+NOPE & strong & On & On & On & 3.147 & 2.68 & 2.16 & 3.09 & 3.28 & 96.3 & 0.0 & 27.5 \\
+NOPE & discrete & Off & Off & Off & 3.202 & 2.75 & 3.33 & 3.15 & 6.23 & 85.0 & 1.3 & 38.8 \\
+NOPE & discrete & Off & Off & On & 3.234 & 2.79 & 3.11 & 3.19 & 5.47 & 70.0 & 18.8 & 37.0 \\
+NOPE & discrete & Off & On & Off & 3.145 & 2.68 & 2.14 & 3.09 & 3.27 & 98.8 & 16.3 & 36.0 \\
+NOPE & discrete & Off & On & On & 3.145 & 2.68 & 2.10 & 3.09 & 3.25 & 95.0 & 3.8 & 34.3 \\
+NOPE & discrete & On & Off & Off & 3.212 & 2.88 & 3.04 & 3.16 & 6.88 & 42.5 & 0.0 & 31.2 \\
+NOPE & discrete & On & Off & On & 3.211 & 2.78 & 2.73 & 3.16 & 5.28 & 82.5 & 1.3 & 29.1 \\
+NOPE & discrete & On & On & Off & 3.145 & 2.68 & 2.27 & 3.08 & 3.26 & 91.3 & 11.3 & 30.3 \\
+NOPE & discrete & On & On & On & 3.149 & 2.68 & 2.17 & 3.08 & 3.32 & 83.8 & 0.0 & 28.6 \\
+NOPE & zipfian & Off & Off & Off & 3.209 & 2.71 & 3.18 & 3.15 & 6.40 & 90.0 & 0.0 & 40.8 \\
+NOPE & zipfian & Off & Off & On & 3.219 & 2.75 & 2.71 & 3.17 & 5.44 & 77.5 & 1.3 & 36.1 \\
+NOPE & zipfian & Off & On & Off & 3.141 & 2.67 & 2.55 & 3.08 & 3.38 & 96.3 & 0.0 & 38.0 \\
+NOPE & zipfian & Off & On & On & 3.150 & 2.69 & 2.11 & 3.09 & 3.25 & 90.0 & 3.8 & 33.7 \\
+NOPE & zipfian & On & Off & Off & 3.207 & 2.77 & 3.32 & 3.15 & 7.09 & 82.5 & 0.0 & 31.3 \\
+NOPE & zipfian & On & Off & On & 3.227 & 2.79 & 2.91 & 3.18 & 5.94 & 93.8 & 11.3 & 30.2 \\
+NOPE & zipfian & On & On & Off & 3.146 & 2.68 & 2.39 & 3.10 & 3.25 & 96.3 & 21.3 & 29.6 \\
+NOPE & zipfian & On & On & On & 3.148 & 2.68 & 2.17 & 3.09 & 3.28 & 90.0 & 6.3 & 28.7 \\
+ROPE & baseline & Off & Off & Off & 3.159 & 2.85 & 3.36 & 3.09 & 5.21 & 42.5 & 0.0 & 40.4 \\
+ROPE & baseline & Off & Off & On & 3.163 & 2.86 & 3.79 & 3.17 & 5.86 & 15.0 & 0.0 & 37.2 \\
+ROPE & baseline & Off & On & Off & 3.145 & 2.81 & 2.86 & 3.09 & 3.57 & 73.8 & 0.0 & 37.1 \\
+ROPE & baseline & Off & On & On & 3.151 & 2.80 & 2.95 & 3.12 & 3.72 & 13.8 & 0.0 & 34.4 \\
+ROPE & baseline & On & Off & Off & 3.163 & 3.00 & 3.47 & 3.10 & 5.46 & 38.8 & 0.0 & 33.2 \\
+ROPE & baseline & On & Off & On & 3.167 & 2.88 & 4.06 & 3.16 & 5.92 & 0.0 & 0.0 & 30.2 \\
+ROPE & baseline & On & On & Off & 3.153 & 2.73 & 2.45 & 3.09 & 3.57 & 75.0 & 0.0 & 31.4 \\
+ROPE & baseline & On & On & On & 3.154 & 2.83 & 2.86 & 3.12 & 3.72 & 32.5 & 0.0 & 29.4 \\
+ROPE & weak & Off & Off & Off & 3.158 & 2.88 & 3.46 & 3.10 & 5.36 & 46.3 & 0.0 & 41.4 \\
+ROPE & weak & Off & Off & On & 3.163 & 2.84 & 3.96 & 3.18 & 5.93 & 12.5 & 0.0 & 37.8 \\
+ROPE & weak & Off & On & Off & 3.149 & 2.71 & 2.46 & 3.09 & 3.56 & 37.5 & 0.0 & 36.5 \\
+ROPE & weak & Off & On & On & 3.156 & 2.85 & 2.77 & 3.12 & 3.60 & 23.8 & 0.0 & 34.9 \\
+ROPE & weak & On & Off & Off & 3.155 & 2.83 & 3.49 & 3.10 & 5.27 & 38.8 & 0.0 & 32.3 \\
+ROPE & weak & On & Off & On & 3.157 & 3.05 & 4.12 & 3.18 & 5.86 & 8.8 & 0.0 & 30.5 \\
+ROPE & weak & On & On & Off & 3.149 & 2.77 & 2.76 & 3.09 & 3.56 & 57.5 & 0.0 & 31.1 \\
+ROPE & weak & On & On & On & 3.149 & 2.77 & 3.13 & 3.12 & 3.80 & 17.5 & 0.0 & 28.0 \\
+ROPE & strong & Off & Off & Off & 3.165 & 2.78 & 3.34 & 3.10 & 5.27 & 30.0 & 0.0 & 39.0 \\
+ROPE & strong & Off & Off & On & 3.169 & 2.90 & 3.68 & 3.19 & 5.80 & 31.3 & 0.0 & 36.3 \\
+ROPE & strong & Off & On & Off & 3.158 & 2.85 & 2.63 & 3.10 & 3.50 & 51.3 & 0.0 & 35.9 \\
+ROPE & strong & Off & On & On & 3.162 & 2.86 & 3.08 & 3.14 & 3.76 & 10.0 & 0.0 & 33.2 \\
+ROPE & strong & On & Off & Off & 3.161 & 2.85 & 3.58 & 3.10 & 5.28 & 47.5 & 0.0 & 31.1 \\
+ROPE & strong & On & Off & On & 3.165 & 2.85 & 4.03 & 3.19 & 5.90 & 2.5 & 0.0 & 29.2 \\
+ROPE & strong & On & On & Off & 3.155 & 2.80 & 2.70 & 3.10 & 3.62 & 61.3 & 0.0 & 29.3 \\
+ROPE & strong & On & On & On & 3.162 & 2.85 & 3.08 & 3.13 & 3.74 & 2.5 & 0.0 & 28.4 \\
+ROPE & discrete & Off & Off & Off & 3.165 & 2.91 & 3.43 & 3.11 & 5.42 & 22.5 & 0.0 & 39.7 \\
+ROPE & discrete & Off & Off & On & 3.158 & 2.84 & 4.05 & 3.15 & 5.90 & 3.8 & 0.0 & 36.9 \\
+ROPE & discrete & Off & On & Off & 3.159 & 2.83 & 2.67 & 3.11 & 3.56 & 47.5 & 0.0 & 36.3 \\
+ROPE & discrete & Off & On & On & 3.161 & 2.79 & 2.71 & 3.13 & 3.74 & 41.3 & 0.0 & 33.7 \\
+ROPE & discrete & On & Off & Off & 3.171 & 2.79 & 3.45 & 3.12 & 5.36 & 51.3 & 0.0 & 31.5 \\
+ROPE & discrete & On & Off & On & 3.164 & 2.80 & 3.74 & 3.16 & 5.86 & 21.3 & 0.0 & 30.0 \\
+ROPE & discrete & On & On & Off & 3.162 & 2.74 & 2.47 & 3.11 & 3.53 & 50.0 & 0.0 & 30.9 \\
+ROPE & discrete & On & On & On & 3.154 & 2.79 & 2.68 & 3.11 & 3.67 & 18.8 & 0.0 & 28.9 \\
+ROPE & zipfian & Off & Off & Off & 3.163 & 2.82 & 3.25 & 3.10 & 5.22 & 62.5 & 0.0 & 39.8 \\
+ROPE & zipfian & Off & Off & On & 3.161 & 2.94 & 3.94 & 3.18 & 5.81 & 16.3 & 0.0 & 37.1 \\
+ROPE & zipfian & Off & On & Off & 3.149 & 2.78 & 2.70 & 3.09 & 3.63 & 46.3 & 0.0 & 36.7 \\
+ROPE & zipfian & Off & On & On & 3.151 & 2.80 & 2.63 & 3.11 & 3.68 & 2.5 & 0.0 & 33.9 \\
+ROPE & zipfian & On & Off & Off & 3.161 & 2.78 & 3.38 & 3.10 & 5.32 & 47.5 & 0.0 & 32.6 \\
+ROPE & zipfian & On & Off & On & 3.160 & 3.01 & 4.11 & 3.17 & 5.81 & 17.5 & 0.0 & 30.2 \\
+ROPE & zipfian & On & On & Off & 3.149 & 2.73 & 2.39 & 3.09 & 3.55 & 62.5 & 0.0 & 29.8 \\
+ROPE & zipfian & On & On & On & 3.152 & 2.79 & 2.99 & 3.12 & 3.78 & 26.3 & 0.0 & 28.5 \\
+\end{longtable}
