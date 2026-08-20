@@ -139,6 +139,28 @@ RoPE & 59.8 $\rightarrow$ 45.0 & 2.2 $\rightarrow$ 0.8 & 0.3 $\rightarrow$ 0.0 &
 \begin{table}[!ht]
 \centering
 \scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrrr}
+\toprule
+\textbf{Model} & \textbf{Haystack} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\ \midrule
+\multirow{2}{*}{NoPE} & Synthetic & 95.3 $\rightarrow$ 93.7 & 93.7 $\rightarrow$ 88.7 & 88.7 $\rightarrow$ 79.7 & 78.0 $\rightarrow$ 65.3 & 23.7 $\rightarrow$ 18.3 & 4.7 $\rightarrow$ 1.0 & 0.7 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+ & FinePDFs (Real) & 96.7 $\rightarrow$ 94.3 & 18.0 $\rightarrow$ 61.3 & 0.0 $\rightarrow$ 44.7 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+\midrule
+\multirow{2}{*}{Polar} & Synthetic & 96.3 $\rightarrow$ 92.7 & 92.3 $\rightarrow$ 88.3 & 86.3 $\rightarrow$ 81.7 & 86.0 $\rightarrow$ 81.0 & 76.0 $\rightarrow$ 72.0 & 65.7 $\rightarrow$ 65.3 & 26.3 $\rightarrow$ 38.7 & 18.0 $\rightarrow$ 32.7 \\
+ & FinePDFs (Real) & 93.0 $\rightarrow$ 93.7 & 67.3 $\rightarrow$ 91.0 & 62.7 $\rightarrow$ 91.3 & 12.0 $\rightarrow$ 5.0 & 0.0 $\rightarrow$ 16.3 & 0.0 $\rightarrow$ 0.7 & 0.0 $\rightarrow$ 1.0 & 0.0 $\rightarrow$ 0.0 \\
+\midrule
+\multirow{2}{*}{RoPE} & Synthetic & 42.3 $\rightarrow$ 27.0 & 4.3 $\rightarrow$ 1.7 & 0.7 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+ & FinePDFs (Real) & 77.3 $\rightarrow$ 63.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+\bottomrule
+\end{tabular}}
+\caption{Exact five-token retrieval accuracy (\%) by haystack type, untouched $\rightarrow$ capped. While all baseline models experience immediate exact real-text collapse (RoPE at 4K, NoPE at 8K), Polar is the only configuration that endures significantly into extrapolation ($93.0\% \rightarrow 62.7\%$ untouched at 8K; $>91\%$ capped through 8K, with non-zero exact match surviving through 128K).}
+\label{table:gamma_haystack_retrieval_exact_full}
+\end{table}
+
+\begin{table}[!ht]
+\centering
+\scriptsize
 \setlength{\tabcolsep}{2.4pt}
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{lrrrrrrrrrr}
