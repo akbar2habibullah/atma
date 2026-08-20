@@ -246,18 +246,18 @@ Raven Native & Synthetic & 1.0 & 1.0 & 0.2 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
 & FinePDFs & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
 \bottomrule
 \end{tabular}}
-\caption{Zero-shot exact five-token retrieval accuracy (\%) by haystack type and context length, averaged over needle depths. Every single baseline collapses to 0.0\% on natural text (FinePDFs), with Raven Native exhibiting flat 0.0\% across all lengths, RoPE collapsing at 4K, and NoPE collapsing at 8K. Polar is the only configuration that endures the longest, sustaining 67.3\% at 4K, 62.7\% at 8K, and 12.0\% at 16K before succumbing to the real-text noise floor.}
+\caption{Zero-shot exact five-token retrieval accuracy (\%) by haystack type and context length, averaged over needle depths. On FinePDFs, Raven Native remains at 0.0\% across all lengths, RoPE reaches 0.0\% at 4K, and NoPE reaches 0.0\% at 8K. Polar retains 67.3\% at 4K, 62.7\% at 8K, and 12.0\% at 16K before reaching 0.0\% at longer contexts.}
 \label{table:retrieval_exact_breakdown}
 \end{table}
 
-Figure~\ref{fig:retrieval_depth_sweeps} exposes depth-wise variation across all five evaluated models. Tables~\ref{table:retrieval_breakdown} and~\ref{table:retrieval_exact_breakdown} separate partial target-token signal from strict exact five-token recall. Evaluating unadapted models on real-text haystacks reveals a decisive, universal trend: \textbf{all baseline architectures collapse to 0.0\% exact retrieval under length extrapolation}. Specifically:
+Figure~\ref{fig:retrieval_depth_sweeps} shows variation by needle depth across all five models. Tables~\ref{table:retrieval_breakdown} and~\ref{table:retrieval_exact_breakdown} separate partial target-token signal from exact five-token recall. Every tested model eventually reaches 0.0\% exact retrieval on real-text haystacks under unadapted length extrapolation:
 \begin{itemize}
-\item \textbf{Raven Native and Atma-Raven-Titans:} Recurrent state compression with routed memory completely fails on exact natural-text retrieval. Raven Native yields an absolute flat 0.0\% exact accuracy across every tested length from 2K to 256K on FinePDFs, and hovers at $\le 1.0\%$ even on synthetic haystacks. Atma-Raven-Titans scores 4.7\% at 2K on FinePDFs and instantly collapses to flat 0.0\% from 4K onward.
-\item \textbf{RoPE:} Suffers an immediate catastrophic cliff collapse on natural text, plummeting from 77.3\% at 2K to 0.0\% at 4K, remaining flat at 0.0\% through 256K.
-\item \textbf{NoPE:} Drops steeply from 96.7\% at 2K to 18.0\% at 4K, and collapses completely to 0.0\% from 8K onward.
-\item \textbf{Polar Attention:} In sharp contrast, Polar is the \textbf{only configuration that endures the longest}. On FinePDFs natural text, untouched Polar achieves 93.0\% at 2K, 67.3\% at 4K, 62.7\% at 8K, and 12.0\% at 16K—sustaining robust associative recall at $4\times$ to $8\times$ the pretraining length where all other baselines are completely dead. On synthetic haystacks, Polar maintains 65.7\% exact retrieval at 64K and 18.0\% at 256K (with 95\% Wilson interval 14.1--22.7\%), whereas all baselines are 0.0\%.
+\item \textbf{Raven Native and Atma-Raven-Titans:} Raven Native scores 0.0\% on FinePDFs at every tested length and no more than 1.0\% on synthetic haystacks. Atma-Raven-Titans scores 4.7\% at 2K on FinePDFs and 0.0\% from 4K onward.
+\item \textbf{RoPE:} Exact FinePDFs retrieval falls from 77.3\% at 2K to 0.0\% at 4K and stays there through 256K.
+\item \textbf{NoPE:} Exact FinePDFs retrieval falls from 96.7\% at 2K to 18.0\% at 4K and 0.0\% from 8K onward.
+\item \textbf{Polar Attention:} Untouched Polar reaches 93.0\%, 67.3\%, 62.7\%, and 12.0\% on FinePDFs at 2K, 4K, 8K, and 16K. On synthetic haystacks, it retains 65.7\% exact retrieval at 64K and 18.0\% at 256K, with a 95\% Wilson interval of 14.1--22.7\% at 256K. The other models score 0.0\% there.
 \end{itemize}
-Thus, the drop of exact natural-text retrieval to zero at extreme context (64K--256K untouched) is not an idiosyncratic failure of the ATMA recipe, but an empirical limit shared by all evaluated architectures. Polar's magnitude-direction decomposition provides the single longest-lasting associative memory buffer across the entire spectrum.
+Thus, the loss of exact natural-text retrieval at long context is not unique to ATMA. Polar delays this loss relative to the tested baselines but does not eliminate it.
 
 \subsection{Open-weight context}
 Table~\ref{table:open_weight_controls} reports the ten archived open-weight controls. They differ in training data, tokenizer, architecture, parameter count, and native context length; several were trained at lengths beyond 2K. They are therefore practical context, not matched length-extrapolation baselines and not evidence of a Polar advantage over the corresponding model families.
@@ -442,11 +442,11 @@ Decode, context 512 & Batch 128 & 2,939 tok/s & 2,247 tok/s & 1.31$\times$ \\
 \section{Retention-Horizon Diagnostic}
 \label{appendix:retention_audit}
 
-This section records the complete post-hoc chain from parameter inspection to multi-clamp sweep and broad benchmark re-evaluation. It is a causal analysis of released checkpoints, not an additional trained architecture. The primary checkpoint results in Section 5 remain untouched; every cap below is opt-in, applied strictly at inference, and removed after each condition.
+This section records the post-hoc sequence from parameter inspection to a multi-clamp sweep and broad benchmark re-evaluation. It analyzes released checkpoints rather than a new trained architecture. The primary checkpoint results in Section 5 remain untouched. Every cap below is opt-in, applied only at inference, and removed after each condition.
 
 The diagnostic follows three systematic stages:
 \begin{enumerate}
-  \item \textbf{Parameter-only operating point inspection:} Identifying extreme learned retention gate biases ($b_\gamma$) without running the model.
+  \item \textbf{Parameter-only operating point inspection:} Identifying unusually large learned retention gate biases ($b_\gamma$) without running the model.
   \item \textbf{Causal multi-clamping sweep:} Evaluating multiple clamp values (local percentiles \texttt{p90}, \texttt{p99} and absolute half-life ceilings \texttt{hl:256}, \texttt{hl:512}) across sequence lengths 2K--256K on clean text loss and needle retrieval.
   \item \textbf{Independent benchmark re-evaluation:} Re-benchmarking the selected intervention across short-context downstream tasks, retrieval (synthetic and FinePDFs real-text haystacks, passkey and NIAH), fixed-target long-document likelihood (FinePDFs, PG-19, Proof-Pile), and BABILong reasoning.
 \end{enumerate}
@@ -460,11 +460,11 @@ The memory gate has one learned row per query/memory head, rather than one scala
 \end{equation}
 Here $x=0$ defines a reproducible learned operating point. It is not the empirical mean runtime gate: every reported outlier has a nonzero $W_\gamma$ row, so activations can shorten or lengthen its instantaneous horizon.
 
-Table~\ref{table:gamma_parameters_full} reports the parameter operating points across all base checkpoints. The promoted NoPE and Polar checkpoints trained on L40S contain isolated Block 2 heads with astronomical learned half-lives ($21.01$M and $3.07$M tokens, respectively). In sharp contrast, RoPE (max $H_{1/2} = 682.2$ tokens) and Atma-Raven-Titans (max $H_{1/2} = 41.4$ tokens) maintain healthy, bounded operating points without pathological parameter drift. For Atma-Raven-Titans, all heads stay tightly bounded between $30.5$ and $41.4$ tokens, making clamping completely unnecessary.
+Table~\ref{table:gamma_parameters_full} reports the parameter operating points across all base checkpoints. The promoted NoPE and Polar checkpoints trained on L40S contain isolated Block 2 heads with learned half-lives of $21.01$M and $3.07$M tokens. RoPE has a maximum $H_{1/2}$ of 682.2 tokens, while Atma-Raven-Titans ranges from $30.5$ to $41.4$ tokens. We therefore do not cap Atma-Raven-Titans.
 
-Scanning the separately fine-tuned BABILong checkpoints gives 20.86M tokens for NoPE, 3.05M for Polar, and 680 for RoPE. Thus the selected outlier survives adaptation nearly unchanged; each BABILong cap is nevertheless selected afresh from the final fine-tuned checkpoint rather than copied from the base model.
+Scanning the separately fine-tuned BABILong checkpoints gives 20.86M tokens for NoPE, 3.05M for Polar, and 680 for RoPE. The outlier therefore remains nearly unchanged after adaptation. Each BABILong cap is still selected from the final fine-tuned checkpoint rather than copied from the base model.
 
-\subsection{Multi-clamping causal sweep}
+\subsection{Paired multi-clamp sweep}
 For a target maximum half-life $H_{\max}$, the diagnostic clips the final activation-conditioned gate logit,
 \begin{equation}
  z'_{\gamma,t}=\min\!\left(z_{\gamma,t},\operatorname{logit}(2^{-1/H_{\max}})\right),\qquad
@@ -474,9 +474,9 @@ For \texttt{hl:256}, $H_{\max}=256 \implies \gamma'_t\leq0.997296$. Only the sin
 
 Table~\ref{table:gamma_sweep_full} reports the complete paired sweep across conditions (\texttt{baseline}, \texttt{p90}, \texttt{p99}, \texttt{hl:256}, \texttt{hl:512}) and lengths (2K, 16K, 64K, 256K) within a single process sharing model instance, documents, and seeds:
 \begin{itemize}
-  \item \textbf{Why \texttt{hl:256} is selected:} It achieves the largest reduction in 256K needle cross-entropy (from $12.20$ to $6.05$ nats on NoPE; $2.39$ to $1.71$ nats on Polar) while respecting the 2K short-context guardrail ($\le 0.05$ nats clean loss drift; $+0.022$ nats on NoPE, $+0.010$ on Polar).
-  \item \textbf{Why \texttt{p99} fails on saturated checkpoints:} On NoPE L40S, the 99th percentile logit ($13.46$) is still corrupted by the extreme outlier ($H_{1/2} \approx 484$k tokens), leaving 256K clean loss collapsed at $12.09$ nats and needle cross-entropy at $12.15$ nats.
-  \item \textbf{Why RoPE acts as an empirical negative control:} Because RoPE never developed an astronomical outlier, clamping RoPE at \texttt{hl:256} provides no retrieval benefit at 256K ($0.0\%$ accuracy) and degrades short-context needle accuracy from $82.5\%$ to $50.0\%$. This confirms that the intervention specifically targets pathological gamma drift rather than acting as a universal benchmark booster.
+  \item \textbf{Why \texttt{hl:256} is selected:} It gives the largest reduction in 256K needle cross-entropy, from $12.20$ to $6.05$ nats on NoPE and from $2.39$ to $1.71$ nats on Polar. It also keeps 2K clean-loss drift within the $0.05$-nat guardrail, at $+0.022$ nats on NoPE and $+0.010$ on Polar.
+  \item \textbf{Why \texttt{p99} fails on saturated checkpoints:} On NoPE L40S, the 99th-percentile logit ($13.46$) still gives a half-life of about 484k tokens. At 256K, clean loss remains at $12.09$ nats and needle cross-entropy at $12.15$ nats.
+  \item \textbf{Why RoPE is an empirical negative control:} RoPE has no comparable outlier. Capping it at \texttt{hl:256} gives no retrieval benefit at 256K ($0.0\%$ accuracy) and reduces short-context needle accuracy from $82.5\%$ to $50.0\%$. The intervention is therefore not a general benchmark boost.
 \end{itemize}
 
 \subsection{Independent benchmark re-evaluation}
@@ -485,14 +485,14 @@ After the pilot sweep, we evaluate the capped promoted checkpoints on all eight 
 Tables~\ref{table:gamma_parameters_full}--\ref{table:gamma_longdoc_dataset_breakdown} report the full numerical arrays:
 \begin{itemize}
   \item \textbf{Downstream Controls (Table~\ref{table:gamma_downstream_full}):} Unweighted 2K task means change by at most $0.06$ points across all three models, verifying short-context preservation.
-  \item \textbf{Retrieval Curves (Tables~\ref{table:gamma_retrieval_token_full}, \ref{table:gamma_retrieval_exact_full}, \ref{table:gamma_haystack_retrieval_full}, \ref{table:gamma_haystack_retrieval_exact_full}):} Polar gains $+12.70$ points target-token accuracy and $+7.33$ points exact five-token accuracy at 256K, including $+9.1\%$ synthetic token accuracy and $+16.3\%$ FinePDFs real-text accuracy (Table~\ref{table:gamma_haystack_retrieval_full}). In exact retrieval (Table~\ref{table:gamma_haystack_retrieval_exact_full}), clamping elevates Polar's 8K FinePDFs exact accuracy to 91.3\% (untouched 62.7\%) and preserves non-zero exact recall out to 128K (16.3\% at 32K, 1.0\% at 128K), whereas NoPE's exact real-text retrieval collapses to 0.0\% at 16K--256K despite synthetic signal gains ($0.6\% \rightarrow 1.9\%$). RoPE remains at 0.0\% across all extrapolation lengths.
-  \item \textbf{BABILong Reasoning (Table~\ref{table:gamma_babilong_full}):} Clamping eliminates NoPE's collapse beyond 16K, establishing sustained $35$--$57\%$ accuracy through 256K (vs $0\%$ untouched), and lifts Polar from $28\%$ to $42\%$ at 256K. RoPE decreases slightly ($14\% \rightarrow 11\%$).
-  \item \textbf{Long-Document Likelihood (Tables~\ref{table:gamma_bpb_full}, \ref{table:gamma_longdoc_dataset_breakdown}):} NoPE catastrophic likelihood divergence on FinePDFs ($11.666 \rightarrow 1.180$), PG-19 ($4.902 \rightarrow 1.224$), and Proof-Pile ($7.723 \rightarrow 2.382$) is completely halted across all context lengths. Polar 256K mean degradation drops from $1.26\times$ to $1.03\times$.
+  \item \textbf{Retrieval curves (Tables~\ref{table:gamma_retrieval_token_full}, \ref{table:gamma_retrieval_exact_full}, \ref{table:gamma_haystack_retrieval_full}, \ref{table:gamma_haystack_retrieval_exact_full}):} Polar gains $+12.70$ points in target-token accuracy and $+7.33$ points in exact five-token accuracy at 256K. Its 8K FinePDFs exact accuracy rises from 62.7\% to 91.3\%, and capped exact recall remains nonzero through 128K. NoPE remains at 0.0\% exact real-text retrieval from 16K to 256K, and RoPE remains at 0.0\% at every extrapolation length.
+  \item \textbf{BABILong reasoning (Table~\ref{table:gamma_babilong_full}):} The cap raises NoPE to $35$--$57\%$ from 8K to 256K, compared with $0\%$ untouched, and raises Polar from $28\%$ to $42\%$ at 256K. RoPE decreases from $14\%$ to $11\%$.
+  \item \textbf{Long-document likelihood (Tables~\ref{table:gamma_bpb_full}, \ref{table:gamma_longdoc_dataset_breakdown}):} At 256K, the cap reduces NoPE BPB from $11.666$ to $1.180$ on FinePDFs, from $4.902$ to $1.224$ on PG-19, and from $7.723$ to $2.382$ on Proof-Pile. Polar's mean degradation drops from $1.26\times$ to $1.03\times$.
 \end{itemize}
 
 \input{gamma_re_evaluation_tables.tex}
 
-The evidence therefore establishes that an isolated near-unit retention gate is a major causal mediator of NoPE and Polar extrapolation degradation. Training-time formulations that bound retention gates safely from the initial step represent a natural design recommendation for future architectures.
+These results support an isolated near-unit retention gate as a major mediator of NoPE and Polar extrapolation degradation. They motivate testing bounded retention gates during training, but the inference-only intervention does not validate that design.
 
 The complete machine-readable artifacts are under \texttt{gamma\_diagnostics/results/}: \texttt{parameters/gamma\_parameters.json} for the scan, \texttt{all\_clamp\_sweep\_262k.json} for the paired pilot, and \texttt{re\_evaluation/run-summary.json} plus per-suite logs for the full benchmark. The executable protocol and reporting caveats are in \texttt{gamma\_diagnostics/README.md}.
 
@@ -516,7 +516,7 @@ The maximum sampled gain is a lower bound on the local operator norm along sampl
 \section{Checkpoint-Variability Diagnostic Journey}
 \label{appendix:environment}
 
-The variability finding emerged sequentially across the research history. Stage I used L4 GPUs, followed by the first 10B NoPE control on an L4. The anomaly became visible only after the primary training moved to L40S: short-context convergence remained identical ($<0.01\%$ loss difference), yet the 256K extrapolation results diverged dramatically (4.07 vs 10.77 nats NLL). Table~\ref{table:environment_diagnostic_journey} records the complete seven-step diagnostic sequence from the initial environmental investigation to the final mechanistic resolution.
+The variability finding emerged sequentially. Stage I used L4 GPUs, followed by the first 10B NoPE control on an L4. The difference became visible after primary training moved to L40S. Short-context convergence remained nearly identical ($<0.01\%$ loss difference), while 256K NLL differed (4.07 vs 10.77 nats). Table~\ref{table:environment_diagnostic_journey} records the seven-step diagnostic sequence and the retention-horizon intervention.
 
 \begin{table}[!ht]
 \centering
@@ -527,16 +527,16 @@ The variability finding emerged sequentially across the research history. Stage 
 \textbf{Step} & \textbf{Observation or intervention} & \textbf{Diagnostic implication} \\
 \midrule
 1. L4 baseline & Stage I and first 10B NoPE control on L4 (mbs4); 256K NLL was 4.07. & Established baseline extrapolation, but lacked replicated device-class controls. \\
-2. L40S transition & Promoted NoPE run on L40S (mbs16); 2K validation matched (2.8126 vs 2.8160), but 256K NLL rose to 10.77. & Revealed that short-context pretraining curves were completely blind to long-context divergence. \\
+2. L40S transition & Promoted NoPE run on L40S (mbs16); 2K validation matched (2.8126 vs 2.8160), but 256K NLL rose to 10.77. & Showed that the short-context pretraining curves did not predict long-context behavior. \\
 3. Evaluation replay & L4 and L40S checkpoints re-evaluated under PyTorch 2.12 and 2.13 with identical metrics. & Excluded evaluation software runtime mismatch as the source. \\
 4. Microbatch control & NoPE retrained on L40S with mbs4; 2K validation ended at 2.8128 and 256K NLL at 9.90. & Excluded microbatch size alone as the explanatory mechanism. \\
 5. Deterministic fixtures & Synthetic 2K stream fixtures across device classes showed zero gradient or loss divergence. & Confirmed short-context kernel execution consistency; left training trajectory unconstrained. \\
-6. Retention parameter inspection & Evaluated learned zero-input operating point $\gamma_0 = \sigma(b_\gamma)$ across all layers and heads. & \textbf{Isolated the root cause:} L40S NoPE developed an isolated Block 2 head with $b_\gamma = +13.33$ ($H_{1/2} = 21.01$M tokens), whereas L4 NoPE had max $H_{1/2} = 185.3$ tokens. \\
-7. Single-head causal intervention & Installed reversible inference cap ($H_{\max} = 256$ tok) on the single outlier head; re-evaluated 2K--256K. & \textbf{Causally verified resolution:} Capping the outlier head reduced 256K NLL from 12.00 to 1.14 nats and restored 256K BABILong to 39\%, proving excessive retention mediated the collapse. \\
+6. Retention parameter inspection & Evaluated learned zero-input operating point $\gamma_0 = \sigma(b_\gamma)$ across all layers and heads. & \textbf{Identified an outlier:} L40S NoPE developed an isolated Block 2 head with $b_\gamma = +13.33$ ($H_{1/2} = 21.01$M tokens), whereas L4 NoPE had max $H_{1/2} = 185.3$ tokens. \\
+7. Single-head causal intervention & Installed a reversible inference cap ($H_{\max} = 256$ tok) on the single outlier head and re-evaluated 2K--256K. & \textbf{Tested the mechanism:} Capping the outlier head reduced 256K NLL from 12.00 to 1.14 nats and raised 256K BABILong to 39\%, supporting excessive retention as a mediator of the collapse. \\
 \bottomrule
 \end{tabular}
-\caption{Complete diagnostic journey from the initial L4/L40S divergence to the retention-horizon resolution. Steps 1--5 ruled out evaluation artifacts and microbatch size, while Steps 6--7 identified and verified the isolated gamma forgetting parameter outlier.}
+\caption{Diagnostic sequence from the initial L4/L40S divergence to the retention-horizon intervention. Steps 1--5 ruled out evaluation artifacts and microbatch size. Steps 6--7 identified the isolated retention-gate outlier and tested its effect.}
 \label{table:environment_diagnostic_journey}
 \end{table}
 
-This progression demonstrates that what initially appeared as an intractable hardware environment sensitivity was fundamentally an unconstrained parameter optimization issue in the Titans retention gate. While micro-architectural differences (e.g., CUDA reduction order or floating-point accumulation) during training may trigger the initial stochastic drift, the failure mode is localized to an extreme zero-input retention horizon on a single head, and is fully reversible at inference through targeted retention bounding. All five headline Stage II models were trained in the exact same L40S environment, ensuring an internally controlled comparison.
+This sequence localizes the observed checkpoint failure to one unusually long zero-input retention horizon, and the inference cap reverses much of the measured degradation. It does not establish what training event produced the outlier or whether hardware-level differences contributed to it. All five headline Stage II models were trained in the same L40S environment, providing an internally controlled comparison for those runs.

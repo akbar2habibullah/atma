@@ -79,7 +79,7 @@ def generate_pdf(out_path):
         c.setFont("Helvetica-Bold", 6.6 if is_reference else 7.4)
         c.setFillColor(HexColor(MODEL_COLORS[model]))
         condition_label = "Reference" if is_reference else condition
-        c.drawString(px, top_y - 8, f"{LABELS[model]} — {condition_label} ({endpoint:.1f}% @256K)")
+        c.drawString(px, top_y - 8, f"{LABELS[model]} - {condition_label} ({endpoint:.1f}% @256K)")
         c.setFont("Helvetica", 5.4)
         c.setFillColor(HexColor("#4A5568"))
         for i, label in enumerate(LENGTHS):

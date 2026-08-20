@@ -97,7 +97,7 @@ def generate_parameter_scan_table():
         )
     return table_env(
         header + "\n" + "\n".join(rows),
-        "Learned zero-input retention operating points across base checkpoints. Outlier half-lives reach astronomical values ($>3$M--$21$M tokens) on isolated Block 2 heads in L40S NoPE and Polar, whereas RoPE (max 682 tok) and Atma-Raven-Titans (max 41 tok) remain bounded without pathological drift.",
+        "Learned zero-input retention operating points across base checkpoints. Isolated Block 2 heads in L40S NoPE and Polar have half-lives of $>3$M--$21$M tokens. The maxima are 682 tokens for RoPE and 41 tokens for Atma-Raven-Titans.",
         "table:gamma_parameters_full",
         "llcrrrrrrr",
         size=r"\small",
@@ -167,7 +167,7 @@ def generate_clamp_sweep_table():
         
     return table_env(
         header + "\n" + "\n".join(rows),
-        "Complete paired causal clamp sweep across quantile and half-life caps from 2K to 256K. Capping the single outlier head at hl:256 eliminates NoPE and Polar extrapolation collapse while satisfying the 2K short-context guardrail. In contrast, p99 fails because the 99th percentile remains corrupted by the outlier, and RoPE suffers short-range needle accuracy collapse (82.5\\% $\\rightarrow$ 50.0\\%) without long-range retrieval gain.",
+        "Complete paired clamp sweep across quantile and half-life caps from 2K to 256K. Capping the single outlier head at hl:256 improves NoPE and Polar extrapolation while meeting the 2K short-context guardrail. The p99 setting leaves a long retention horizon, while the RoPE cap reduces short-range needle accuracy from 82.5\\% to 50.0\\% without improving long-range retrieval.",
         "table:gamma_sweep_full",
         "llrrrrrrrrrr",
         size=r"\scriptsize",
@@ -202,7 +202,7 @@ def generate_longdoc_dataset_breakdown_table():
         
     return table_env(
         header + "\n" + "\n".join(rows),
-        "Dataset-level fixed-target long-document likelihood curve, untouched $\\rightarrow$ capped (bits per byte; lower is better). NoPE catastrophic likelihood divergence on FinePDFs (11.666 $\\rightarrow$ 1.180), PG-19 (4.902 $\\rightarrow$ 1.224), and Proof-Pile (7.723 $\\rightarrow$ 2.382) is completely prevented across all lengths.",
+        "Dataset-level fixed-target long-document likelihood, untouched $\\rightarrow$ capped, in bits per byte (lower is better). At 256K, the cap reduces NoPE BPB from 11.666 to 1.180 on FinePDFs, from 4.902 to 1.224 on PG-19, and from 7.723 to 2.382 on Proof-Pile.",
         "table:gamma_longdoc_dataset_breakdown",
         "llrrrrrrrr",
         size=r"\scriptsize",
@@ -302,7 +302,7 @@ def generate_haystack_exact_retrieval_breakdown_table():
         
     return table_env(
         header + "\n" + "\n".join(rows),
-        "Exact five-token retrieval accuracy (\\%) by haystack type, untouched $\\rightarrow$ capped. While all baseline models experience immediate exact real-text collapse (RoPE at 4K, NoPE at 8K), Polar is the only configuration that endures significantly into extrapolation ($93.0\\% \\rightarrow 62.7\\%$ untouched at 8K; $>91\\%$ capped through 8K, with non-zero exact match surviving through 128K).",
+        "Exact five-token retrieval accuracy (\\%) by haystack type, untouched $\\rightarrow$ capped. On real text, RoPE reaches 0.0\\% at 4K and NoPE at 8K. Polar scores 62.7\\% untouched and more than 91\\% capped at 8K, with nonzero capped accuracy through 128K.",
         "table:gamma_haystack_retrieval_exact_full",
         "llrrrrrrrr",
         size=r"\scriptsize",
@@ -357,7 +357,7 @@ def main():
     for model in MODELS:
         rows.append(LABELS[model] + " & " + " & ".join(arrow(bb[model][length], cb[model][length], 0) for length in BABI_LENGTHS) + r" \\")
     sections.append(table_env(header + "\n" + "\n".join(rows),
-        "Complete BABILong curve after adaptation, untouched $\\rightarrow$ capped (macro exact match, \\%). Clamping restores NoPE adapted reasoning to 35--57\\% across 8K--256K contexts (vs 0\\% untouched) and boosts Polar at 256K from 28\\% to 42\\%.",
+        "Complete BABILong curve after adaptation, untouched $\\rightarrow$ capped (macro exact match, \\%). The cap raises NoPE to 35--57\\% across 8K--256K, compared with 0\\% untouched, and raises Polar at 256K from 28\\% to 42\\%.",
         "table:gamma_babilong_full", "l" + "r" * 10))
 
     # 7. Mean BPB curve
@@ -367,7 +367,7 @@ def main():
     for model in MODELS:
         rows.append(LABELS[model] + " & " + " & ".join(arrow(bl[model][length], cl[model][length], 3) for length in LENGTHS) + r" \\")
     sections.append(table_env(header + "\n" + "\n".join(rows),
-        "Complete fixed-target likelihood curve, untouched $\\rightarrow$ capped (mean bits per byte; lower is better), averaged over FinePDFs, PG-19, and Proof-Pile.",
+        "Complete fixed-target likelihood curve, untouched $\\rightarrow$ capped, averaged over FinePDFs, PG-19, and Proof-Pile in mean bits per byte (lower is better).",
         "table:gamma_bpb_full", "l" + "r" * 8))
 
     # 8. Longdoc dataset-level breakdown
