@@ -77,6 +77,7 @@ def main():
     check_tda((args.repo_root / "third_party" / "TDA").resolve())
 
     failures = []
+    approvals = []
     for path in sorted(args.configs.glob("*.json")):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         model = create_model(cfg).cuda().train()
@@ -101,7 +102,7 @@ def main():
             if delta > float(cfg["parameter_tolerance_frac"]):
                 failures.append(f"{cfg['run_id']}: parameter count outside tolerance")
             elif args.approve:
-                _approve_same_arch(args.work_root, cfg, count)
+                approvals.append((cfg, count))
         finally:
             del model
             gc.collect()
@@ -109,6 +110,8 @@ def main():
 
     if failures:
         raise SystemExit("GPU preflight failed:\n" + "\n".join(f"- {x}" for x in failures))
+    for cfg, count in approvals:
+        _approve_same_arch(args.work_root, cfg, count)
     print("GPU preflight passed" + (" and parameter counts approved" if args.approve else ""))
 
 

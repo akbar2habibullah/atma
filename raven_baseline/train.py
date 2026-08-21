@@ -30,13 +30,17 @@ def _fill_runtime_defaults(cfg):
     cfg.setdefault("adamw_weight_decay", 0.1)
     cfg.setdefault("skip_nan_inf", True)
     cfg.setdefault("compile_model", True)
-    cfg.setdefault("atma_head_match", True)
-    if cfg.get("arch_type") != "raven_native" and cfg.get("atma_head_match", True) and cfg.get("num_heads") == 4:
-        cfg["num_heads"] = 8
-    cfg.setdefault(
-        "num_kv_heads",
-        cfg["num_heads"] if cfg.get("arch_type") == "raven_native" else max(1, cfg["num_heads"] // 4),
-    )
+    # External mixers reuse this training loop but define their heads through
+    # architecture-specific fields (for example ``mamba3_head_dim`` and
+    # ``head_dim``), not Raven's ``num_heads``/``num_kv_heads`` pair.
+    if cfg.get("baseline_family") != "external":
+        cfg.setdefault("atma_head_match", True)
+        if cfg.get("arch_type") != "raven_native" and cfg.get("atma_head_match", True) and cfg.get("num_heads") == 4:
+            cfg["num_heads"] = 8
+        cfg.setdefault(
+            "num_kv_heads",
+            cfg["num_heads"] if cfg.get("arch_type") == "raven_native" else max(1, cfg["num_heads"] // 4),
+        )
     return cfg
 
 

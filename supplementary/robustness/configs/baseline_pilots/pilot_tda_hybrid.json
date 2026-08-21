@@ -13,7 +13,7 @@
   "vocab_size": 50304,
   "hidden_size": 1024,
   "num_hidden_layers": 16,
-  "head_dim": 128,
+  "head_dim": 64,
   "conv_kernel_size": 3,
   "seq_len": 2048,
   "num_chunks": 10,

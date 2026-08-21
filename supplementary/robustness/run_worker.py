@@ -69,6 +69,12 @@ def main():
         print(f"cleared {len(paths)} running marker(s); only safe after checking the recorded host/pid")
         return
 
+    if not args.config_dir.is_dir():
+        raise SystemExit(f"config directory does not exist: {args.config_dir}")
+    matching_configs = sorted(args.config_dir.glob(args.include))
+    if not matching_configs:
+        raise SystemExit(f"no configs match {args.include!r} under {args.config_dir}")
+
     env = dict(os.environ)
     env.setdefault("FLA_CUSTOM_OP", "1")
     if args.gpu is not None:
@@ -80,11 +86,13 @@ def main():
     host, pid = socket.gethostname(), os.getpid()
     while True:
         selected = None
-        for config_path in sorted(args.config_dir.glob(args.include)):
+        unapproved = []
+        for config_path in matching_configs:
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
             if not cfg.get("enabled", True):
                 continue
             if cfg.get("baseline_family") == "external" and not cfg.get("parameter_count_approved", False):
+                unapproved.append(cfg["run_id"])
                 continue
             run_id = cfg["run_id"]
             if any((args.state_dir / f"{run_id}.{suffix}").exists() for suffix in ("running", "done", "failed")):
@@ -94,7 +102,13 @@ def main():
                 selected = config_path, cfg, running
                 break
         if selected is None:
-            print("no runnable configs; disabled, unapproved, claimed, and completed configs are skipped")
+            if unapproved:
+                raise SystemExit(
+                    "enabled external configs are not parameter-count approved: "
+                    + ", ".join(unapproved)
+                    + "; run python -m supplementary.robustness.gpu_preflight --approve first"
+                )
+            print("no runnable configs; disabled, claimed, and completed configs are skipped")
             return
 
         config_path, cfg, running = selected

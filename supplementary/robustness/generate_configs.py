@@ -49,7 +49,10 @@ def _external_cfg(arch: str, *, scaled: bool, run_id: str, seed: int, enabled: b
     spec = EVAL["scaled" if scaled else "pilot"]
     tda = arch == "tda_hybrid"
     hidden = 1024 if tda else 960  # provisional; GPU calibration must approve the exact count
-    head_dim = 128 if tda else 64
+    # The pinned TDA Triton kernel exceeds the L40S shared-memory limit at
+    # head_dim=128. 64 preserves the hidden width/parameter match and passes
+    # the materialized parity plus full-model forward/backward checks.
+    head_dim = 64
     cfg = {
         "run_id": run_id,
         "runner": "external_baselines.train",

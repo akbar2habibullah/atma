@@ -16,8 +16,8 @@ The 68B-token ceiling consists of:
 
 `manifest.json` and `eval_manifest.json` are the protocol source of truth. Generated
 configs in `configs/` are immutable inputs. GPU workers operate on ignored copies under
-`work/`, so claims, approvals, logs, and promotion decisions do not mutate the source
-protocol.
+`work/` when approvals or promotion can change a config. Wave 2 replication workers may
+read their immutable source configs directly; claims and logs still remain under `work/`.
 
 ## 1. CPU preparation
 
@@ -159,20 +159,61 @@ historical logs; it must not be used to promote an incomplete fresh pilot.
 
 ## 7. Wave 2: paired replications
 
-Schedule one complete Polar/NoPE pair at a time:
+On the Wave 2 machine, schedule one model at a time and finish both models from a seed
+pair before starting the next seed. Run the following four commands from the repository
+root, in order.
+
+Seed 1 Polar:
 
 ```bash
 python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/work/configs/replication \
-  --include "repl_seed1_*.json" \
+  --config_dir supplementary/robustness/configs/replication \
+  --include repl_seed1_polar.json \
   --log_dir supplementary/robustness/work/logs/replication \
   --state_dir supplementary/robustness/work/state/replication \
-  --ckpt_dir checkpoints/supplementary_robustness --gpu 0
+  --ckpt_dir checkpoints/supplementary_robustness \
+  --gpu 0 --once
 ```
 
-Repeat with `repl_seed2_*.json`. If using two hosts, assign the two models from one seed
-pair to equivalent GPU types and preserve the shared config/state directory or use one
-explicit filename per worker.
+Seed 1 NoPE:
+
+```bash
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/replication \
+  --include repl_seed1_nope.json \
+  --log_dir supplementary/robustness/work/logs/replication \
+  --state_dir supplementary/robustness/work/state/replication \
+  --ckpt_dir checkpoints/supplementary_robustness \
+  --gpu 0 --once
+```
+
+Seed 2 Polar:
+
+```bash
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/replication \
+  --include repl_seed2_polar.json \
+  --log_dir supplementary/robustness/work/logs/replication \
+  --state_dir supplementary/robustness/work/state/replication \
+  --ckpt_dir checkpoints/supplementary_robustness \
+  --gpu 0 --once
+```
+
+Seed 2 NoPE:
+
+```bash
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/replication \
+  --include repl_seed2_nope.json \
+  --log_dir supplementary/robustness/work/logs/replication \
+  --state_dir supplementary/robustness/work/state/replication \
+  --ckpt_dir checkpoints/supplementary_robustness \
+  --gpu 0 --once
+```
+
+All four commands intentionally share the same log and state directories. If Wave 2 is
+run on another host, copy its replication logs, state markers, source configs, and
+checkpoint hashes back to the primary experiment archive before summarizing.
 
 ## 8. Wave 3: promoted 10B baselines
 

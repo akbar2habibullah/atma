@@ -1,7 +1,10 @@
 import json
+import subprocess
+import sys
 
 from supplementary.robustness.generate_configs import generate
 from supplementary.robustness.validate_plan import validate
+from raven_baseline.train import _fill_runtime_defaults
 
 
 def test_generated_robustness_plan_is_complete(tmp_path):
@@ -32,3 +35,35 @@ def test_scaled_external_candidates_start_disabled(tmp_path):
     assert not any(c["enabled"] for c in configs)
     assert not any(c["parameter_count_approved"] for c in configs)
 
+
+def test_external_configs_do_not_require_raven_head_fields(tmp_path):
+    generate(tmp_path)
+    for path in (tmp_path / "baseline_pilots").glob("*.json"):
+        cfg = json.loads(path.read_text())
+        resolved = _fill_runtime_defaults(cfg)
+        assert resolved["optimizer"] == "adamw_external"
+        assert "num_heads" not in resolved
+        assert "num_kv_heads" not in resolved
+
+
+def test_worker_rejects_enabled_unapproved_external_config(tmp_path):
+    config_root = tmp_path / "configs"
+    generate(config_root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "supplementary.robustness.run_worker",
+            "--config_dir",
+            str(config_root / "baseline_pilots"),
+            "--log_dir",
+            str(tmp_path / "logs"),
+            "--state_dir",
+            str(tmp_path / "state"),
+            "--once",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "not parameter-count approved" in result.stderr
