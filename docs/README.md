@@ -19,6 +19,7 @@ This directory separates stable user documentation from experiment-specific rese
 - [9.816B-token matched runs](../scaled_ablation/README.md)
 - [Benchmark matrix and protocols](../benchmarks/README.md)
 - [Raven-family baselines](../raven_baseline/README.md)
+- [Robustness and modern-baseline supplement](../supplementary/robustness/README.md)
 - [Edge runtime](../edge/README.md)
 
 ## Systems and runbooks

@@ -1,0 +1,43 @@
+{
+  "experiment": "robustness_component_and_modern_baselines",
+  "protocol_version": 1,
+  "token_ceiling": 68000000000,
+  "groups": {
+    "replication": {
+      "planned_tokens": 40000000000,
+      "required": true,
+      "claim": "Polar versus NoPE paired-seed reproducibility"
+    },
+    "polar_components": {
+      "planned_tokens": 5000000000,
+      "required": true,
+      "claim": "one-factor attribution within Polar"
+    },
+    "baseline_pilots": {
+      "planned_tokens": 3000000000,
+      "required": true,
+      "claim": "convergence and implementation screening only"
+    },
+    "tda_scaled": {
+      "planned_tokens": 10000000000,
+      "required": false,
+      "promotion": "stable pilot, finite gradients, and competitive prespecified metrics"
+    },
+    "linear_scaled_selection": {
+      "planned_tokens": 10000000000,
+      "required": false,
+      "choose_one": ["mamba3_native", "gdn2_native"]
+    }
+  },
+  "seed_pairs": [
+    {"pair": "seed1", "init_seed": 202701, "data_seed": 202701},
+    {"pair": "seed2", "init_seed": 202702, "data_seed": 202702}
+  ],
+  "notes": [
+    "The token ceiling is an upper bound, not a spending target.",
+    "The two runs in a replication pair are an indivisible scheduling unit.",
+    "Scaled external baselines remain disabled until a recorded promotion decision.",
+    "The sparse foveal-CPT extension is out of scope for this experiment."
+  ]
+}
+

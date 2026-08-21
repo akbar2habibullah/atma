@@ -29,6 +29,10 @@ class AtmaConfig:
     #   "wall"  -> softmax CausalSelfAttention, canon + Wall Attention per-channel log-decay gates
     # softmax cores share the SAME GQA + output-gate surround; memory/window/distractor apply to all.
     attn_type: str = "polar"
+    # Mechanistic variants used only by the supplementary Polar component study.
+    # ``full`` is the published architecture.  The other values preserve the same
+    # projections and parameter shapes so checkpoints and optimizers stay comparable.
+    polar_variant: str = "full"  # full|direction_only|constant_magnitude|fixed_null|fixed_temperature
     wall_gate_bias: float | None = None  # None -> Tilde-style open-gate init bias of 6.0
     # MAG compression memory (Titans-style linear gated-delta) + sliding window.
     # Defaults leave the model byte-identical to plain polar attention (no window, no

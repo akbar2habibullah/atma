@@ -1,0 +1,20 @@
+{
+  "flash_linear_attention": {
+    "repository": "https://github.com/fla-org/flash-linear-attention.git",
+    "commit": "e47d5d20aeb5989b58a3738b872e7c288a9fb75f",
+    "checkout": "third_party/flash-linear-attention",
+    "notes": "GDN-2 is provided by fla.layers.GatedDeltaNet2. Mamba-3 also requires the matching state-spaces/mamba Mamba-3 CUDA kernels."
+  },
+  "mamba": {
+    "repository": "https://github.com/state-spaces/mamba.git",
+    "commit": "e9594ce1c732d97440f0332fdc43170a2294dbfa",
+    "checkout": "third_party/mamba",
+    "notes": "Build/install this checkout on the GPU host; Mamba-3 SISO training must expose mamba3_siso_combined."
+  },
+  "tda": {
+    "repository": "https://github.com/snap-research/TDA.git",
+    "commit": "cd8ddc9d5b43a1dcf86f9cfda302edb5cc108da2",
+    "checkout": "third_party/TDA",
+    "license": "non-commercial research-only; retain the upstream license and do not vendor without review"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tokenizer": "gpt2",
+  "eval_seed": 1234,
+  "pilot": {
+    "clean_dataset": "codelion/finepdfs-100M",
+    "lengths": [2048, 4096, 8192, 16384, 32768, 65536],
+    "num_eval_docs": 16,
+    "num_needle_trials": 16,
+    "needle_value_tokens": 5
+  },
+  "scaled": {
+    "clean_dataset": "codelion/finepdfs-1B",
+    "lengths": [2048, 4096, 8192, 16384, 32768, 65536, 131072],
+    "num_eval_docs": 64,
+    "num_needle_trials": 64,
+    "needle_value_tokens": 5
+  },
+  "rules": [
+    "Use the same document prefixes and eval seed for every model.",
+    "Do not add or remove primary metrics after pilot results are visible.",
+    "Report OOM as missing at that length, never as a numeric failure score.",
+    "Keep 1B pilot results separate from 9.816B-token Stage-II results."
+  ]
+}
+

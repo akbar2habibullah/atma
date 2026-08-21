@@ -86,6 +86,9 @@ def main():
     import torch.nn.functional as F
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    from train.reproducibility import runtime_metadata, seed_run
+    seed_meta = seed_run(cfg, torch)
+    runtime_meta = runtime_metadata(torch)
 
     def p0(s):
         print(s); fh.write(s + "\n")
@@ -94,6 +97,7 @@ def main():
     p0(f"[scaled_ablation] run_id={cfg['run_id']} host={socket.gethostname()} device={device} "
        f"torch={torch.__version__} fla_custom_op={os.environ.get('FLA_CUSTOM_OP','0')} "
        f"wall_custom_op={os.environ.get('ATMA_WALL_CUSTOM_OP','0')}")
+    p0(f"[scaled_ablation] seeds={seed_meta}")
     p0("=" * 100)
 
     try:
@@ -137,12 +141,14 @@ def main():
             mem_enabled=cfg["mem_enabled"], mem_chunk=cfg["mem_chunk"],
             mem_gamma_bias=cfg["mem_gamma_bias"], mem_beta_bias=cfg["mem_beta_bias"],
             mem_kernel=cfg["mem_kernel"], wall_gate_bias=cfg.get("wall_gate_bias"),
+            polar_variant=cfg.get("polar_variant", "full"),
         )
         model = Model(ac, reg_mode=cfg["reg_mode"], sketch_dim=cfg["sketch_dim"]).to(device)
         num_params = sum(p.numel() for p in model.parameters())
         p0(f"[scaled_ablation] params={num_params/1e6:.2f}M")
         _emit_block(fh, "ABLATION_CONFIG_JSON", {**cfg, "num_params": num_params,
-                                                 "host": socket.gethostname(), "device": str(device)})
+                                                 "host": socket.gethostname(), "device": str(device),
+                                                 "runtime": runtime_meta})
 
         if device.type == "cuda":
             model = torch.compile(model)

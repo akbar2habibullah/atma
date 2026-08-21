@@ -64,6 +64,11 @@ def main():
     args = ap.parse_args()
 
     cfg = _fill_runtime_defaults(json.load(open(args.config, encoding="utf-8")))
+    if cfg.get("baseline_family") == "external" and not cfg.get("parameter_count_approved", False):
+        raise SystemExit(
+            "external baseline is not parameter-count approved; run "
+            "python -m supplementary.robustness.gpu_preflight --approve first"
+        )
     fh = _log_open(args.log)
 
     import torch
@@ -71,6 +76,9 @@ def main():
     from torch.optim import AdamW
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    from train.reproducibility import runtime_metadata, seed_run
+    seed_meta = seed_run(cfg, torch)
+    runtime_meta = runtime_metadata(torch)
 
     def p0(s):
         print(s)
@@ -82,12 +90,16 @@ def main():
         f"host={socket.gethostname()} device={device} torch={torch.__version__} "
         f"fla_custom_op={os.environ.get('FLA_CUSTOM_OP', '0')}"
     )
+    p0(f"[raven_baseline] seeds={seed_meta}")
     p0("=" * 100)
 
     try:
         from train.data import data_generator, get_data
         from raven_baseline.evaluate import run_eval
-        from raven_baseline.model import create_model
+        if cfg.get("baseline_family") == "external":
+            from external_baselines.model import create_model
+        else:
+            from raven_baseline.model import create_model
 
         seq_len = cfg["seq_len"]
         batch_size = cfg["batch_size"]
@@ -117,11 +129,17 @@ def main():
 
         model = create_model(cfg).to(device)
         num_params = sum(p.numel() for p in model.parameters())
+        approved_count = cfg.get("resolved_num_params")
+        if cfg.get("baseline_family") == "external" and approved_count != num_params:
+            raise RuntimeError(
+                f"approved parameter count {approved_count} no longer matches constructed model {num_params}"
+            )
         p0(f"[raven_baseline] params={num_params/1e6:.2f}M")
         _emit_block(
             fh,
             "ABLATION_CONFIG_JSON",
-            {**cfg, "num_params": num_params, "host": socket.gethostname(), "device": str(device)},
+            {**cfg, "num_params": num_params, "host": socket.gethostname(), "device": str(device),
+             "runtime": runtime_meta},
         )
 
         if device.type == "cuda" and cfg.get("compile_model", True):
@@ -131,6 +149,7 @@ def main():
             if (
                 name in {"proj.weight", "_orig_mod.proj.weight"}
                 or name.endswith(".o_proj.weight")
+                or name.endswith(".out_proj.weight")
                 or name.endswith(".mlp.proj.weight")
             ):
                 p.data.zero_()

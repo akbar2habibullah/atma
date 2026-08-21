@@ -80,6 +80,7 @@ FLA_CUSTOM_OP=1 python -m tests.verify --cuda
 | [`scaled_ablation/`](scaled_ablation/) | Stage II 9.816B-token matched attention runs |
 | [`benchmarks/`](benchmarks/) | Retrieval, BABILong, long-document, base-task, and serving evaluation |
 | [`raven_baseline/`](raven_baseline/) | Separately optimized recurrent-family baselines |
+| [`supplementary/robustness/`](supplementary/robustness/) | Paired replications, Polar component study, and gated modern-baseline pilots |
 | [`baseline_inference/`](baseline_inference/) | Checkpoint-exact inference forks used by the benchmark harness |
 | [`edge/`](edge/) | Experimental tinygrad edge runtime |
 | [`pages/`](pages/) | Static research article and generated dashboard |

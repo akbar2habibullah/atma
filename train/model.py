@@ -684,6 +684,7 @@ class PolarAttention(AtmaAttnBase):
         self.k_block = k_block
         self.window = window            # trainable sliding window (config); eval.py --window overrides
         self.attn_kernel = attn_kernel  # "torch" | "triton" (Triton flash kernel, CUDA only)
+        self.polar_variant = "full"
         H, dk = self.num_heads, self.head_dim
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
@@ -734,8 +735,13 @@ class PolarAttention(AtmaAttnBase):
 
         n_keys = torch.arange(1, T + 1, device=x.device, dtype=torch.float32)
         polar_params = dict(
-            v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
-            len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
+            v_null=self.v_null,
+            null_base=self.null_base,
+            null_slope_raw=(torch.full_like(self.null_slope_raw, -30.0)
+                            if self.polar_variant == "fixed_null" else self.null_slope_raw),
+            len_gain_raw=(torch.full_like(self.len_gain_raw, -30.0)
+                          if self.polar_variant == "fixed_temperature" else self.len_gain_raw),
+            mag_beta_raw=self.mag_beta_raw,
         )
 
         use_triton = (self.attn_kernel == "triton" and HAS_TRITON
@@ -778,7 +784,12 @@ class PolarAttention(AtmaAttnBase):
 
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
-        count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, D)
+        if self.polar_variant == "direction_only":
+            count = torch.zeros_like(content)
+        else:
+            if self.polar_variant == "constant_magnitude":
+                mag = torch.ones_like(mag)
+            count = self.mu_proj(mag.transpose(1, 2))      # (B, T, H) -> (B, T, D)
         out = content + count
         if self.mem is not None:                            # MAG long-term memory branch
             out = out + self.mem(x, q_t, k_t, v_t)
@@ -808,6 +819,7 @@ class Block(nn.Module):
         mem_beta_bias: float = 0.0,
         mem_kernel: str = "auto",
         wall_gate_bias: float | None = None,
+        polar_variant: str = "full",
     ):
         super().__init__()
         if not attention:
@@ -818,6 +830,10 @@ class Block(nn.Module):
                                        attn_kernel=attn_kernel, window=attn_window, mem_enabled=mem_enabled,
                                        mem_chunk=mem_chunk, mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias,
                                        mem_kernel=mem_kernel)
+            allowed = {"full", "direction_only", "constant_magnitude", "fixed_null", "fixed_temperature"}
+            if polar_variant not in allowed:
+                raise ValueError(f"unknown polar_variant={polar_variant!r}; expected one of {sorted(allowed)}")
+            self.attn.polar_variant = polar_variant
         else:  # "nope" | "rope" | "wall" — softmax core with shared GQA+gate surround
             self.attn = CausalSelfAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads,
                                             num_random_keys=num_random_keys, kernel_size=attn_kernel_size,
@@ -865,6 +881,7 @@ class Model(nn.Module):
                 mem_beta_bias=config.mem_beta_bias,
                 mem_kernel=config.mem_kernel,
                 wall_gate_bias=config.wall_gate_bias,
+                polar_variant=config.polar_variant,
             )
             for i in range(config.num_hidden_layers)
         ])
