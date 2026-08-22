@@ -92,7 +92,10 @@ def main():
     p0(
         f"[raven_baseline] run_id={cfg['run_id']} arch_type={cfg['arch_type']} "
         f"host={socket.gethostname()} device={device} torch={torch.__version__} "
-        f"fla_custom_op={os.environ.get('FLA_CUSTOM_OP', '0')}"
+        f"fla_custom_op={os.environ.get('FLA_CUSTOM_OP', '0')} "
+        f"external_custom_op={os.environ.get('EXTERNAL_CUSTOM_OP', '0')} "
+        f"gdn2_cuda_graph={int(bool(cfg.get('gdn2_cuda_graph', False)))} "
+        f"tda_cuda_graph={int(bool(cfg.get('tda_cuda_graph', False)))}"
     )
     p0(f"[raven_baseline] seeds={seed_meta}")
     p0("=" * 100)
@@ -146,7 +149,18 @@ def main():
              "runtime": runtime_meta},
         )
 
-        if device.type == "cuda" and cfg.get("compile_model", True):
+        optimized_trainer = None
+        if device.type == "cuda" and cfg.get("gdn2_cuda_graph", False):
+            from external_baselines.gdn2_training import GDN2CUDAGraphTrainer
+
+            optimized_trainer = GDN2CUDAGraphTrainer(model)
+            p0("[raven_baseline] GDN-2 split compilation + CUDA-graph training enabled")
+        elif device.type == "cuda" and cfg.get("tda_cuda_graph", False):
+            from external_baselines.tda_training import TDACUDAGraphTrainer
+
+            optimized_trainer = TDACUDAGraphTrainer(model)
+            p0("[raven_baseline] TDA split compilation + CUDA-graph training enabled")
+        elif device.type == "cuda" and cfg.get("compile_model", True):
             model = torch.compile(model)
 
         for name, p in model.named_parameters():
@@ -260,6 +274,11 @@ def main():
                     f"step:{step}/{train_steps} val_loss:{val_loss:.5f} wall:{training_time:.1f}s "
                     f"step_avg:{1000 * step_avg:.1f}ms MFU:{mfu:.1f}%"
                 )
+                if device.type == "cuda" and optimized_trainer is not None and optimized_trainer.captured:
+                    p0(
+                        f"[memory] max_alloc={torch.cuda.max_memory_allocated() / 1024**3:.2f}GiB "
+                        f"max_reserved={torch.cuda.max_memory_reserved() / 1024**3:.2f}GiB"
+                    )
                 if device.type == "cuda":
                     torch.cuda.empty_cache()
                 t0 = time.perf_counter()
@@ -270,18 +289,23 @@ def main():
             inputs, targets = next(train_loader)
             assert len(inputs) % mbs == 0
             for i in range(len(inputs) // mbs):
-                ls, reg_loss, align_loss = model(inputs[i * mbs:(i + 1) * mbs], targets[i * mbs:(i + 1) * mbs])
-                loss = (1 - sigr_alpha) * ls + sigr_alpha * reg_loss + dist_w * align_loss
-                loss.backward()
+                micro_inputs = inputs[i * mbs:(i + 1) * mbs]
+                micro_targets = targets[i * mbs:(i + 1) * mbs]
+                if optimized_trainer is not None:
+                    optimized_trainer.backward(micro_inputs, micro_targets)
+                else:
+                    ls, reg_loss, align_loss = model(micro_inputs, micro_targets)
+                    loss = (1 - sigr_alpha) * ls + sigr_alpha * reg_loss + dist_w * align_loss
+                    loss.backward()
             grad_norm = nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             if cfg.get("skip_nan_inf", True) and not torch.isfinite(grad_norm):
                 p0(f"[raven_baseline] non-finite grad_norm at step {step}; skipping optimizer step")
-                model.zero_grad(set_to_none=True)
+                model.zero_grad(set_to_none=(optimized_trainer is None))
                 continue
             set_hparams(step)
             for opt in optimizers:
                 opt.step()
-            model.zero_grad(set_to_none=True)
+            model.zero_grad(set_to_none=(optimized_trainer is None))
 
         mfu_final = curve[-1]["mfu"] if curve else 0.0
         _emit_block(fh, "ABLATION_CURVE_JSON", curve)

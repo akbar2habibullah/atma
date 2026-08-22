@@ -1,162 +1,71 @@
 # External baseline adapters
 
-This package supplies Atma-evaluation-compatible wrappers for the supplementary TDA,
-Mamba-3, and GDN-2 runs. It does not vendor third-party kernels. The experiment pins
-their source commits in [`supplementary/robustness/dependencies.json`](../supplementary/robustness/dependencies.json).
+This package supplies checkpoint- and evaluation-compatible wrappers for the
+supplementary TDA, Mamba-3, and GDN-2 experiments. The authoritative status, installation,
+promotion, and six-machine commands are in
+[`supplementary/robustness/README.md`](../supplementary/robustness/README.md).
 
-- `tda_hybrid` keeps Atma's 12 local LFM2 layers and replaces the four global layers
-  with TDA. This is the Stage-II mechanism baseline.
-- `mamba3_native` and `gdn2_native` use the upstream mixer in all 16 blocks, matching
-  the role of `raven_native` as an external model-family baseline.
+## Architecture contract
 
-The wrappers deliberately share Raven's AdamW training harness and the normal
-`ABLATION_*_JSON` log contract. They require CUDA and must pass the GPU preflight in the
-supplementary runbook before any 1B-token pilot is launched.
+- `tda_hybrid` retains Atma's 12 local LFM2 layers and replaces the four global
+  layers with the official TDA kernel. Its matched Titans side channel remains enabled.
+- `mamba3_native` uses the pinned upstream Mamba-3 SISO mixer in all 16 blocks.
+- `gdn2_native` uses the pinned upstream GDN-2 mixer in all 16 blocks.
+- All three share the same AdamW training harness and `ABLATION_*_JSON` log/evaluation
+  contract.
 
-## Preparation status on the pilot machine
+Approved parameter counts are 388,641,924 for TDA, 368,108,416 for Mamba-3, and
+366,322,864 for GDN-2, each within 5% of the 378.2M target.
 
-The pilot machine is preparation-only until an operator explicitly launches the 1B
-worker. No 10B external baseline should be run on this machine.
+## Compile integration
 
-Preparation record from 2026-08-22 on one NVIDIA L40S with PyTorch 2.13.0+cu130:
+The pinned Mamba kernel graph-breaks under `torch.compile`. `custom_ops.py` wraps its
+parameter-free SISO recurrence and fused RMSNorm with local `torch.library.custom_op`
+forward/backward operators, following the established pattern in `model/blocks.py`.
+The backward invokes the pinned implementation directly so rotary-angle gradients are
+preserved. Projections, residuals, and MLPs remain visible to the compiler. Checkpoint
+keys and parameter counts are unchanged, and no pinned third-party file is patched.
 
-| Model | Resolved parameters | Difference from 378.2M target |
-|---|---:|---:|
-| GDN-2 | 366,322,864 | 3.14% |
-| Mamba-3 | 368,108,416 | 2.67% |
-| TDA hybrid | 388,641,924 | 2.76% |
+An opaque custom-op wrapper was also tested for GDN-2, but it slowed a resolved-width
+full block to 0.81× eager speed because its backward repeated too much forward work. That
+wrapper was removed. `gdn2_training.py` instead keeps the pinned FLA autograd kernels and
+makes their three compiler-disabled boundaries explicit: short convolution, GDN-2
+recurrence, and gated normalization. Projection/gate preparation, the output/MLP tail,
+and the loss head compile separately; the fixed `mbs=4`, `seq_len=2048`
+forward/backward microstep is replayed through a CUDA graph.
 
-The atomic GPU preflight passed for all three models. The complete ten-cell, three-step
-smoke matrix also passed, including structured 2K/4K evaluation. All three external
-smoke checkpoints passed strict reload and a finite forward pass. No 1B external pilot
-and no 10B run was launched as part of this preparation record.
+On the validation L40S, a complete 524,288-token step (64 microbatches, gradient
+clipping, and one fused AdamW update) measured 12.318 seconds, **30.28% MFU**, and
+12.09 GiB peak reserved memory. The prior eager path measured 22.73 seconds, 16.4% MFU,
+and 24.72 GiB reserved. Checkpoint keys and the ordinary validation/evaluation path are
+unchanged because the compiled helpers only reference parameters owned by the original
+model.
 
-The pinned dependency commits are:
+`tda_training.py` removes the pinned wrapper's repeated `beta.item()` synchronization by
+passing the fixed configured threshold as a Python scalar, split-compiles the tensor-only
+regions around TDA and the matched Titans recurrence, and CUDA-graphs the microstep. It
+uses the unchanged pinned FP32 Triton kernels with launch geometry tuned for the approved
+64-dimensional heads. The tuned and upstream launches produced bit-identical bf16 output
+and gradients at sequence lengths 128 and 2048. Three complete post-warmup L40S steps
+measured a 9.853-second median, **40.20% MFU**, and **10.77 GiB peak reserved memory**,
+compared with 19.933 seconds, 19.87% MFU, and 22.68 GiB for the old eager path using the
+same pinned dependencies.
 
-| Dependency | Commit |
-|---|---|
-| Flash Linear Attention | `e47d5d20aeb5989b58a3738b872e7c288a9fb75f` |
-| Mamba | `e9594ce1c732d97440f0332fdc43170a2294dbfa` |
-| TDA | `cd8ddc9d5b43a1dcf86f9cfda302edb5cc108da2` |
+Synthetic CUDA checks on 2026-08-22 passed strict full-graph finite forward/backward for
+Mamba-3 and forward parity plus split-compiled CUDA-graph backward for TDA and GDN-2. The
+required per-machine `gpu_preflight` repeats the applicable check with the resolved full
+model.
 
-Run `python -m supplementary.robustness.gpu_preflight --approve` after generating and
-validating `supplementary/robustness/configs`. Approval is written directly to the pilot
-and matching scaled configs in this single operational config tree.
+## Experiment status
 
-The experiment uses Mamba-3 SISO (`mamba3_mimo=false`). On Python 3.12, optional
-TileLang 0.1.8 may fail while importing its bundled TVM even though MIMO is disabled. If
-that occurs, uninstall `tilelang` after installing the pinned Mamba checkout and verify:
+The five Polar-component 1B runs are complete. None of the three external 1B pilots and
+none of the external 10B runs is complete. A stale, interrupted GDN-2 marker/log from an
+attempt that never reached step 1 is not an experiment result and must not be promoted.
 
-```bash
-python -m pip uninstall -y tilelang
-PYTHONPATH="$PWD/third_party/flash-linear-attention:$PWD/third_party/mamba${PYTHONPATH:+:$PYTHONPATH}" \
-python - <<'PY'
-from fla.layers.mamba3 import is_fast_path_available, mamba3_mimo_combined
-assert is_fast_path_available, "Mamba-3 SISO kernel is unavailable"
-assert mamba3_mimo_combined is None, "this protocol does not use the optional MIMO path"
-print("Mamba-3 SISO import OK")
-PY
-```
+After the three 1B pilot logs complete, `supplementary.robustness.promote` records the
+prespecified choice. The two external 10B jobs are then TDA when promoted and exactly one
+of Mamba-3/GDN-2. They must run on separate machines from the exact same dispatch commit.
 
-Do not manually set `parameter_count_approved`, and do not regenerate configs with
-`generate_configs --clean` after approval or training has started.
-
-## Handoff to the 10B machine
-
-Wave 1 produces three separate 1B screening runs. After their structured evaluations
-finish, copy all three pilot logs to the machine where the promotion decision will be
-recorded:
-
-```text
-supplementary/robustness/work/logs/baseline_pilots/
-  pilot_tda_hybrid.log
-  pilot_mamba3_native.log
-  pilot_gdn2_native.log
-```
-
-Archive and transfer the following together:
-
-- the exact repository commit;
-- the three pilot logs and their SHA-256 hashes;
-- `supplementary/robustness/dependencies.json`;
-- the approved pilot and scaled configs;
-- `promotion_decision.json` after promotion;
-- dependency commit output and GPU/preflight output.
-
-On the 10B machine, install the same pinned checkouts, generate its config tree, and run
-the GPU preflight on that machine. Copy the pilot logs into the path above, then
-record one prespecified decision. TDA may be promoted or omitted; exactly one of Mamba-3
-and GDN-2 must be selected.
-
-TDA plus Mamba-3:
-
-```bash
-python -m supplementary.robustness.promote \
-  --tda promote \
-  --linear mamba3_native \
-  --reason "Stable pilots; selected by the prespecified validation/retrieval rule."
-```
-
-TDA plus GDN-2:
-
-```bash
-python -m supplementary.robustness.promote \
-  --tda promote \
-  --linear gdn2_native \
-  --reason "Stable pilots; selected by the prespecified validation/retrieval rule."
-```
-
-Use `--tda omit` instead when the TDA pilot fails its gate. Promotion updates only
-`supplementary/robustness/configs/baseline_scaled`.
-
-## Individual 10B commands
-
-Run only the configs enabled by the recorded promotion decision. These commands are
-intentionally one model per worker invocation.
-
-TDA 10B, when promoted:
-
-```bash
-python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/configs/baseline_scaled \
-  --include scaled_tda_hybrid.json \
-  --log_dir supplementary/robustness/work/logs/baseline_scaled \
-  --state_dir supplementary/robustness/work/state/baseline_scaled \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
-```
-
-Mamba-3 10B, when selected:
-
-```bash
-python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/configs/baseline_scaled \
-  --include scaled_mamba3_native.json \
-  --log_dir supplementary/robustness/work/logs/baseline_scaled \
-  --state_dir supplementary/robustness/work/state/baseline_scaled \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
-```
-
-GDN-2 10B, when selected:
-
-```bash
-python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/configs/baseline_scaled \
-  --include scaled_gdn2_native.json \
-  --log_dir supplementary/robustness/work/logs/baseline_scaled \
-  --state_dir supplementary/robustness/work/state/baseline_scaled \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
-```
-
-After each run, strictly reload its checkpoint:
-
-```bash
-python -m external_baselines.verify_checkpoint \
-  checkpoints/supplementary_robustness/<run_id>
-```
-
-Finally return the 10B logs, state markers, resolved configs, checkpoint hashes,
-and dependency/preflight records to the primary experiment archive before running
-`python -m supplementary.robustness.summarize`.
+Do not manually edit `parameter_count_approved`, do not regenerate configs with
+`generate_configs --clean`, and do not patch `third_party/` checkouts. Use the setup,
+preflight, and individual worker commands in the main robustness runbook.

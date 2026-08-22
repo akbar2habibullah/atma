@@ -34,7 +34,7 @@ def main():
     )
     parser.add_argument("--pilot_logs", type=Path, default=ROOT / "work" / "logs" / "baseline_pilots")
     parser.add_argument(
-        "--decision_out", type=Path, default=ROOT / "work" / "promotion_decision.json"
+        "--decision_out", type=Path, default=ROOT / "configs" / "promotion_decision.json"
     )
     parser.add_argument("--tda", choices=("promote", "omit"), required=True)
     parser.add_argument("--linear", choices=("mamba3_native", "gdn2_native"), required=True)

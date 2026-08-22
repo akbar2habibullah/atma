@@ -84,4 +84,29 @@ def check_tda(source_dir: Path):
                 )
 
 
-__all__ = ["check_tda"]
+def check_tda_tuned(length: int = 128):
+    """Require bitwise bf16 output/gradient parity for the launch-tuned adapter."""
+    import torch
+    import torch.nn.functional as F
+    from triton_threshold_attention import threshold_rela_triton
+    from external_baselines.tda_training import tuned_threshold_rela
+
+    torch.manual_seed(29)
+    shape = (1, 16, length, 64)
+    raw = [torch.randn(shape, device="cuda", dtype=torch.bfloat16) for _ in range(3)]
+    raw[0] = F.normalize(raw[0], dim=-1)
+    raw[1] = F.normalize(raw[1], dim=-1)
+    upstream = [tensor.detach().clone().requires_grad_(True) for tensor in raw]
+    tuned = [tensor.detach().clone().requires_grad_(True) for tensor in raw]
+    grad = torch.randn(shape, device="cuda", dtype=torch.bfloat16)
+    expected = threshold_rela_triton(*upstream, 1.0, 2.0)
+    actual = tuned_threshold_rela(*tuned, 1.0, 2.0)
+    expected_grads = torch.autograd.grad(expected, upstream, grad)
+    actual_grads = torch.autograd.grad(actual, tuned, grad)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=0, atol=0)
+    print(f"TDA tuned/upstream bitwise bf16 parity OK (length={length})")
+
+
+__all__ = ["check_tda", "check_tda_tuned"]

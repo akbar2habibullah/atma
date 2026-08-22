@@ -94,6 +94,10 @@ def _make_external_mixer(cfg: dict, layer_idx: int) -> nn.Module:
     arch = cfg["arch_type"]
     hidden = int(cfg["hidden_size"])
     head_dim = int(cfg.get("head_dim", 128))
+    if bool(cfg.get("external_custom_op", False)):
+        from external_baselines.custom_ops import install_external_custom_op
+
+        install_external_custom_op(arch)
     if arch == "mamba3_native":
         try:
             from fla.layers import Mamba3

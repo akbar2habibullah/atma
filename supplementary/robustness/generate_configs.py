@@ -53,6 +53,14 @@ def _external_cfg(arch: str, *, scaled: bool, run_id: str, seed: int, enabled: b
     # head_dim=128. 64 preserves the hidden width/parameter match and passes
     # the materialized parity plus full-model forward/backward checks.
     head_dim = 64
+    required_dependencies = {
+        "tda_hybrid": ("flash_linear_attention", "tda"),
+        "mamba3_native": ("flash_linear_attention", "mamba"),
+        "gdn2_native": ("flash_linear_attention",),
+    }[arch]
+    optimized = arch == "mamba3_native"
+    gdn2_cuda_graph = arch == "gdn2_native"
+    tda_cuda_graph = arch == "tda_hybrid"
     cfg = {
         "run_id": run_id,
         "runner": "external_baselines.train",
@@ -88,7 +96,15 @@ def _external_cfg(arch: str, *, scaled: bool, run_id: str, seed: int, enabled: b
         "adamw_eps": 1e-15,
         "adamw_weight_decay": 0.1,
         "skip_nan_inf": True,
-        "compile_model": False,
+        # Mamba-3 uses compile-opaque fused kernels. GDN-2 keeps the pinned FLA
+        # autograd kernels but compiles the pure PyTorch regions around their three
+        # explicit boundaries and replays the fixed training microstep as a CUDA graph.
+        # TDA and GDN-2 use split compilation plus CUDA-graph replay around their
+        # pinned autograd kernels. Mamba-3 uses compiler-opaque custom operators.
+        "compile_model": optimized,
+        "external_custom_op": optimized,
+        "gdn2_cuda_graph": gdn2_cuda_graph,
+        "tda_cuda_graph": tda_cuda_graph,
         "mem_enabled": tda,
         "mem_chunk": 128,
         "mem_gamma_bias": 3.9,
@@ -115,12 +131,15 @@ def _external_cfg(arch: str, *, scaled: bool, run_id: str, seed: int, enabled: b
         "tda_beta": 1.0,
         "tda_lambda_init": 0.5,
         "tda_relu_power": 2.0,
+        "tda_tuned_kernel": tda,
         "tda_source_dir": "third_party/TDA",
         "parameter_count_target": 378_200_000,
         "parameter_tolerance_frac": 0.05,
         "parameter_count_approved": False,
         "resolved_num_params": None,
-        "dependency_commits": {name: dep["commit"] for name, dep in DEPENDENCIES.items()},
+        "dependency_commits": {
+            name: DEPENDENCIES[name]["commit"] for name in required_dependencies
+        },
         "declared_tokens": 10_000_000_000 if scaled else 1_000_000_000,
         "enabled": enabled,
         **_seed_fields(seed),

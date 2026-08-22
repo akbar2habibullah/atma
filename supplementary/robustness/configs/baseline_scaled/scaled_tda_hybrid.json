@@ -34,6 +34,9 @@
   "adamw_weight_decay": 0.1,
   "skip_nan_inf": true,
   "compile_model": false,
+  "external_custom_op": false,
+  "gdn2_cuda_graph": false,
+  "tda_cuda_graph": true,
   "mem_enabled": true,
   "mem_chunk": 128,
   "mem_gamma_bias": 3.9,
@@ -76,6 +79,7 @@
   "tda_beta": 1.0,
   "tda_lambda_init": 0.5,
   "tda_relu_power": 2.0,
+  "tda_tuned_kernel": true,
   "tda_source_dir": "third_party/TDA",
   "parameter_count_target": 378200000,
   "parameter_tolerance_frac": 0.05,
@@ -83,7 +87,6 @@
   "resolved_num_params": 388641924,
   "dependency_commits": {
     "flash_linear_attention": "e47d5d20aeb5989b58a3738b872e7c288a9fb75f",
-    "mamba": "e9594ce1c732d97440f0332fdc43170a2294dbfa",
     "tda": "cd8ddc9d5b43a1dcf86f9cfda302edb5cc108da2"
   },
   "declared_tokens": 10000000000,

@@ -113,6 +113,7 @@ def main():
 
         config_path, cfg, running = selected
         run_id = cfg["run_id"]
+        env["EXTERNAL_CUSTOM_OP"] = "1" if cfg.get("external_custom_op", False) else "0"
         if cfg.get("baseline_family") == "external":
             try:
                 _verify_external_dependencies(cfg)

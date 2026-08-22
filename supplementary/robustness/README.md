@@ -1,241 +1,268 @@
 # Robustness and modern-baseline supplement
 
-This directory owns the third supplementary experiment for the ICLR 2027 revision. It
-contains the plan and resolved configs, while reusing the existing Stage-I,
-Stage-II, evaluation, and structured-log implementations.
+This directory is the source of truth for the third supplementary experiment in the
+paper revision. Commands below are run from the repository root. Training workers read
+the single operational tree at `supplementary/robustness/configs`; do not create a second
+config tree under `work/`.
 
-The 68B-token ceiling consists of:
+## Current status (2026-08-22)
 
-| Group | Runs | Ceiling |
-|---|---:|---:|
-| Paired Polar/NoPE replications | 4 × 10B | 40B |
-| Polar full control + four component variants | 5 × 1B | 5B |
-| TDA, Mamba-3, and GDN-2 pilots | 3 × 1B | 3B |
-| Promoted TDA | 1 × 10B | 10B |
-| One promoted Mamba-3/GDN-2 model | 1 × 10B | 10B |
+| Experiment group | Runs | Status |
+|---|---:|---|
+| Polar component attribution, 1B | 5 | **Complete**; logs are committed |
+| TDA, Mamba-3, GDN-2 screening, 1B | 3 | **Not run** |
+| Paired Polar/NoPE seeds, 10B | 4 | **Not run** |
+| Promoted TDA plus one of Mamba-3/GDN-2, 10B | 2 | **Not run**; selection follows the 1B pilots |
 
-`manifest.json` and `eval_manifest.json` are the protocol source of truth. All workers
-read configs directly from `configs/`. GPU preflight records parameter approvals there,
-and promotion enables selected scaled configs there. Claims, logs, smoke outputs, and the
-promotion decision remain under ignored paths in `work/`.
+The six final 10B jobs are the four Polar/NoPE replications, promoted TDA, and exactly
+one selected linear-recurrent baseline (Mamba-3 or GDN-2). They are independent jobs and
+are intended to run on six separate one-GPU machines.
 
-## 1. CPU preparation
+The 68B-token ceiling is 40B for paired replications, 5B for the completed component
+study, 3B for external pilots, 10B for TDA, and 10B for one selected Mamba-3/GDN-2 model.
 
-Run these commands from the repository root:
+## Configuration safety
+
+Validate the checked-in configs without regenerating them:
 
 ```bash
-python -m supplementary.robustness.generate_configs --clean
 python -m supplementary.robustness.validate_plan
 ```
 
-Do not use `generate_configs --clean` after approval or a run has started. It resets
-parameter approvals and scaled promotion flags in the operational config tree.
+Do **not** run `generate_configs --clean` now. It resets parameter approvals and scaled
+promotion flags. Claims, logs, and state markers live under
+`supplementary/robustness/work/`; checkpoints live under
+`checkpoints/supplementary_robustness/`.
 
-## 2. Install pinned GPU dependencies
+## Pinned GPU setup
 
-On the GPU instance, create the source checkouts exactly as pinned in
-`dependencies.json`:
+Every GPU machine must start from the same repository commit and the validated runtime:
+PyTorch `2.13.0+cu130`, CUDA `13.0`, and Triton `3.7.1`. The setup command verifies and
+preserves that build, checks out
+only the pinned sources required by the machine role, installs them editable, and fails
+on a dirty or mismatched checkout.
 
 ```bash
-mkdir -p third_party
-git clone https://github.com/fla-org/flash-linear-attention.git third_party/flash-linear-attention
-git -C third_party/flash-linear-attention checkout e47d5d20aeb5989b58a3738b872e7c288a9fb75f
-
-git clone https://github.com/state-spaces/mamba.git third_party/mamba
-git -C third_party/mamba checkout e9594ce1c732d97440f0332fdc43170a2294dbfa
-
-git clone https://github.com/snap-research/TDA.git third_party/TDA
-git -C third_party/TDA checkout cd8ddc9d5b43a1dcf86f9cfda302edb5cc108da2
+python -m supplementary.robustness.setup_gpu_machine --role ROLE
 ```
 
-Install FLA and the Mamba checkout in the instance's CUDA/PyTorch environment. Follow
-their pinned installation instructions rather than installing an unpinned PyPI latest.
-The TDA checkout is imported directly and remains subject to its non-commercial,
-research-only license.
+`ROLE` is one of `replication`, `tda`, `mamba3`, or `gdn2`. The pins are recorded in
+`dependencies.json`. TDA remains subject to its upstream non-commercial research-only
+license.
 
-## 3. Mandatory GPU-instance Codex/debug pass
+Mamba-3 is configured with `compile_model=true` and `external_custom_op=true`. Its fused
+SISO recurrence and RMSNorm are opaque to `torch.compile`, using the same
+forward/recomputed-backward pattern as `model/blocks.py`. Exact rotary-angle gradients
+come from the pinned Mamba backward directly. The pinned upstream tree is not patched.
 
-This repository has no local CUDA runtime, so the external adapters are intentionally
-blocked until a GPU preflight succeeds:
+The recomputed-backward custom-op approach was rejected for GDN-2 after measuring only
+0.81× eager block speed. The final GDN-2 path instead retains the pinned FLA autograd
+kernels, compiles the projection/MLP/loss regions around their explicit boundaries, and
+replays the fixed training microstep through a CUDA graph. A complete L40S global step at
+`mbs=4`, `seq_len=2048` measured 12.318 seconds, 30.28% MFU, and 12.09 GiB peak reserved
+memory, versus 22.73 seconds, 16.4% MFU, and 24.72 GiB for the old eager path. TDA is
+also split-compiled and CUDA-graphed without modifying the pinned checkout. Its fixed
+threshold is passed as a host scalar, eliminating eight device/host synchronizations per
+microbatch; tensor-only projection, normalization, memory, MLP, and loss regions compile
+around the pinned TDA and FLA kernels. The same pinned FP32 TDA kernels use launch tiles
+tuned for the approved `head_dim=64` shape; checked bf16 outputs and gradients are exactly
+equal to the upstream 64x64 launch at sequence lengths 128 and 2048.
+
+On the validation L40S, three complete 524,288-token TDA steps after warmup measured a
+9.853-second median, **40.20% MFU**, and **10.77 GiB peak reserved memory**. Each step
+included 64 microbatches, gradient clipping, and a fused AdamW update. The earlier eager
+path with the same pinned dependencies measured 19.933 seconds, 19.87% MFU, and 22.68
+GiB reserved. Ordinary validation,
+evaluation, and checkpoint execution remain unchanged.
+
+## Remaining 1B pilots on this machine
+
+First install all pilot dependencies and run the GPU preflight. This is synthetic only;
+it does not download training data or launch a pilot. It checks the exact commits,
+approved parameter counts, finite gradients, TDA kernel/materialized parity, strict
+full-graph compiled forward/backward for Mamba-3, and eager/optimized forward parity plus
+CUDA-graph forward/backward for TDA and GDN-2.
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role mamba3
+python -m supplementary.robustness.setup_gpu_machine --role tda
 python -m supplementary.robustness.gpu_preflight --approve
 ```
 
-The preflight verifies dependency commits, constructs each model, checks the parameter
-count against the 378.2M target, and runs a finite forward/backward pass. Approval is
-copied to pilot and scaled configs only when the count is within 5%.
-
-The external shapes are provisional and may need adjustment on the GPU instance. If a
-model misses the tolerance, change its pilot config and rerun the preflight. On
-approval, the tool propagates shape fields to the matching scaled config. Backport
-the resolved shape into `generate_configs.py` before publishing results. Never bypass the
-approval by manually setting the boolean.
-
-The GPU-instance Codex pass must additionally check:
-
-1. **TDA:** compare the official Triton forward and gradients with a small materialized
-   causal PyTorch reference for batch sizes 1 and 2, bf16 and fp32, and lengths crossing
-   a 64-token tile boundary. Confirm `lambda_param` receives a finite gradient. The
-   upstream kernel treats beta as a fixed hyperparameter, so beta is a buffer here.
-2. **Mamba-3:** confirm `mamba3_siso_combined` is available, run at 2K without fallback,
-   and compare full-sequence output with recurrent decoding on a short sequence. State
-   must reset between independent documents.
-3. **GDN-2:** compare chunk and fused-recurrent outputs/final states on a short sequence,
-   then run backward through the chunk training path. State must reset between documents.
-4. **All three:** record peak memory and step time at `mbs=4`; reduce microbatch size only
-   through a documented config revision. Confirm checkpoint save/reload before any 1B run.
-5. **Reproducibility:** inspect the first log block and confirm `init_seed`, `data_seed`,
-   `eval_seed`, dependency commits, parameter count, and exact config are present.
-
-The automated preflight includes the TDA materialized forward/backward parity case. The
-remaining recurrent-state checks require inspection on the actual FLA/Mamba build.
-
-Keep `compile_model=false` for the first pilots. TDA's upstream wrapper reads scalar beta
-on the host, and the new FLA paths need eager correctness confirmation before any compile
-optimization is attempted.
-
-## 4. Three-step smoke matrix
-
-After approval:
-
-```bash
-python -m supplementary.robustness.make_smoke
-python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/work/smoke/configs \
-  --log_dir supplementary/robustness/work/smoke/logs \
-  --state_dir supplementary/robustness/work/smoke/state \
-  --ckpt_dir checkpoints/supplementary_robustness_smoke --gpu 0
-```
-
-This covers Polar/NoPE replication, every Polar component switch, and all three new
-baseline paths. Do not begin pilots until every smoke config completes. Verify each saved
-external checkpoint with:
-
-```bash
-python -m external_baselines.verify_checkpoint checkpoints/supplementary_robustness_smoke/<run_id>
-```
-
-## 5. Wave 1: 1B attribution and screening
-
-Run the component cells and baseline pilots as separate worker pools:
+Then launch the three pilots individually. These are the only remaining 1B runs:
 
 ```bash
 python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/configs/polar_components \
-  --log_dir supplementary/robustness/work/logs/polar_components \
-  --state_dir supplementary/robustness/work/state/polar_components --gpu 0
+  --config_dir supplementary/robustness/configs/baseline_pilots \
+  --include pilot_tda_hybrid.json \
+  --log_dir supplementary/robustness/work/logs/baseline_pilots \
+  --state_dir supplementary/robustness/work/state/baseline_pilots \
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/baseline_pilots \
+  --include pilot_mamba3_native.json \
   --log_dir supplementary/robustness/work/logs/baseline_pilots \
   --state_dir supplementary/robustness/work/state/baseline_pilots \
-  --ckpt_dir checkpoints/supplementary_robustness --gpu 0
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
+
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/baseline_pilots \
+  --include pilot_gdn2_native.json \
+  --log_dir supplementary/robustness/work/logs/baseline_pilots \
+  --state_dir supplementary/robustness/work/state/baseline_pilots \
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-The five Polar cells use the same initialization and data stream. They are one full
-control plus four one-factor interventions: direction only, constant magnitude, fixed
-null, and fixed temperature.
-
-The FineWeb-Edu loader consumes sorted shards as one contiguous stream and does not
-shuffle, so `data_seed` is a pairing/provenance label rather than a shuffle control.
-Fused kernels run with `deterministic_algorithms=false` for the published throughput
-path; these are statistical replications, not promises of bitwise replay.
-
-## 6. Record promotion before scaled baselines
-
-Inspect the fixed pilot metrics, then record the decision:
+After every pilot, verify its saved checkpoint:
 
 ```bash
+python -m external_baselines.verify_checkpoint checkpoints/supplementary_robustness/<run_id>
+```
+
+## Record the 10B baseline selection once
+
+After all three pilot logs are complete, run exactly one promotion command on the
+coordinator machine. Examples:
+
+```bash
+# Promote TDA and select Mamba-3
 python -m supplementary.robustness.promote \
-  --tda promote \
-  --linear mamba3_native \
-  --reason "Stable pilot; selected by the prespecified validation/retrieval rule."
+  --tda promote --linear mamba3_native \
+  --reason "Stable pilots; selected by the prespecified validation/retrieval rule."
+
+# Or promote TDA and select GDN-2
+python -m supplementary.robustness.promote \
+  --tda promote --linear gdn2_native \
+  --reason "Stable pilots; selected by the prespecified validation/retrieval rule."
 ```
 
-Use `--tda omit` if TDA fails the gate. `--force` exists only for repairing imported
-historical logs; it must not be used to promote an incomplete fresh pilot.
+Use `--tda omit` only if the TDA pilot fails its gate. Promotion writes
+`configs/promotion_decision.json` and enables only the selected scaled configs. Commit
+and push the resulting decision plus `configs/baseline_scaled/*.json`; all 10B machines
+must check out that exact dispatch commit. Do not rerun promotion independently on the
+worker machines.
 
-## 7. Wave 2: paired replications
+## Six-machine 10B dispatch
 
-On the Wave 2 machine, schedule one model at a time and finish both models from a seed
-pair before starting the next seed. Run the following four commands from the repository
-root, in order.
+Each machine needs roughly 25 GB free for its 99 training shards plus checkpoint and log
+headroom. Run only its assigned setup, preflight (where shown), and worker command.
+The first compiled call can take several minutes; that one-time compile is not a stalled
+training step.
 
-Seed 1 Polar:
+### GPU 1 — seed 1 Polar
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role replication
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/replication \
   --include repl_seed1_polar.json \
   --log_dir supplementary/robustness/work/logs/replication \
   --state_dir supplementary/robustness/work/state/replication \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-Seed 1 NoPE:
+### GPU 2 — seed 1 NoPE
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role replication
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/replication \
   --include repl_seed1_nope.json \
   --log_dir supplementary/robustness/work/logs/replication \
   --state_dir supplementary/robustness/work/state/replication \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-Seed 2 Polar:
+### GPU 3 — seed 2 Polar
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role replication
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/replication \
   --include repl_seed2_polar.json \
   --log_dir supplementary/robustness/work/logs/replication \
   --state_dir supplementary/robustness/work/state/replication \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-Seed 2 NoPE:
+### GPU 4 — seed 2 NoPE
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role replication
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/replication \
   --include repl_seed2_nope.json \
   --log_dir supplementary/robustness/work/logs/replication \
   --state_dir supplementary/robustness/work/state/replication \
-  --ckpt_dir checkpoints/supplementary_robustness \
-  --gpu 0 --once
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-All four commands intentionally share the same log and state directories. If Wave 2 is
-run on another host, copy its replication logs, state markers, source configs, and
-checkpoint hashes back to the primary experiment archive before summarizing.
-
-## 8. Wave 3: promoted 10B baselines
-
-Only the models enabled by `promotion_decision.json` are runnable:
+### GPU 5 — TDA, only when promoted
 
 ```bash
+python -m supplementary.robustness.setup_gpu_machine --role tda
+python -m supplementary.robustness.gpu_preflight \
+  --configs supplementary/robustness/configs/baseline_scaled \
+  --include scaled_tda_hybrid.json
 python -m supplementary.robustness.run_worker \
   --config_dir supplementary/robustness/configs/baseline_scaled \
+  --include scaled_tda_hybrid.json \
   --log_dir supplementary/robustness/work/logs/baseline_scaled \
   --state_dir supplementary/robustness/work/state/baseline_scaled \
-  --ckpt_dir checkpoints/supplementary_robustness --gpu 0
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
 ```
 
-Finally collect the structured logs:
+### GPU 6 — selected Mamba-3 or GDN-2
+
+Mamba-3 command:
+
+```bash
+python -m supplementary.robustness.setup_gpu_machine --role mamba3
+python -m supplementary.robustness.gpu_preflight \
+  --configs supplementary/robustness/configs/baseline_scaled \
+  --include scaled_mamba3_native.json
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/baseline_scaled \
+  --include scaled_mamba3_native.json \
+  --log_dir supplementary/robustness/work/logs/baseline_scaled \
+  --state_dir supplementary/robustness/work/state/baseline_scaled \
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
+```
+
+GDN-2 command:
+
+```bash
+python -m supplementary.robustness.setup_gpu_machine --role gdn2
+python -m supplementary.robustness.gpu_preflight \
+  --configs supplementary/robustness/configs/baseline_scaled \
+  --include scaled_gdn2_native.json
+python -m supplementary.robustness.run_worker \
+  --config_dir supplementary/robustness/configs/baseline_scaled \
+  --include scaled_gdn2_native.json \
+  --log_dir supplementary/robustness/work/logs/baseline_scaled \
+  --state_dir supplementary/robustness/work/state/baseline_scaled \
+  --ckpt_dir checkpoints/supplementary_robustness --gpu 0 --once
+```
+
+Run only the selected GPU-6 block. A disabled scaled config is skipped; if that happens,
+the machine is not on the coordinator's dispatch commit.
+
+## Return and summarize artifacts
+
+From each machine, return its `.log`, `.done` marker, exact source config, checkpoint
+SHA-256, repository commit, and preflight output. Strictly reload external checkpoints:
+
+```bash
+python -m external_baselines.verify_checkpoint checkpoints/supplementary_robustness/<run_id>
+```
+
+After all artifacts are copied into the common paths, run:
 
 ```bash
 python -m supplementary.robustness.summarize
 ```
 
-The aggregate is a view over the logs, not a replacement for them. Archive the resolved
-configs, promotion decision, logs, dependency commit output, and checkpoint hashes
-together when the experiment is frozen.
-
-If a worker process dies, inspect the JSON in its `.running` marker and confirm that the
-recorded host/PID is no longer alive before using `run_worker --reset_running`. Failed
-markers require `--reset_failed`; preserve the error log before retrying.
+If a process dies, inspect its `.running` JSON and verify that its host/PID no longer
+exists before using `run_worker --reset_running`. Preserve failed logs before
+`--reset_failed`.
