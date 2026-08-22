@@ -3,7 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+
+def _add_pinned_sources():
+    """Mirror the worker's import path so reload uses the approved checkouts."""
+    repo_root = Path(__file__).resolve().parents[1]
+    for relative in ("third_party/mamba", "third_party/flash-linear-attention"):
+        source = repo_root / relative
+        if source.is_dir() and str(source) not in sys.path:
+            sys.path.insert(0, str(source))
 
 
 def main():
@@ -15,6 +25,7 @@ def main():
     import torch
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
+    _add_pinned_sources()
     from external_baselines.model import create_model
 
     cfg = json.loads((args.checkpoint / "run_config.json").read_text(encoding="utf-8"))
@@ -35,4 +46,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

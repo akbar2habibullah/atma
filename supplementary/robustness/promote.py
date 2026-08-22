@@ -28,8 +28,14 @@ def _record(log_dir: Path, arch: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work_root", type=Path, default=ROOT / "work" / "configs")
+    parser.add_argument(
+        "--config_root", "--work_root", dest="config_root", type=Path,
+        default=ROOT / "configs",
+    )
     parser.add_argument("--pilot_logs", type=Path, default=ROOT / "work" / "logs" / "baseline_pilots")
+    parser.add_argument(
+        "--decision_out", type=Path, default=ROOT / "work" / "promotion_decision.json"
+    )
     parser.add_argument("--tda", choices=("promote", "omit"), required=True)
     parser.add_argument("--linear", choices=("mamba3_native", "gdn2_native"), required=True)
     parser.add_argument("--reason", required=True)
@@ -48,7 +54,7 @@ def main():
     if missing and not args.force:
         raise SystemExit(f"cannot promote without completed pilot logs: {missing}")
 
-    scaled = args.work_root / "baseline_scaled"
+    scaled = args.config_root / "baseline_scaled"
     for path in scaled.glob("*.json"):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         arch = cfg["arch_type"]
@@ -64,7 +70,8 @@ def main():
         "pilot_evidence": evidence,
         "forced_without_complete_logs": bool(missing),
     }
-    out = args.work_root.parent / "promotion_decision.json"
+    out = args.decision_out
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(decision, indent=2) + "\n", encoding="utf-8")
     print(f"recorded promotion -> {out}")
 

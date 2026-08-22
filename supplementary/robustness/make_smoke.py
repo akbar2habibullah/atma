@@ -12,7 +12,10 @@ ROOT = Path(__file__).resolve().parent
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work_root", type=Path, default=ROOT / "work" / "configs")
+    parser.add_argument(
+        "--config_root", "--work_root", dest="config_root", type=Path,
+        default=ROOT / "configs",
+    )
     parser.add_argument("--out", type=Path, default=ROOT / "work" / "smoke" / "configs")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -28,9 +31,9 @@ def main():
     args.out.mkdir(parents=True)
 
     paths = []
-    paths.extend((args.work_root / "replication").glob("repl_seed1_*.json"))
-    paths.extend((args.work_root / "polar_components").glob("*.json"))
-    paths.extend((args.work_root / "baseline_pilots").glob("*.json"))
+    paths.extend((args.config_root / "replication").glob("repl_seed1_*.json"))
+    paths.extend((args.config_root / "polar_components").glob("*.json"))
+    paths.extend((args.config_root / "baseline_pilots").glob("*.json"))
     for path in sorted(paths):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         cfg["run_id"] = "smoke_" + cfg["run_id"]

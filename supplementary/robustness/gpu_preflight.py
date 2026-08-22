@@ -45,9 +45,9 @@ _SHAPE_KEYS = {
 }
 
 
-def _approve_same_arch(work_root: Path, source: dict, count: int):
+def _approve_same_arch(config_root: Path, source: dict, count: int):
     arch = source["arch_type"]
-    for path in work_root.glob("*/*.json"):
+    for path in config_root.glob("*/*.json"):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         if cfg.get("arch_type") != arch:
             continue
@@ -61,10 +61,13 @@ def _approve_same_arch(work_root: Path, source: dict, count: int):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--configs", type=Path, default=ROOT / "work" / "configs" / "baseline_pilots")
-    parser.add_argument("--work_root", type=Path, default=ROOT / "work" / "configs")
+    parser.add_argument("--configs", type=Path, default=ROOT / "configs" / "baseline_pilots")
+    parser.add_argument(
+        "--config_root", "--work_root", dest="config_root", type=Path,
+        default=ROOT / "configs", help="config tree updated on approval",
+    )
     parser.add_argument("--repo_root", type=Path, default=Path.cwd())
-    parser.add_argument("--approve", action="store_true", help="approve counts within tolerance in all work configs")
+    parser.add_argument("--approve", action="store_true", help="approve counts within tolerance in the config tree")
     parser.add_argument("--sequence_length", type=int, default=128)
     args = parser.parse_args()
 
@@ -111,7 +114,7 @@ def main():
     if failures:
         raise SystemExit("GPU preflight failed:\n" + "\n".join(f"- {x}" for x in failures))
     for cfg, count in approvals:
-        _approve_same_arch(args.work_root, cfg, count)
+        _approve_same_arch(args.config_root, cfg, count)
     print("GPU preflight passed" + (" and parameter counts approved" if args.approve else ""))
 
 

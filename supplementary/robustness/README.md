@@ -1,7 +1,7 @@
 # Robustness and modern-baseline supplement
 
 This directory owns the third supplementary experiment for the ICLR 2027 revision. It
-contains the immutable plan and resolved configs, while reusing the existing Stage-I,
+contains the plan and resolved configs, while reusing the existing Stage-I,
 Stage-II, evaluation, and structured-log implementations.
 
 The 68B-token ceiling consists of:
@@ -14,10 +14,10 @@ The 68B-token ceiling consists of:
 | Promoted TDA | 1 × 10B | 10B |
 | One promoted Mamba-3/GDN-2 model | 1 × 10B | 10B |
 
-`manifest.json` and `eval_manifest.json` are the protocol source of truth. Generated
-configs in `configs/` are immutable inputs. GPU workers operate on ignored copies under
-`work/` when approvals or promotion can change a config. Wave 2 replication workers may
-read their immutable source configs directly; claims and logs still remain under `work/`.
+`manifest.json` and `eval_manifest.json` are the protocol source of truth. All workers
+read configs directly from `configs/`. GPU preflight records parameter approvals there,
+and promotion enables selected scaled configs there. Claims, logs, smoke outputs, and the
+promotion decision remain under ignored paths in `work/`.
 
 ## 1. CPU preparation
 
@@ -26,11 +26,10 @@ Run these commands from the repository root:
 ```bash
 python -m supplementary.robustness.generate_configs --clean
 python -m supplementary.robustness.validate_plan
-python -m supplementary.robustness.prepare
 ```
 
-Do not use `prepare --force` after a run has started. It replaces parameter approvals and
-promotion state along with the work configs.
+Do not use `generate_configs --clean` after approval or a run has started. It resets
+parameter approvals and scaled promotion flags in the operational config tree.
 
 ## 2. Install pinned GPU dependencies
 
@@ -65,11 +64,11 @@ python -m supplementary.robustness.gpu_preflight --approve
 
 The preflight verifies dependency commits, constructs each model, checks the parameter
 count against the 378.2M target, and runs a finite forward/backward pass. Approval is
-copied to pilot and scaled work configs only when the count is within 5%.
+copied to pilot and scaled configs only when the count is within 5%.
 
 The external shapes are provisional and may need adjustment on the GPU instance. If a
-model misses the tolerance, change its pilot **work config** and rerun the preflight. On
-approval, the tool propagates shape fields to the matching scaled work config. Backport
+model misses the tolerance, change its pilot config and rerun the preflight. On
+approval, the tool propagates shape fields to the matching scaled config. Backport
 the resolved shape into `generate_configs.py` before publishing results. Never bypass the
 approval by manually setting the boolean.
 
@@ -123,12 +122,12 @@ Run the component cells and baseline pilots as separate worker pools:
 
 ```bash
 python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/work/configs/polar_components \
+  --config_dir supplementary/robustness/configs/polar_components \
   --log_dir supplementary/robustness/work/logs/polar_components \
   --state_dir supplementary/robustness/work/state/polar_components --gpu 0
 
 python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/work/configs/baseline_pilots \
+  --config_dir supplementary/robustness/configs/baseline_pilots \
   --log_dir supplementary/robustness/work/logs/baseline_pilots \
   --state_dir supplementary/robustness/work/state/baseline_pilots \
   --ckpt_dir checkpoints/supplementary_robustness --gpu 0
@@ -221,7 +220,7 @@ Only the models enabled by `promotion_decision.json` are runnable:
 
 ```bash
 python -m supplementary.robustness.run_worker \
-  --config_dir supplementary/robustness/work/configs/baseline_scaled \
+  --config_dir supplementary/robustness/configs/baseline_scaled \
   --log_dir supplementary/robustness/work/logs/baseline_scaled \
   --state_dir supplementary/robustness/work/state/baseline_scaled \
   --ckpt_dir checkpoints/supplementary_robustness --gpu 0
@@ -234,7 +233,7 @@ python -m supplementary.robustness.summarize
 ```
 
 The aggregate is a view over the logs, not a replacement for them. Archive the resolved
-work configs, promotion decision, logs, dependency commit output, and checkpoint hashes
+configs, promotion decision, logs, dependency commit output, and checkpoint hashes
 together when the experiment is frozen.
 
 If a worker process dies, inspect the JSON in its `.running` marker and confirm that the
