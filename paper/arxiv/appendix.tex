@@ -101,6 +101,34 @@ The weak and strong modes follow the two SIGReg families introduced by Weak-SIGR
 \subsection{Design provenance and scope}
 Before integration, the Polar choices were developed by falsifying simpler alternatives in a standalone synthetic sandbox. Additive soft counts accumulated small per-key leakage with sequence length; thresholds based on a fixed number of standard deviations retained a constant fraction of noise keys; a fixed null logit was eventually overtaken by the maximum noise score; and an unbounded $\log m$ magnitude exposed the output projection to values beyond its training range. These failures motivated participation ratio, the $\sqrt{\log n}$ null floor, and the bounded $\tanh(\beta\log(1+m))$ map. The standalone prototype was subsequently removed and is not part of the released artifact. We therefore use these tests as design provenance, not as model-scale component ablations or independently reproducible benchmark evidence. The integrated equations, materialized oracle, streaming implementation, and parity tests described below are retained.
 
+\subsection{Integrated component pilot}
+\label{appendix:polar_components}
+We subsequently ran a matched network-level component study using the promoted Polar+memory recipe. Each 378.22M-parameter model received 1B tokens at length 2K with the same initialization and data seed; evaluation used the same documents, retrieval prompts, and seed. ``Fixed null slope'' sets only the nonnegative $\sqrt{\log(n+1)}$ coefficient in Equation~\ref{eq:length} near zero; the null base and null vector remain learned. Table~\ref{table:polar_components} reports the prespecified metrics. The clean and junk columns are NLL in nats/token on coherent FinePDFs and the concatenated FineWeb-Edu validation stream, respectively.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Polar variant} & \textbf{Val. NLL} & \textbf{Clean 2K} & \textbf{Clean 64K} & \textbf{Junk 2K} & \textbf{Junk 64K} & \textbf{Needle 2K / 64K (\%)} \\
+\midrule
+Full Polar & 3.1688 & 2.810 & 2.047 & 3.110 & 3.129 & 91.25 / 77.50 \\
+Direction only & \textbf{3.1629} & 2.709 & 1.982 & \textbf{3.103} & \textbf{3.124} & 91.25 / 71.25 \\
+Constant magnitude & 3.1717 & 2.734 & \textbf{1.924} & 3.113 & 3.134 & 92.50 / 16.25 \\
+Fixed null slope & 3.1741 & 2.725 & 1.938 & 3.117 & 3.142 & \textbf{96.25 / 91.25} \\
+Fixed temperature gain & 3.1695 & \textbf{2.707} & 1.967 & 3.111 & 3.155 & 93.75 / 16.25 \\
+\bottomrule
+\end{tabular}}
+\caption{Single-seed, 1B-token Polar component attribution. Needle values are teacher-forced five-token accuracy over 16 trials per length. All variants share the same seed, but this design does not estimate variation across training seeds.}
+\label{table:polar_components}
+\end{table}
+
+Ordinary language-model losses are tightly grouped: validation NLL spans only 0.0112 nats, and every intervention improves clean NLL relative to Full Polar at matched lengths. Retrieval is more diagnostic. Direction only retains most of the 64K accuracy (71.25\% versus 77.50\%), whereas constant magnitude and fixed temperature gain each fall to 16.25\%. Thus the direction-only path carries most of the retrieval signal, and the learned length temperature is important. An uninformative constant count signal is harmful, but this study does not establish that the count channel is always necessary.
+
+Unexpectedly, fixing the length-dependent null slope near zero gives the best retrieval at every evaluated length and reaches 91.25\% at 64K, while slightly worsening validation and junk-stream NLL. One plausible explanation is that a slope learned only through 2K over-rejects distant relevant keys when extrapolated, especially because this recipe disables the explicit distractor-alignment objective. The matched seed makes an independently luckier initialization an unlikely explanation for this contrast, but one training seed and 16 retrieval trials per length cannot establish a population-level effect. We therefore retain the prespecified Full Polar model for the confirmatory comparison and treat null calibration as unresolved. Future work should replicate the contrast across seeds and larger retrieval samples, measure null mass by head versus length, and test bounded or score-adaptive null formulations. The synthetic provenance above and this integrated pilot answer different questions: the former motivates the asymptotic design, while the latter shows that its learned finite-training calibration is not yet empirically optimal.
+
 \subsection{Numerical oracle}
 The materialized PyTorch path forms the masked real-key logits and virtual null logit in FP32, applies a single softmax, and computes the direction and magnitude channels from the resulting weights. It is used as a numerical oracle for forward and backward tests, not as the production long-context path, because materializing the $T\times T$ score matrix is memory-prohibitive at the evaluated lengths.
 
