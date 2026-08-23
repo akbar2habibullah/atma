@@ -1,0 +1,61 @@
+====================================================================================================
+[raven_baseline] run_id=pilot_tda_hybrid arch_type=tda_hybrid host=default device=cuda torch=2.13.0+cu130 fla_custom_op=1 external_custom_op=0 gdn2_cuda_graph=0 tda_cuda_graph=1
+[raven_baseline] seeds={'init_seed': 202704, 'data_seed': 202704, 'eval_seed': 1234, 'deterministic_algorithms': False, 'data_order': 'sorted_finewebedu_shards_contiguous_stream'}
+====================================================================================================
+[raven_baseline] train_steps=1900 (num_chunks=10, batch_size=524288, seq_len=2048)
+[raven_baseline] params=388.64M
+
+===ABLATION_CONFIG_JSON===
+{"run_id": "pilot_tda_hybrid", "runner": "external_baselines.train", "baseline_family": "external", "arch_type": "tda_hybrid", "attn_type": "tda_hybrid", "comparison_group": "external_pilot_1b", "experiment_group": "baseline_pilots", "reg_mode": "baseline", "distractor": false, "memory": true, "window": false, "vocab_size": 50304, "hidden_size": 1024, "num_hidden_layers": 16, "head_dim": 64, "conv_kernel_size": 3, "seq_len": 2048, "num_chunks": 10, "batch_size": 524288, "val_tokens": 2097152, "mbs": 4, "cooldown_frac": 0.7, "sketch_dim": 64, "sigr_alpha": 0.0, "dist_align_loss_weight": 0.0, "optimizer": "adamw_external", "adamw_lr": 0.0003, "adamw_lr_min_frac": 0.1, "adamw_warmup_frac": 0.05, "adamw_beta1": 0.9, "adamw_beta2": 0.95, "adamw_eps": 1e-15, "adamw_weight_decay": 0.1, "skip_nan_inf": true, "compile_model": false, "external_custom_op": false, "gdn2_cuda_graph": false, "tda_cuda_graph": true, "mem_enabled": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto", "clean_dataset": "codelion/finepdfs-100M", "val_data": "finewebedu10B/finewebedu_val_*.bin", "eval_lengths": [2048, 4096, 8192, 16384, 32768, 65536], "needle_distances": [2048, 4096, 8192, 16384, 32768, 65536], "num_eval_docs": 16, "num_needle_trials": 16, "needle_val_len": 5, "mamba3_state_size": 128, "mamba3_expand": 2, "mamba3_head_dim": 64, "mamba3_n_groups": 1, "mamba3_rope_fraction": 0.5, "mamba3_mimo": false, "mamba3_chunk_size": 64, "gdn2_expand_v": 1.0, "gdn2_short_conv": true, "gdn2_allow_neg_eigval": false, "gdn2_conv_size": 4, "tda_beta": 1.0, "tda_lambda_init": 0.5, "tda_relu_power": 2.0, "tda_tuned_kernel": true, "tda_source_dir": "third_party/TDA", "parameter_count_target": 378200000, "parameter_tolerance_frac": 0.05, "parameter_count_approved": true, "resolved_num_params": 388641924, "dependency_commits": {"flash_linear_attention": "e47d5d20aeb5989b58a3738b872e7c288a9fb75f", "tda": "cd8ddc9d5b43a1dcf86f9cfda302edb5cc108da2"}, "declared_tokens": 1000000000, "enabled": true, "seed": 202704, "init_seed": 202704, "data_seed": 202704, "eval_seed": 1234, "deterministic_algorithms": false, "num_params": 388641924, "host": "default", "device": "cuda", "runtime": {"git_commit": "21f1101cbf639fe0aeba9238756f450dcada97bd", "python": "3.12.13", "torch": "2.13.0+cu130", "cuda_runtime": "13.0", "cudnn": 92000, "gpu": "NVIDIA L40S"}}
+===END===
+[raven_baseline] TDA split compilation + CUDA-graph training enabled
+step:0/1900 val_loss:10.82584 wall:0.0s step_avg:0.0ms MFU:0.0%
+step:125/1900 val_loss:6.45309 wall:1281.3s step_avg:10250.1ms MFU:38.6%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:250/1900 val_loss:5.35154 wall:2556.6s step_avg:10202.9ms MFU:38.8%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:375/1900 val_loss:4.84880 wall:3834.5s step_avg:10222.9ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:500/1900 val_loss:4.51351 wall:5114.5s step_avg:10239.7ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:625/1900 val_loss:4.26422 wall:6396.0s step_avg:10252.4ms MFU:38.6%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:750/1900 val_loss:4.11474 wall:7676.4s step_avg:10243.2ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:875/1900 val_loss:4.01493 wall:8950.2s step_avg:10190.6ms MFU:38.9%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1000/1900 val_loss:3.94037 wall:10226.5s step_avg:10209.9ms MFU:38.8%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1125/1900 val_loss:3.88584 wall:11506.6s step_avg:10241.0ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1250/1900 val_loss:3.84667 wall:12786.0s step_avg:10235.1ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1375/1900 val_loss:3.81699 wall:14058.1s step_avg:10177.3ms MFU:38.9%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1500/1900 val_loss:3.79824 wall:15336.8s step_avg:10229.5ms MFU:38.7%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1625/1900 val_loss:3.78733 wall:16613.4s step_avg:10212.4ms MFU:38.8%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1750/1900 val_loss:3.77948 wall:17889.0s step_avg:10205.3ms MFU:38.8%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1875/1900 val_loss:3.77390 wall:19165.3s step_avg:10209.9ms MFU:38.8%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+step:1900/1900 val_loss:3.77489 wall:19422.5s step_avg:10288.3ms MFU:38.5%
+[memory] max_alloc=9.11GiB max_reserved=18.00GiB
+
+===ABLATION_CURVE_JSON===
+[{"step": 0, "wall_s": 0.0, "val_loss": 10.825838088989258, "mfu": 0.0, "step_ms": 0.0, "tok_s": 0.0}, {"step": 125, "wall_s": 1281.263, "val_loss": 6.453091431409121, "mfu": 38.64, "step_ms": 10250.1, "tok_s": 51149.5}, {"step": 250, "wall_s": 2556.619, "val_loss": 5.351541517302394, "mfu": 38.82, "step_ms": 10202.85, "tok_s": 51386.4}, {"step": 375, "wall_s": 3834.485, "val_loss": 4.848797542974353, "mfu": 38.74, "step_ms": 10222.92, "tok_s": 51285.5}, {"step": 500, "wall_s": 5114.453, "val_loss": 4.513511668890715, "mfu": 38.68, "step_ms": 10239.75, "tok_s": 51201.3}, {"step": 625, "wall_s": 6395.998, "val_loss": 4.264217616058886, "mfu": 38.63, "step_ms": 10252.36, "tok_s": 51138.3}, {"step": 750, "wall_s": 7676.392, "val_loss": 4.114736114628613, "mfu": 38.66, "step_ms": 10243.15, "tok_s": 51184.2}, {"step": 875, "wall_s": 8950.214, "val_loss": 4.01493436191231, "mfu": 38.86, "step_ms": 10190.57, "tok_s": 51448.3}, {"step": 1000, "wall_s": 10226.456, "val_loss": 3.9403687501326203, "mfu": 38.79, "step_ms": 10209.93, "tok_s": 51350.8}, {"step": 1125, "wall_s": 11506.581, "val_loss": 3.8858381398022175, "mfu": 38.67, "step_ms": 10241.0, "tok_s": 51195.0}, {"step": 1250, "wall_s": 12785.972, "val_loss": 3.8466706750914454, "mfu": 38.69, "step_ms": 10235.12, "tok_s": 51224.4}, {"step": 1375, "wall_s": 14058.131, "val_loss": 3.8169902954250574, "mfu": 38.91, "step_ms": 10177.27, "tok_s": 51515.6}, {"step": 1500, "wall_s": 15336.814, "val_loss": 3.798242195509374, "mfu": 38.72, "step_ms": 10229.47, "tok_s": 51252.7}, {"step": 1625, "wall_s": 16613.364, "val_loss": 3.787330945022404, "mfu": 38.78, "step_ms": 10212.4, "tok_s": 51338.4}, {"step": 1750, "wall_s": 17889.03, "val_loss": 3.779477320611477, "mfu": 38.81, "step_ms": 10205.32, "tok_s": 51374.0}, {"step": 1875, "wall_s": 19165.262, "val_loss": 3.773895055986941, "mfu": 38.79, "step_ms": 10209.86, "tok_s": 51351.2}, {"step": 1900, "wall_s": 19422.469, "val_loss": 3.774892019107938, "mfu": 38.49, "step_ms": 10288.28, "tok_s": 50959.7}]
+===END===
+[raven_baseline] training done: 19422.5s, final MFU 38.5%
+[raven_baseline] checkpoint -> checkpoints/supplementary_robustness/pilot_tda_hybrid
+[raven_baseline] evaluating (clean_ppl / junk_ppl / needle at full context)...
+
+===ABLATION_EVAL_JSON===
+{"clean_ppl": {"2048": 3.349838934838772, "4096": 3.2154013738036156, "8192": 3.100018359720707, "16384": 2.910834640264511, "32768": 2.7506003472954035, "65536": 2.6450753482058644}, "junk_ppl": {"2048": 3.7071582674980164, "4096": 3.712737113237381, "8192": 3.723267361521721, "16384": 3.733513429760933, "32768": 3.7490119636058807, "65536": 3.793858190998435}, "needle": {"2048": {"ce": 2.1871507689356804, "acc": 56.25000111758709}, "4096": {"ce": 2.8253130093216896, "acc": 28.750000521540642}, "8192": {"ce": 4.235070616006851, "acc": 11.250000260770321}, "16384": {"ce": 5.036168962717056, "acc": 5.000000074505806}, "32768": {"ce": 5.4342001080513, "acc": 3.7500000558793545}, "65536": {"ce": 5.8745240569114685, "acc": 2.500000037252903}}, "needle_baseline": 5.745918810367584, "num_clean_docs": 16, "mfu_final": 38.49, "train_elapsed_s": 19422.469, "num_params": 388641924, "train_steps": 1900}
+===END===
+[raven_baseline] eval:
+  clean_ppl(nats): {2048: 3.349838934838772, 4096: 3.2154013738036156, 8192: 3.100018359720707, 16384: 2.910834640264511, 32768: 2.7506003472954035, 65536: 2.6450753482058644}
+  junk_ppl(nats):  {2048: 3.7071582674980164, 4096: 3.712737113237381, 8192: 3.723267361521721, 16384: 3.733513429760933, 32768: 3.7490119636058807, 65536: 3.793858190998435}
+  needle:          {2048: 56.3, 4096: 28.8, 8192: 11.3, 16384: 5.0, 32768: 3.8, 65536: 2.5}
+  needle_baseline CE: 5.745918810367584
+[raven_baseline] DONE
