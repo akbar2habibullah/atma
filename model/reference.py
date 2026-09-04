@@ -107,10 +107,12 @@ class PolarAttention(AtmaAttnBase):
 
     def __init__(self, dim: int, head_dim: int = 128, num_kv_heads: int = None, kernel_size: int = 4,
                  window: int = None, mem_enabled: bool = False, mem_chunk: int = 64,
-                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto"):
+                 mem_gamma_bias: float = 3.9, mem_beta_bias: float = 0.0, mem_kernel: str = "auto",
+                 polar_variant: str = "full"):
         super().__init__(dim, linear_cls=Linear, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=kernel_size)
         H, dk = self.num_heads, self.head_dim
         self.window = window                                           # trainable sliding window
+        self.polar_variant = polar_variant
         self.mu_proj = Linear(H, dim)                                   # count channel -> residual
         self.v_null = nn.Parameter(torch.zeros(H, dk))                 # default direction (null sink)
         self.null_base = nn.Parameter(torch.full((H,), _NULL_BASE_INIT))
@@ -171,13 +173,22 @@ class PolarAttention(AtmaAttnBase):
 
         c, mag = polar_reduce(
             sigma, v_t, n_temp,
-            v_null=self.v_null, null_base=self.null_base, null_slope_raw=self.null_slope_raw,
-            len_gain_raw=self.len_gain_raw, mag_beta_raw=self.mag_beta_raw,
+            v_null=self.v_null, null_base=self.null_base,
+            null_slope_raw=(torch.full_like(self.null_slope_raw, -30.0)
+                            if self.polar_variant == "fixed_null" else self.null_slope_raw),
+            len_gain_raw=(torch.full_like(self.len_gain_raw, -30.0)
+                          if self.polar_variant == "fixed_temperature" else self.len_gain_raw),
+            mag_beta_raw=self.mag_beta_raw,
         )
 
         c_flat = c.transpose(1, 2).reshape(B, T, H * dk)
         content = self.proj(c_flat * torch.sigmoid(gate.reshape(B, T, -1)))
-        count = self.mu_proj(mag.transpose(1, 2))          # (B, T, H) -> (B, T, dim)
+        if self.polar_variant == "direction_only":
+            count = torch.zeros_like(content)
+        else:
+            if self.polar_variant == "constant_magnitude":
+                mag = torch.ones_like(mag)
+            count = self.mu_proj(mag.transpose(1, 2))      # (B, T, H) -> (B, T, dim)
         out = content + count
         if self.mem is not None:                            # MAG long-term memory branch
             out = out + self.mem(x, q_t, k_t, v_t)
@@ -201,12 +212,14 @@ class Block(nn.Module):
         mem_gamma_bias: float = 3.9,
         mem_beta_bias: float = 0.0,
         mem_kernel: str = "auto",
+        polar_variant: str = "full",
     ):
         super().__init__()
         self.attn = (
             PolarAttention(dim, head_dim=head_dim, num_kv_heads=num_kv_heads, kernel_size=attn_kernel_size,
                            window=attn_window, mem_enabled=mem_enabled, mem_chunk=mem_chunk,
-                           mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias, mem_kernel=mem_kernel)
+                           mem_gamma_bias=mem_gamma_bias, mem_beta_bias=mem_beta_bias, mem_kernel=mem_kernel,
+                           polar_variant=polar_variant)
             if attention
             else LFM2Conv(dim, kernel_size=conv_kernel_size)
         )
@@ -240,6 +253,7 @@ class ReferenceModel(nn.Module):
                 mem_gamma_bias=config.mem_gamma_bias,
                 mem_beta_bias=config.mem_beta_bias,
                 mem_kernel=config.mem_kernel,
+                polar_variant=config.polar_variant,
             )
             for i in range(config.num_hidden_layers)
         ])

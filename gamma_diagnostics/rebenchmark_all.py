@@ -42,9 +42,15 @@ DEFAULT_LENGTHS = ("2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k")
 WEIGHT_NAMES = ("weights.pt", "model.pt", "pytorch_model.bin")
 
 
-def _parse_args():
+def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--models", nargs="+", choices=DEFAULT_MODELS, default=DEFAULT_MODELS)
+    parser.add_argument(
+        "--models", nargs="+", default=DEFAULT_MODELS,
+        help=(
+            "model keys from the selected base/BABILong manifests; defaults to the "
+            "three promoted matched checkpoints"
+        ),
+    )
     parser.add_argument(
         "--benchmarks", nargs="+", choices=("base", "retrieval", "longdoc", "babilong"),
         default=("base", "retrieval", "longdoc", "babilong"),
@@ -89,7 +95,7 @@ def _parse_args():
         "--execute", action="store_true",
         help="execute jobs; otherwise resolve checkpoints and write/print the plan only",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _read_json(path: Path) -> dict:
@@ -282,8 +288,8 @@ def _run_job(job: dict, env: dict) -> dict:
     }
 
 
-def main():
-    args = _parse_args()
+def main(argv=None):
+    args = _parse_args(argv)
     if args.max_half_life <= 0:
         raise SystemExit("--max-half-life must be positive")
     if args.babilong_samples <= 0:
@@ -300,6 +306,17 @@ def main():
     base_manifest = _read_json(args.base_manifest)
     babilong_manifest = _read_json(args.babilong_manifest)
     manifests = {"base": base_manifest, "babilong": babilong_manifest}
+    required_families = {
+        "babilong" if benchmark == "babilong" else "base"
+        for benchmark in args.benchmarks
+    }
+    for family in sorted(required_families):
+        available = set(manifests[family].get("models", {}))
+        missing = sorted(set(args.models) - available)
+        if missing:
+            raise SystemExit(
+                f"{family} manifest has no model entries for: {', '.join(missing)}"
+            )
     conditions = ("baseline", "clamped") if args.paired else ("clamped",)
     output_dir = args.output_dir.resolve()
     plan = {

@@ -16,6 +16,7 @@ from gamma_diagnostics.clamp import (
 )
 from gamma_diagnostics.inspect_parameters import inspect_checkpoint
 from gamma_diagnostics.rebenchmark_all import (
+    _parse_args as parse_rebenchmark_args,
     _clamp_spec,
     _dataset_revision,
     _select_targets,
@@ -200,6 +201,14 @@ class GammaDiagnosticsTest(unittest.TestCase):
         )
         datasets = {"datasets": {"org/corpus": {"resolved_revision": "data-sha"}}}
         self.assertEqual(_dataset_revision(datasets, "org/corpus"), "data-sha")
+
+    def test_rebenchmark_accepts_custom_manifest_model_keys(self):
+        args = parse_rebenchmark_args([
+            "--models", "repl_seed1_nope", "repl_seed2_polar",
+            "--benchmarks", "retrieval", "longdoc",
+        ])
+        self.assertEqual(args.models, ["repl_seed1_nope", "repl_seed2_polar"])
+        self.assertEqual(args.benchmarks, ["retrieval", "longdoc"])
 
 
 if __name__ == "__main__":

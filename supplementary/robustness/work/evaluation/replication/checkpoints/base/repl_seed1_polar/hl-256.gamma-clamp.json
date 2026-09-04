@@ -1,0 +1,23 @@
+{
+  "cap_source": {
+    "half_life_tokens": 256.0,
+    "kind": "absolute_half_life"
+  },
+  "format": "atma-gamma-clamp-v1",
+  "label": "hl-256",
+  "selection": {
+    "checkpoint_repo_id": "ChavyvAkvar/repl_seed1_polar",
+    "checkpoint_revision": "6b3226d04af1f8c982c9085c8c9dbd8282e11220",
+    "kind": "largest_parameter_only_zero_input_logit",
+    "num_target_heads": 1
+  },
+  "targets": [
+    {
+      "heads": [
+        7
+      ],
+      "layer": 10,
+      "max_half_life_tokens": 256.0
+    }
+  ]
+}

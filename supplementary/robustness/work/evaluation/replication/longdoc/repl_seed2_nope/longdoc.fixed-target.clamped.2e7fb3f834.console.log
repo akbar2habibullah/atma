@@ -1,0 +1,50 @@
+You are using version 1 of 'kernels-community/causal-conv1d', but version 2 is available.
+[run] benchmark=longdoc model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--repl_seed2_nope/snapshots/3196eac86d84759bb245b410da61eb8665bfdf05 tasks=[] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=100 gamma_clamp=/home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/checkpoints/base/repl_seed2_nope/hl-256.gamma-clamp.json
+
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]
+Fetching 8 files: 100%|██████████| 8/8 [00:00<00:00, 1555.03it/s]
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (627620 > 262400). Running this sequence through the model will result in indexing errors
+Applied gamma clamp to 1 layer-head target(s): [{'layer': 2, 'head': 3, 'module': 'blocks.2.attn.mem', 'max_final_logit': 5.910336256510415, 'max_gamma': 0.9972960560854701, 'max_half_life_tokens': 256.00000000000006}]
+[longdoc] selected 1/8 from emozilla/pg19 after scanning 22 rows
+[longdoc] selected 2/8 from emozilla/pg19 after scanning 38 rows
+[longdoc] selected 3/8 from emozilla/pg19 after scanning 62 rows
+[longdoc] selected 4/8 from emozilla/pg19 after scanning 81 rows
+[longdoc] selected 5/8 from emozilla/pg19 after scanning 92 rows
+[longdoc]       pg19 context=   2k docs=5 nll=3.2571 bpb=1.1936
+[longdoc]       pg19 context=   4k docs=5 nll=3.2634 bpb=1.1959
+[longdoc]       pg19 context=   8k docs=5 nll=3.2463 bpb=1.1897
+[longdoc]       pg19 context=  16k docs=5 nll=3.2321 bpb=1.1845
+[longdoc]       pg19 context=  32k docs=5 nll=3.2339 bpb=1.1851
+[longdoc]       pg19 context=  64k docs=5 nll=3.2356 bpb=1.1857
+[longdoc]       pg19 context= 128k docs=5 nll=3.2489 bpb=1.1906
+[longdoc]       pg19 context= 256k docs=5 nll=3.2609 bpb=1.1950
+[longdoc] selected 1/8 from hoskinson-center/proof-pile after scanning 20081 rows
+[longdoc] selected 2/8 from hoskinson-center/proof-pile after scanning 22803 rows
+[longdoc] selected 3/8 from hoskinson-center/proof-pile after scanning 32629 rows
+[longdoc] selected 4/8 from hoskinson-center/proof-pile after scanning 41384 rows
+[longdoc] selected 5/8 from hoskinson-center/proof-pile after scanning 44492 rows
+[longdoc] proof_pile context=   2k docs=5 nll=3.5929 bpb=2.0491
+[longdoc] proof_pile context=   4k docs=5 nll=3.6413 bpb=2.0767
+[longdoc] proof_pile context=   8k docs=5 nll=3.7428 bpb=2.1345
+[longdoc] proof_pile context=  16k docs=5 nll=3.7624 bpb=2.1457
+[longdoc] proof_pile context=  32k docs=5 nll=3.8223 bpb=2.1799
+[longdoc] proof_pile context=  64k docs=5 nll=3.6772 bpb=2.0971
+[longdoc] proof_pile context= 128k docs=5 nll=3.6996 bpb=2.1099
+[longdoc] proof_pile context= 256k docs=5 nll=3.7741 bpb=2.1524
+[longdoc] selected 1/8 from codelion/finepdfs-1B after scanning 1798 rows
+[longdoc] selected 2/8 from codelion/finepdfs-1B after scanning 5936 rows
+[longdoc] selected 3/8 from codelion/finepdfs-1B after scanning 8638 rows
+[longdoc] selected 4/8 from codelion/finepdfs-1B after scanning 16812 rows
+[longdoc] selected 5/8 from codelion/finepdfs-1B after scanning 17777 rows
+[longdoc] selected 6/8 from codelion/finepdfs-1B after scanning 20727 rows
+[longdoc] selected 7/8 from codelion/finepdfs-1B after scanning 24585 rows
+[longdoc] selected 8/8 from codelion/finepdfs-1B after scanning 24626 rows
+[longdoc]   finepdfs context=   2k docs=8 nll=1.1494 bpb=0.9340
+[longdoc]   finepdfs context=   4k docs=8 nll=1.1018 bpb=0.8953
+[longdoc]   finepdfs context=   8k docs=8 nll=1.1052 bpb=0.8981
+[longdoc]   finepdfs context=  16k docs=8 nll=1.1247 bpb=0.9139
+[longdoc]   finepdfs context=  32k docs=8 nll=1.1844 bpb=0.9624
+[longdoc]   finepdfs context=  64k docs=8 nll=1.2360 bpb=1.0044
+[longdoc]   finepdfs context= 128k docs=8 nll=1.2863 bpb=1.0453
+[longdoc]   finepdfs context= 256k docs=8 nll=1.3802 bpb=1.1216
+[run] done in 289.0s -> /home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/longdoc/repl_seed2_nope/longdoc.fixed-target.clamped.2e7fb3f834.log

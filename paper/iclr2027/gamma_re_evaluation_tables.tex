@@ -16,7 +16,7 @@ RoPE (L40S, mbs16) & Matched negative control & Block 2, H1 & +2.991 & 6.891 & 0
 Atma-Raven-Titans & Recurrent reference & Block 2, H3 & +0.182 & 4.082 & 0.9834064 & 41.4 & 34.9 & 30.5 & 1.94 \\
 \bottomrule
 \end{tabular}}
-\caption{Learned zero-input retention operating points across base checkpoints. Outlier half-lives reach astronomical values ($>3$M--$21$M tokens) on isolated Block 2 heads in L40S NoPE and Polar, whereas RoPE (max 682 tok) and Atma-Raven-Titans (max 41 tok) remain bounded without pathological drift.}
+\caption{Learned zero-input retention operating points across base checkpoints. Isolated Block 2 heads in L40S NoPE and Polar have half-lives of $>3$M--$21$M tokens. The maxima are 682 tokens for RoPE and 41 tokens for Atma-Raven-Titans.}
 \label{table:gamma_parameters_full}
 \end{table}
 
@@ -59,7 +59,7 @@ Atma-Raven-Titans & Recurrent reference & Block 2, H3 & +0.182 & 4.082 & 0.98340
  & hl:512 (cap) & 2.304 & 2.181 & 2.565 & 3.030 & 0.171 & 1.699 & 2.719 & 4.142 & 97.5 & 10.0 \\
 \bottomrule
 \end{tabular}}
-\caption{Complete paired causal clamp sweep across quantile and half-life caps from 2K to 256K. Capping the single outlier head at hl:256 eliminates NoPE and Polar extrapolation collapse while satisfying the 2K short-context guardrail. In contrast, p99 fails because the 99th percentile remains corrupted by the outlier, and RoPE suffers short-range needle accuracy collapse (82.5\% $\rightarrow$ 50.0\%) without long-range retrieval gain.}
+\caption{Complete paired clamp sweep across quantile and half-life caps from 2K to 256K. Capping the single outlier head at hl:256 improves NoPE and Polar extrapolation while meeting the 2K short-context guardrail. The p99 setting leaves a long retention horizon, while the RoPE cap reduces short-range needle accuracy from 82.5\% to 50.0\% without improving long-range retrieval.}
 \label{table:gamma_sweep_full}
 \end{table}
 
@@ -139,6 +139,28 @@ RoPE & 59.8 $\rightarrow$ 45.0 & 2.2 $\rightarrow$ 0.8 & 0.3 $\rightarrow$ 0.0 &
 \begin{table}[!ht]
 \centering
 \scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrrrrrr}
+\toprule
+\textbf{Model} & \textbf{Haystack} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\ \midrule
+\multirow{2}{*}{NoPE} & Synthetic & 95.3 $\rightarrow$ 93.7 & 93.7 $\rightarrow$ 88.7 & 88.7 $\rightarrow$ 79.7 & 78.0 $\rightarrow$ 65.3 & 23.7 $\rightarrow$ 18.3 & 4.7 $\rightarrow$ 1.0 & 0.7 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+ & FinePDFs (Real) & 96.7 $\rightarrow$ 94.3 & 18.0 $\rightarrow$ 61.3 & 0.0 $\rightarrow$ 44.7 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+\midrule
+\multirow{2}{*}{Polar} & Synthetic & 96.3 $\rightarrow$ 92.7 & 92.3 $\rightarrow$ 88.3 & 86.3 $\rightarrow$ 81.7 & 86.0 $\rightarrow$ 81.0 & 76.0 $\rightarrow$ 72.0 & 65.7 $\rightarrow$ 65.3 & 26.3 $\rightarrow$ 38.7 & 18.0 $\rightarrow$ 32.7 \\
+ & FinePDFs (Real) & 93.0 $\rightarrow$ 93.7 & 67.3 $\rightarrow$ 91.0 & 62.7 $\rightarrow$ 91.3 & 12.0 $\rightarrow$ 5.0 & 0.0 $\rightarrow$ 16.3 & 0.0 $\rightarrow$ 0.7 & 0.0 $\rightarrow$ 1.0 & 0.0 $\rightarrow$ 0.0 \\
+\midrule
+\multirow{2}{*}{RoPE} & Synthetic & 42.3 $\rightarrow$ 27.0 & 4.3 $\rightarrow$ 1.7 & 0.7 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+ & FinePDFs (Real) & 77.3 $\rightarrow$ 63.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
+\bottomrule
+\end{tabular}}
+\caption{Exact five-token retrieval accuracy (\%) by haystack type, untouched $\rightarrow$ capped. On real text, RoPE reaches 0.0\% at 4K and NoPE at 8K. Polar scores 62.7\% untouched and more than 91\% capped at 8K, with nonzero capped accuracy through 128K.}
+\label{table:gamma_haystack_retrieval_exact_full}
+\end{table}
+
+\begin{table}[!ht]
+\centering
+\scriptsize
 \setlength{\tabcolsep}{2.4pt}
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{lrrrrrrrrrr}
@@ -149,7 +171,7 @@ Polar & 55 $\rightarrow$ 55 & 54 $\rightarrow$ 54 & 52 $\rightarrow$ 52 & 54 $\r
 RoPE & 59 $\rightarrow$ 61 & 67 $\rightarrow$ 68 & 64 $\rightarrow$ 66 & 43 $\rightarrow$ 50 & 28 $\rightarrow$ 33 & 19 $\rightarrow$ 21 & 15 $\rightarrow$ 17 & 16 $\rightarrow$ 15 & 14 $\rightarrow$ 13 & 14 $\rightarrow$ 11 \\
 \bottomrule
 \end{tabular}}
-\caption{Complete BABILong curve after adaptation, untouched $\rightarrow$ capped (macro exact match, \%). Clamping restores NoPE adapted reasoning to 35--57\% across 8K--256K contexts (vs 0\% untouched) and boosts Polar at 256K from 28\% to 42\%.}
+\caption{Complete BABILong curve after adaptation, untouched $\rightarrow$ capped (macro exact match, \%). The cap raises NoPE to 35--57\% across 8K--256K, compared with 0\% untouched, and raises Polar at 256K from 28\% to 42\%.}
 \label{table:gamma_babilong_full}
 \end{table}
 
@@ -166,7 +188,7 @@ Polar & 1.451 $\rightarrow$ 1.458 & 1.442 $\rightarrow$ 1.451 & 1.406 $\rightarr
 RoPE & 1.439 $\rightarrow$ 1.440 & 1.642 $\rightarrow$ 1.656 & 1.783 $\rightarrow$ 1.783 & 1.935 $\rightarrow$ 1.932 & 2.094 $\rightarrow$ 2.082 & 2.252 $\rightarrow$ 2.220 & 2.413 $\rightarrow$ 2.378 & 2.512 $\rightarrow$ 2.460 \\
 \bottomrule
 \end{tabular}}
-\caption{Complete fixed-target likelihood curve, untouched $\rightarrow$ capped (mean bits per byte; lower is better), averaged over FinePDFs, PG-19, and Proof-Pile.}
+\caption{Complete fixed-target likelihood curve, untouched $\rightarrow$ capped, averaged over FinePDFs, PG-19, and Proof-Pile in mean bits per byte (lower is better).}
 \label{table:gamma_bpb_full}
 \end{table}
 
@@ -191,6 +213,6 @@ RoPE & 1.439 $\rightarrow$ 1.440 & 1.642 $\rightarrow$ 1.656 & 1.783 $\rightarro
  & Proof-Pile & 2.077 $\rightarrow$ 2.078 & 2.331 $\rightarrow$ 2.350 & 2.507 $\rightarrow$ 2.513 & 2.582 $\rightarrow$ 2.596 & 2.668 $\rightarrow$ 2.700 & 2.746 $\rightarrow$ 2.776 & 2.892 $\rightarrow$ 2.922 & 2.991 $\rightarrow$ 3.011 \\
 \bottomrule
 \end{tabular}}
-\caption{Dataset-level fixed-target long-document likelihood curve, untouched $\rightarrow$ capped (bits per byte; lower is better). NoPE catastrophic likelihood divergence on FinePDFs (11.666 $\rightarrow$ 1.180), PG-19 (4.902 $\rightarrow$ 1.224), and Proof-Pile (7.723 $\rightarrow$ 2.382) is completely prevented across all lengths.}
+\caption{Dataset-level fixed-target long-document likelihood, untouched $\rightarrow$ capped, in bits per byte (lower is better). At 256K, the cap reduces NoPE BPB from 11.666 to 1.180 on FinePDFs, from 4.902 to 1.224 on PG-19, and from 7.723 to 2.382 on Proof-Pile.}
 \label{table:gamma_longdoc_dataset_breakdown}
 \end{table}

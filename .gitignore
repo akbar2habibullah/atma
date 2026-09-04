@@ -12,6 +12,9 @@ gamma_diagnostics/manifests/
 /tmp/training_artifact_diag/
 /checkpoints/babilong_2k_ft/
 /foveal_cpt/output/
+/third_party/flash-linear-attention/
+/third_party/mamba/
+/third_party/TDA/
 
 # LaTeX build products (compiled manuscript PDFs are tracked explicitly).
 paper/**/*.aux

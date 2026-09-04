@@ -87,13 +87,13 @@ def junk_perplexity(model, val_data, lengths, num_seqs, device, loss_chunk=8192)
 
 
 @torch.no_grad()
-def needle_retrieval(model, haystack, distances, num_trials, vlen, device):
+def needle_retrieval(model, haystack, distances, num_trials, vlen, device, seed=1234):
     """Induction needle-in-haystack: plant a unique-key sentence + spaced-digit value at the
     start, re-present the cue at the end with a gap of `distance` real tokens, score CE +
     greedy per-digit accuracy on the value. `haystack` = list of CPU int64 token tensors
     (each >= max(distances)+overhead). Returns {dist: {ce, acc}} and a needle-absent baseline."""
     from transformers import AutoTokenizer
-    random.seed(1234)
+    rng = random.Random(seed)
     tok = AutoTokenizer.from_pretrained("gpt2")
     eot = tok.eos_token_id
 
@@ -106,8 +106,8 @@ def needle_retrieval(model, haystack, distances, num_trials, vlen, device):
 
     for t in range(num_trials):
         hay = haystack[t % len(haystack)]
-        key = random.randint(10 ** 6, 10 ** 7 - 1)
-        digits = [random.randint(0, 9) for _ in range(vlen)]
+        key = rng.randint(10 ** 6, 10 ** 7 - 1)
+        digits = [rng.randint(0, 9) for _ in range(vlen)]
         cue = tok.encode(f" The access code for record {key} is")
         val = tok.encode("".join(f" {x}" for x in digits))
         needle = cue + val
@@ -162,7 +162,7 @@ def run_eval(model, cfg: dict, device):
     if docs:
         result["clean_ppl"] = clean_perplexity(model, docs, lengths, device)
         needle, base = needle_retrieval(model, docs, distances, cfg["num_needle_trials"],
-                                        cfg["needle_val_len"], device)
+                                        cfg["needle_val_len"], device, cfg.get("eval_seed", 1234))
         result["needle"] = needle
         result["needle_baseline"] = base
     else:

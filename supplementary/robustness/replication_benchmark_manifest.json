@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "description": "Pinned source checkpoints and datasets for paired gamma evaluation of the four 10B replication runs.",
+  "models": {
+    "repl_seed1_nope": {
+      "architecture": "nope",
+      "comparison_group": "replication_seed1",
+      "repo_id": "ChavyvAkvar/repl_seed1_nope",
+      "requested_revision": "main",
+      "resolved_revision": "8ab5fe847915223abfec6a146c97f173b8c72058",
+      "seed": 202701
+    },
+    "repl_seed1_polar": {
+      "architecture": "polar",
+      "comparison_group": "replication_seed1",
+      "repo_id": "ChavyvAkvar/repl_seed1_polar",
+      "requested_revision": "main",
+      "resolved_revision": "6b3226d04af1f8c982c9085c8c9dbd8282e11220",
+      "seed": 202701
+    },
+    "repl_seed2_nope": {
+      "architecture": "nope",
+      "comparison_group": "replication_seed2",
+      "repo_id": "ChavyvAkvar/repl_seed2_nope",
+      "requested_revision": "main",
+      "resolved_revision": "3196eac86d84759bb245b410da61eb8665bfdf05",
+      "seed": 202702
+    },
+    "repl_seed2_polar": {
+      "architecture": "polar",
+      "comparison_group": "replication_seed2",
+      "repo_id": "ChavyvAkvar/repl_seed2_polar",
+      "requested_revision": "main",
+      "resolved_revision": "50a3790bd3fcb55b3a4d69921df2725b21863fa5",
+      "seed": 202702
+    }
+  },
+  "datasets": {
+    "codelion/finepdfs-1B": {
+      "dataset_id": "codelion/finepdfs-1B",
+      "requested_revision": "main",
+      "resolved_revision": "6fbca6dd53e3e794f607cfe1f5a91c07e17b01ab"
+    },
+    "emozilla/pg19": {
+      "dataset_id": "emozilla/pg19",
+      "requested_revision": "main",
+      "resolved_revision": "c021754c8e01c5b1cc83a1f549c1f97fbbb756b8"
+    },
+    "hoskinson-center/proof-pile": {
+      "dataset_id": "hoskinson-center/proof-pile",
+      "requested_revision": "main",
+      "resolved_revision": "490b980249446f2f3bd2df3a8cf085d0f2de240a"
+    }
+  },
+  "protocol": {
+    "benchmarks": ["retrieval", "longdoc"],
+    "conditions": ["baseline", "gamma_half_life_256"],
+    "retrieval": {
+      "suites": ["synthetic", "real"],
+      "tasks": ["passkey", "niah"],
+      "lengths": ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"],
+      "depths": [0.1, 0.5, 0.9],
+      "samples_per_cell": 50,
+      "value_tokens": 5,
+      "seed": 1234
+    },
+    "longdoc": {
+      "datasets": ["finepdfs", "pg19", "proof_pile"],
+      "lengths": ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"],
+      "documents_requested": 8,
+      "fixed_target_tokens": 256
+    },
+    "gamma_cap": {
+      "selection": "largest_parameter_only_zero_input_logit",
+      "target_heads": 1,
+      "max_half_life_tokens": 256
+    }
+  }
+}
