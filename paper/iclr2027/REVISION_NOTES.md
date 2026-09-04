@@ -7,14 +7,16 @@ compiled PDF now also contain the full retention-horizon diagnostic: parameter
 inspection, the paired single-head intervention, and independent downstream,
 retrieval, BPB, and BABILong re-evaluation. The appendix additionally reports
 the matched single-seed Polar component pilot and scopes its unexpected
-fixed-null result as an unresolved calibration question. The full re-evaluation
+fixed-null result as an unresolved calibration question. It now also reports two
+seed-paired 9.816B-token NoPE/Polar replications, restricted as prespecified to BPB
+and retrieval in untouched and 256-token-capped conditions. The full re-evaluation
 is presented as length-wise curves in the main paper and as generated,
 cell-complete tables in the appendix. In the current compiled draft:
 
 - The main body concludes on page 9, within the nine-page limit.
 - The page-limit-exempt AI use and reproducibility statements follow on page 9.
 - References begin on page 10 and appendices begin on page 11.
-- The compiled artifact is 32 pages; the nine full diagnostic and re-evaluation tables appear in Appendix I.
+- The compiled artifact is 34 pages; the two replication tables appear in Appendix F and the nine full diagnostic and re-evaluation tables appear in Appendix J.
 
 The retention-horizon figures, endpoint table, and prose therefore fit without exceeding the
 main-text limit, but leave no additional full page of headroom.

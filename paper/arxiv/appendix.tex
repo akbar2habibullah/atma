@@ -220,6 +220,63 @@ Table~\ref{table:ablation_appendix} retains all 120 factorial cells; the main pa
 \endgroup
 \end{landscape}
 
+\section{Seed-Paired Replication}
+\label{appendix:seed_replication}
+
+We trained four fresh 378M-parameter checkpoints: paired NoPE and Polar runs at seeds 202701 and 202702. Every run used 18,722 steps of 524,288 tokens (9.816B tokens), sequence length 2,048, the L40S configuration with microbatch size four, and the same data order within each seed pair. Final validation NLL differed by architecture but was stable across seeds (Table~\ref{table:replication_endpoints}). Checkpoints and evaluation datasets were pinned to immutable Hub revisions.
+
+The follow-up was intentionally restricted to the two diagnostics relevant to the retention hypothesis: teacher-forced retrieval and fixed-target BPB. We did not run downstream tasks or BABILong. For each checkpoint we compared the untouched model with the checkpoint-local 256-token cap on its largest parameter-only zero-input retention head. Retrieval used the same synthetic/FinePDFs, passkey/NIAH, length, depth, sample, target, and seed grid as the primary evaluation: 38,400 trials across the eight model--condition combinations. Fixed-target BPB used eight qualifying FinePDFs documents and five qualifying documents each from PG-19 and Proof-Pile; document hashes were identical across models and conditions. All 24 jobs completed without an OOM or failed cell.
+
+\begin{table}[ht]
+\centering
+\small
+\setlength{\tabcolsep}{3.2pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Seed} & \textbf{Architecture} & \textbf{Final val. NLL} & \textbf{Max $H_{1/2}$} & \textbf{256K BPB} & \textbf{256K retrieval tok./exact} \\
+\midrule
+202701 & NoPE  & 2.81164 & 135k (B2/H2)  & 3.898 $\rightarrow$ 1.506 & 4.83/0.00 $\rightarrow$ 0.73/0.00 \\
+202701 & Polar & 2.85661 & 272 (B10/H7) & 1.644 $\rightarrow$ 1.644 & 16.97/0.00 $\rightarrow$ 16.53/0.00 \\
+202702 & NoPE  & 2.81474 & 5.78M (B2/H3) & 5.256 $\rightarrow$ 1.490 & 12.13/0.00 $\rightarrow$ 7.07/0.00 \\
+202702 & Polar & 2.85417 & 231 (B6/H4)  & 1.760 $\rightarrow$ 1.762 & 20.90/3.83 $\rightarrow$ 21.13/3.83 \\
+\bottomrule
+\end{tabular}}
+\caption{Seed-level replication endpoints. Each metric reports untouched $\rightarrow$ capped evaluation. Retrieval averages passkey and NIAH, three depths, and synthetic and real-text suites; values are percentages. $H_{1/2}$ is the maximum parameter-only zero-input operating point, with zero-indexed block/head coordinates.}
+\label{table:replication_endpoints}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.7pt}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lllrrrrrrrr}
+\toprule
+\textbf{Architecture} & \textbf{Condition} & \textbf{Metric} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\
+\midrule
+NoPE & untouched & Retrieval token & 99.00 & 72.50 & 51.62 & 47.62 & 42.42 & 33.85 & 19.42 & 8.48 \\
+NoPE & capped    & Retrieval token & 98.55 & 85.27 & 82.52 & 56.53 & 34.05 & 17.77 & 8.50 & 3.90 \\
+Polar & untouched & Retrieval token & 98.65 & 95.77 & 97.52 & 89.17 & 67.32 & 51.30 & 27.88 & 18.93 \\
+Polar & capped    & Retrieval token & 98.70 & 95.78 & 97.77 & 89.48 & 67.40 & 52.25 & 28.22 & 18.83 \\
+\midrule
+NoPE & untouched & Retrieval exact & 95.00 & 61.33 & 43.25 & 39.25 & 24.50 & 9.08 & 0.75 & 0.00 \\
+NoPE & capped    & Retrieval exact & 92.92 & 62.58 & 55.25 & 19.92 & 5.08 & 0.08 & 0.00 & 0.00 \\
+Polar & untouched & Retrieval exact & 93.58 & 84.25 & 88.67 & 70.08 & 18.33 & 12.42 & 4.83 & 1.92 \\
+Polar & capped    & Retrieval exact & 93.83 & 84.42 & 89.50 & 70.17 & 19.08 & 14.33 & 5.17 & 1.92 \\
+\midrule
+NoPE & untouched & Mean BPB & 1.379 & 1.442 & 2.016 & 2.590 & 3.346 & 3.619 & 3.902 & 4.577 \\
+NoPE & capped    & Mean BPB & 1.397 & 1.397 & 1.416 & 1.420 & 1.445 & 1.435 & 1.459 & 1.498 \\
+Polar & untouched & Mean BPB & 1.432 & 1.424 & 1.448 & 1.458 & 1.522 & 1.557 & 1.617 & 1.702 \\
+Polar & capped    & Mean BPB & 1.435 & 1.426 & 1.449 & 1.459 & 1.523 & 1.558 & 1.618 & 1.703 \\
+\bottomrule
+\end{tabular}}
+\caption{Complete replication curves, descriptively averaged over the two seeds. Retrieval metrics are percentages and give equal weight to the 12 task--suite--depth cells at each length. BPB gives equal weight to FinePDFs, PG-19, and Proof-Pile. These two seeds do not support a population uncertainty estimate.}
+\label{table:replication_curves}
+\end{table}
+
+Both NoPE checkpoints developed much longer zero-input horizons than either Polar checkpoint. Their mean BPB growth from 2K to 256K was $3.32\times$ when untouched and $1.07\times$ when capped; the cap repaired the likelihood collapse in both seeds. It did not rescue retrieval: seed-averaged NoPE token accuracy fell from 33.85\% to 17.77\% at 64K and from 8.48\% to 3.90\% at 256K. Conversely, Polar had $1.19\times$ BPB growth in both conditions and nearly overlapping retrieval curves because its maxima were already near the selected ceiling. At 256K, every condition had zero exact real-text retrieval; Polar's 1.92\% overall exact mean came from the synthetic suite in seed 202702. The replication therefore supports excessive retention as a checkpoint-specific likelihood-collapse mechanism, especially for NoPE, while refuting a general expectation that the cap improves retrieval or that every Polar checkpoint develops a comparable outlier.
+
 \section{Retrieval Breakdown}
 \label{appendix:retrieval}
 

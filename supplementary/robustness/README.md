@@ -357,6 +357,31 @@ the rolling summary are written to
 run or resume only selected checkpoints. Concurrent machines must use distinct
 `--output-dir` values so their rolling plan and summary files do not race.
 
+### Replication results
+
+The paired evaluation is complete: all 24 jobs finished without an OOM or failed
+cell. The committed [`run-summary.json`](work/evaluation/replication/run-summary.json)
+contains the result blocks, and [`gamma_parameters.json`](work/evaluation/replication/gamma_parameters.json)
+and [`gamma_parameters.csv`](work/evaluation/replication/gamma_parameters.csv) contain
+the same 128-row parameter scan in JSON and CSV form. The generated checkpoint-local
+clamp specifications are under
+[`checkpoints/base/`](work/evaluation/replication/checkpoints/base/).
+
+| Seed | Architecture | Max zero-input half-life | 256K mean BPB, untouched → capped | 256K retrieval token/exact, untouched → capped |
+|---:|:---|---:|---:|---:|
+| 202701 | NoPE | 135,458 | 3.898 → 1.506 | 4.83/0.00 → 0.73/0.00 |
+| 202701 | Polar | 272 | 1.644 → 1.644 | 16.97/0.00 → 16.53/0.00 |
+| 202702 | NoPE | 5,775,726 | 5.256 → 1.490 | 12.13/0.00 → 7.07/0.00 |
+| 202702 | Polar | 231 | 1.760 → 1.762 | 20.90/3.83 → 21.13/3.83 |
+
+Retrieval averages passkey and NIAH, three depths, and the synthetic and FinePDFs
+suites. BPB averages FinePDFs, PG-19, and Proof-Pile. The two NoPE replications both
+develop long zero-input horizons, and the cap repairs their likelihood collapse but
+does not rescue retrieval. The Polar maxima are already near the selected ceiling, so
+their capped and untouched curves nearly overlap. Exact real-text retrieval at 256K
+is zero for every replication condition. These are two descriptive seed pairs, not a
+population uncertainty estimate.
+
 ## Return and summarize artifacts
 
 From each machine, return its `.log`, `.done` marker, exact source config, checkpoint
