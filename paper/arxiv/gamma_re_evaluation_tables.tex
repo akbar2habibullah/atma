@@ -76,7 +76,7 @@ Polar & 28.47 $\rightarrow$ 28.22 & 36.19 $\rightarrow$ 36.20 & 66.87 $\rightarr
 RoPE & 30.25 $\rightarrow$ 30.16 & 37.19 $\rightarrow$ 37.17 & 66.76 $\rightarrow$ 66.97 & 50.67 $\rightarrow$ 51.07 & 49.12 $\rightarrow$ 48.95 & 29.43 $\rightarrow$ 29.77 & 32.40 $\rightarrow$ 32.20 & 60.95 $\rightarrow$ 61.01 & 44.60 $\rightarrow$ 44.66 \\
 \bottomrule
 \end{tabular}}
-\caption{Complete short-context control, untouched $\rightarrow$ capped (accuracy, \%). The intervention changes no task mean materially ($<0.06$ points delta).}
+\caption{Complete short-context control, untouched $\rightarrow$ capped (accuracy, \%). The unweighted eight-task mean changes by less than 0.06 percentage points for each model; individual task changes can be larger.}
 \label{table:gamma_downstream_full}
 \end{table}
 
@@ -132,7 +132,7 @@ RoPE & 59.8 $\rightarrow$ 45.0 & 2.2 $\rightarrow$ 0.8 & 0.3 $\rightarrow$ 0.0 &
  & FinePDFs (Real) & 94.8 $\rightarrow$ 88.8 & 4.7 $\rightarrow$ 2.7 & 0.2 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 & 0.0 $\rightarrow$ 0.0 \\
 \bottomrule
 \end{tabular}}
-\caption{Teacher-forced retrieval token accuracy (\%) by haystack type, untouched $\rightarrow$ capped. Polar gains +9.1\% synthetic and +16.3\% FinePDFs retrieval at 256K, while NoPE FinePDFs retrieval remains 0.0\% despite synthetic signal gains.}
+\caption{Teacher-forced retrieval token accuracy (\%) by haystack type, untouched $\rightarrow$ capped. Polar gains 9.1 percentage points in synthetic and 16.3 points in FinePDFs retrieval at 256K, while NoPE FinePDFs retrieval remains 0.0\% despite synthetic signal gains.}
 \label{table:gamma_haystack_retrieval_full}
 \end{table}
 
@@ -171,7 +171,7 @@ Polar & 55 $\rightarrow$ 55 & 54 $\rightarrow$ 54 & 52 $\rightarrow$ 52 & 54 $\r
 RoPE & 59 $\rightarrow$ 61 & 67 $\rightarrow$ 68 & 64 $\rightarrow$ 66 & 43 $\rightarrow$ 50 & 28 $\rightarrow$ 33 & 19 $\rightarrow$ 21 & 15 $\rightarrow$ 17 & 16 $\rightarrow$ 15 & 14 $\rightarrow$ 13 & 14 $\rightarrow$ 11 \\
 \bottomrule
 \end{tabular}}
-\caption{Complete BABILong curve after adaptation, untouched $\rightarrow$ capped (macro exact match, \%). The cap raises NoPE to 35--57\% across 8K--256K, compared with 0\% untouched, and raises Polar at 256K from 28\% to 42\%.}
+\caption{Complete BABILong curve after adaptation, untouched $\rightarrow$ capped (macro exact match, \%). The cap raises NoPE to 35--57\% across 8K--256K, compared with 39/21/6\% untouched at 8/16/32K and zero from 64K onward, and raises Polar at 256K from 28\% to 42\%.}
 \label{table:gamma_babilong_full}
 \end{table}
 

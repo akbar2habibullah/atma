@@ -1,33 +1,73 @@
 # ICLR 2027 revision notes
 
-## Current milestone
+## Current milestone (2026-09-05)
 
-Stage 1 (ICLR conversion and length reduction) is complete. The source and
-compiled PDF now also contain the full retention-horizon diagnostic: parameter
-inspection, the paired single-head intervention, and independent downstream,
-retrieval, BPB, and BABILong re-evaluation. The appendix additionally reports
-the matched single-seed Polar component pilot and scopes its unexpected
-fixed-null result as an unresolved calibration question. It now also reports two
-seed-paired 9.816B-token NoPE/Polar replications, restricted as prespecified to BPB
-and retrieval in untouched and 256-token-capped conditions. The full re-evaluation
-is presented as length-wise curves in the main paper and as generated,
-cell-complete tables in the appendix. In the current compiled draft:
+A manuscript-only evidence and presentation revision is complete. No new
+training or benchmark runs were performed. The ICLR and arXiv sources and PDFs
+are synchronized, preserving their anonymous and public wrappers respectively.
 
-- The main body concludes on page 9, within the nine-page limit.
-- The page-limit-exempt AI use and reproducibility statements follow on page 9.
-- References begin on page 10 and appendices begin on page 11.
-- The compiled artifact is 34 pages; the two replication tables appear in Appendix F and the nine full diagnostic and re-evaluation tables appear in Appendix J.
+The revision:
 
-The retention-horizon figures, endpoint table, and prose therefore fit without exceeding the
-main-text limit, but leave no additional full page of headroom.
+- Centers the abstract, introduction, and conclusion on attention–memory
+  interactions and checkpoint-specific retention failure.
+- Adds a main-text component discussion and a table placing both fresh paired
+  runs beside the primary NoPE/Polar checkpoints. The smaller fresh Polar exact
+  retrieval results and the microbatch confound are explicit.
+- Separates untouched architectural comparisons from the retention intervention.
+  The primary length figure and downstream bars show untouched checkpoints; the
+  full intervention curves remain in Appendix J and the main audit keeps its
+  before/after endpoint table.
+- Replaces the crowded main haystack matrix with fresh-run endpoints and keeps
+  the complete haystack breakdowns in the appendix.
+- Regenerates untouched retrieval tables from full runs, excluding smoke tests.
+  For example, Atma-Raven-Titans synthetic exact retrieval at 2K is 8.0%, not
+  the smoke-contaminated 20.7%.
+- Corrects the BABILong captions: untouched NoPE is 39/21/6% at 8/16/32K and
+  zero from 64K onward. Clarifies that small downstream-mean changes do not
+  establish preservation of every individual metric.
+- States that retrieval reuses one real-text stream and that BPB scores 18 fixed
+  256-token spans (4,608 target tokens per model and context length).
+- Separates preallocated engine memory from occupied per-sequence KV storage;
+  the 128K BF16 KV size of 0.5 GiB is an analytical calculation, not a new memory
+  measurement.
+- Corrects the NoPE loss-figure annotation and scopes the microbatch diagnostic.
+- Restores Times-family text fonts through T1 encoding. Regenerates affected PDF
+  assets and marks PDFs binary to prevent Git line-ending corruption.
 
-## Preserved main-paper spine
+The rebuilt ICLR draft has 33 pages. Main text ends on page 9; the AI use and
+reproducibility statements and references begin on page 10. Appendix A starts on
+page 11 after the remaining references. The fresh-run table is in the main text
+on page 6, with full replication results in Appendix F. Figures, tables, and
+page boundaries were visually inspected. Both builds have no unresolved
+references, missing glyphs, font-substitution warnings, or overfull boxes;
+non-fatal underfull spacing warnings remain.
 
-1. Long-context modeling is framed as a Pareto problem across retrieval, reasoning, document likelihood, short-context quality, and systems cost.
-2. The Polar mechanism retains its null floor, bounded direction/magnitude decomposition, and gated-delta memory channel.
-3. The main evidence retains the recipe ablation, matched long-context endpoints, synthetic/real-text boundary, short-context and systems trade-offs, and adds a checkpoint-level retention-horizon audit.
-4. Claims are explicitly scoped: Raven is not an optimizer-matched ablation, 256K natural-text retrieval remains unsolved, serving measurements are descriptive, the infrastructure transition is not causal evidence, and the inference cap is a diagnostic rather than a validated training method.
-5. Both Raven Native and Atma-Raven-Titans remain visible as untouched references in the main length curves, short-context bars, retrieval depth heatmaps, serving figure, article retrieval chart, and web recovery chart. Checkpoint-specific probes that were not run on Raven say so explicitly rather than implying missing results.
+## Evidence boundaries retained
+
+1. The complete factorial tests interactions across recipe settings, not seeds.
+2. The full Polar mechanism's incremental benefit over a temperature-matched
+   softmax control remains unresolved; the fixed-null component pilot is
+   reported candidly.
+3. The NoPE likelihood repair repeats in both fresh pairs. The primary Polar
+   cap benefit and the primary extreme-length exact-retrieval magnitude do not.
+4. Raven is a separate model-family/optimizer comparison. Exact natural-text
+   retrieval at extreme lengths remains unsolved, and serving timings have one
+   sample per cell.
+5. The retention cap diagnoses existing checkpoints; the training origin and a
+   bounded train-time formulation remain open.
+6. No matched 9.816B-token TDA result is included. Its potential addition before
+   submission is future work, not evidence claimed by this version.
+
+## Reproducible manuscript checks
+
+- `python paper/generate_primary_tables.py --check` checks the generated main
+  endpoint tables and appendix retrieval tables against archived full results.
+- `python paper/generate_re_evaluation_tables.py` rebuilds diagnostic tables in
+  both editions, including corrected captions.
+- `python paper/sync_arxiv.py` carries shared prose and assets into the public
+  wrapper. See `paper/README.md` for the complete regeneration/build sequence.
+- Both PDFs were compiled with Tectonic 0.17.0. Training code and experiment logs
+  are unchanged.
 
 ## Pending author-led stages
 

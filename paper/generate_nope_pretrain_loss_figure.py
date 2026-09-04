@@ -2,8 +2,7 @@
 
 Panel (a): Full 10B-token pretraining validation loss curves (Steps 0 -> 18,722) for
            NoPE L40S mbs16, NoPE L40S mbs4, and NoPE L4 mbs4.
-Panel (b): Zoomed-in resolution view (Steps 15,000 -> 18,722), proving that training curves
-           are virtually identical and completely overlapping (2.8126 vs 2.8128 vs 2.8160 nats).
+Panel (b): Zoomed-in resolution view (Steps 15,000 -> 18,722), showing that short-context losses remain close (2.8126 vs 2.8128 vs 2.8160 nats).
 """
 
 from __future__ import annotations
@@ -184,7 +183,7 @@ def generate_pdf(out_path: Path):
     # Annotation on Panel (b) - Bottom left empty region
     c.setFont("Helvetica-Bold", 5.8)
     c.setFillColor(HexColor("#D55E00"))
-    c.drawString(288.0, plot_y + 18.0, "Identical 2.812 nats pretrain loss (<0.01% diff)")
+    c.drawString(288.0, plot_y + 18.0, "Final validation: 2.8126 / 2.8128 / 2.8160 nats")
     c.setFillColor(HexColor("#C0392B"))
     c.drawString(288.0, plot_y + 10.0, "Diverges to 10.77 vs 4.07 NLL at 256K extrapolation")
 

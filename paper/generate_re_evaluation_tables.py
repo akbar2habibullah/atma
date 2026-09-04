@@ -252,7 +252,7 @@ def generate_haystack_retrieval_breakdown_table():
         
     return table_env(
         header + "\n" + "\n".join(rows),
-        "Teacher-forced retrieval token accuracy (\\%) by haystack type, untouched $\\rightarrow$ capped. Polar gains +9.1\\% synthetic and +16.3\\% FinePDFs retrieval at 256K, while NoPE FinePDFs retrieval remains 0.0\\% despite synthetic signal gains.",
+        "Teacher-forced retrieval token accuracy (\\%) by haystack type, untouched $\\rightarrow$ capped. Polar gains 9.1 percentage points in synthetic and 16.3 points in FinePDFs retrieval at 256K, while NoPE FinePDFs retrieval remains 0.0\\% despite synthetic signal gains.",
         "table:gamma_haystack_retrieval_full",
         "llrrrrrrrr",
         size=r"\scriptsize",
@@ -327,7 +327,7 @@ def main():
         values.append(arrow(sum(base_d[model].values()) / 8, sum(cap_d[model].values()) / 8, 2))
         rows.append(LABELS[model] + " & " + " & ".join(values) + r" \\")
     sections.append(table_env(header + "\n" + "\n".join(rows),
-        "Complete short-context control, untouched $\\rightarrow$ capped (accuracy, \\%). The intervention changes no task mean materially ($<0.06$ points delta).",
+        "Complete short-context control, untouched $\\rightarrow$ capped (accuracy, \\%). The unweighted eight-task mean changes by less than 0.06 percentage points for each model; individual task changes can be larger.",
         "table:gamma_downstream_full", "l" + "r" * 9))
 
     # 4. Retrieval curves (token and exact)
@@ -357,7 +357,7 @@ def main():
     for model in MODELS:
         rows.append(LABELS[model] + " & " + " & ".join(arrow(bb[model][length], cb[model][length], 0) for length in BABI_LENGTHS) + r" \\")
     sections.append(table_env(header + "\n" + "\n".join(rows),
-        "Complete BABILong curve after adaptation, untouched $\\rightarrow$ capped (macro exact match, \\%). The cap raises NoPE to 35--57\\% across 8K--256K, compared with 0\\% untouched, and raises Polar at 256K from 28\\% to 42\\%.",
+        "Complete BABILong curve after adaptation, untouched $\\rightarrow$ capped (macro exact match, \\%). The cap raises NoPE to 35--57\\% across 8K--256K, compared with 39/21/6\\% untouched at 8/16/32K and zero from 64K onward, and raises Polar at 256K from 28\\% to 42\\%.",
         "table:gamma_babilong_full", "l" + "r" * 10))
 
     # 7. Mean BPB curve

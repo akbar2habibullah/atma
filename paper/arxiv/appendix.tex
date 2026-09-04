@@ -206,6 +206,11 @@ The Raven rows use AdamW optimizer because the attempted matched-schedule contro
 
 Retrieval crosses passkey and NIAH tasks, synthetic and FinePDFs haystacks, eight lengths from 2K through 256K, three depths, and 50 paired trials per cell. The scorer appends the complete five-token target and evaluates each position conditioned on the preceding ground-truth target tokens. Token accuracy is the fraction of correct per-position argmax predictions; exact accuracy requires all five positions to be correct. Both are teacher-forced diagnostics, not autoregressive generation. An older free-generation protocol was retired because all base checkpoints scored uniformly zero. BABILong uses answer-only fine-tuning on tasks qa1--qa10 at 0K/1K/2K and greedy exact match on ten held-out rows per task and length. Base-task controls use LAMBADA, HellaSwag, PIQA, WinoGrande, ARC-Easy, ARC-Challenge, OpenBookQA, and BoolQ. Fixed-target BPB uses FinePDFs, PG-19, and Proof-Pile. All reported processes completed without failed, OOM, unsupported, missing, or null cells.
 
+\paragraph{Text coverage and aggregation.}
+The 24,000 retrieval evaluations count five models, each on $2\times2\times8\times3\times50=4{,}800$ trials. A single stream of concatenated FinePDFs records supplies every real-text haystack; shorter lengths use prefixes of that stream. The same 50 sample indices per task determine cues and five random digits across lengths, depths, suites, and models. These are paired placements and targets rather than independently sampled documents. Synthetic haystacks repeat the same filler. At each length, overall retrieval gives equal weight to the 12 task--suite--depth cells. Smoke runs are excluded from all reported full-evaluation means.
+
+For primary fixed-target BPB, the evaluator selects the first qualifying documents with at least $262{,}144+256$ GPT-2 tokens: eight FinePDFs, five PG-19, and five Proof-Pile documents. Every context length predicts the same 256-token span immediately after position 262,144, giving 4,608 scored target tokens per model and length. Dataset BPB divides summed target negative log-likelihood in bits by summed UTF-8 target bytes; the reported mean weights the three datasets equally. Additional context changes the conditioning prefix rather than the target. These 18 spans provide a controlled extrapolation diagnostic, not a representative estimate over all documents in the three corpora.
+
 For proportions we report simple Wilson intervals where they aid interpretation. These intervals treat trials as binomial observations and do not exploit the paired design or account for correlations induced by shared templates. The archived retrieval payloads retain aggregate cell counts but the BABILong payloads do not retain per-model correctness vectors, so paired bootstrap or McNemar tests cannot be reconstructed without rerunning or recovering the original predictions.
 
 \begin{landscape}
@@ -287,57 +292,59 @@ Both NoPE checkpoints developed much longer zero-input horizons than either Pola
 \label{fig:retrieval_depth_sweeps}
 \end{figure}
 
-\begin{table}[h]
+\begin{table}[t]
 \centering
 \small
+\setlength{\tabcolsep}{4pt}
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{llrrrrrrrr}
 \toprule
 \textbf{Model} & \textbf{Haystack} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\
 \midrule
-Polar & Synthetic & 99.6 & 98.4 & 98.5 & 97.0 & 94.9 & 92.3 & 80.3 & 68.4 \\
-& FinePDFs & 98.6 & 86.3 & 77.9 & 49.1 & 40.7 & 16.3 & 3.2 & 0.3 \\
-NoPE & Synthetic & 99.5 & 98.7 & 98.9 & 94.9 & 70.3 & 26.5 & 10.2 & 1.2 \\
-& FinePDFs & 99.3 & 52.9 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-RoPE & Synthetic & 81.7 & 44.9 & 33.1 & 0.8 & 6.8 & 0.1 & 0.0 & 0.0 \\
-& FinePDFs & 94.8 & 4.7 & 0.2 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-Atma-Raven-Titans & Synthetic & 64.8 & 60.7 & 51.1 & 46.9 & 41.7 & 35.8 & 25.9 & 19.3 \\
-& FinePDFs & 23.2 & 2.6 & 0.7 & 0.2 & 1.4 & 0.5 & 1.6 & 0.7 \\
-Raven Native & Synthetic & 55.9 & 57.7 & 51.4 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1 \\
-& FinePDFs & 22.1 & 15.4 & 8.2 & 3.3 & 5.3 & 2.9 & 3.7 & 5.4 \\
+Polar & Synthetic & 99.1 & 98.4 & 97.1 & 97.0 & 94.9 & 92.3 & 80.3 & 68.4 \\
+ & FinePDFs & 98.6 & 86.3 & 77.9 & 49.1 & 40.7 & 16.3 & 3.2 & 0.3 \\
+NoPE & Synthetic & 99.1 & 98.7 & 97.7 & 94.9 & 70.3 & 26.5 & 10.2 & 1.2 \\
+ & FinePDFs & 99.3 & 52.9 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+RoPE & Synthetic & 81.7 & 44.9 & 34.5 & 0.8 & 6.8 & 0.1 & 0.0 & 0.0 \\
+ & FinePDFs & 94.8 & 4.7 & 0.2 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+Atma-Raven-Titans & Synthetic & 63.0 & 60.7 & 53.8 & 46.9 & 41.7 & 35.8 & 25.9 & 19.3 \\
+ & FinePDFs & 23.2 & 2.6 & 0.7 & 0.2 & 1.4 & 0.5 & 1.6 & 0.7 \\
+Raven Native & Synthetic & 60.1 & 57.7 & 52.7 & 48.3 & 44.3 & 40.9 & 38.9 & 35.1 \\
+ & FinePDFs & 22.1 & 15.4 & 8.2 & 3.3 & 5.3 & 2.9 & 3.7 & 5.4 \\
 \bottomrule
 \end{tabular}}
-\caption{Zero-shot retrieval accuracy (\%) by haystack type and context length, averaged over needle depths.}
+\caption{Untouched teacher-forced target-token retrieval accuracy (\%). Each entry averages two tasks and three depths, with 50 trials per cell. Only full evaluations enter these means; smoke runs are excluded.}
 \label{table:retrieval_breakdown}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[t]
 \centering
 \small
+\setlength{\tabcolsep}{4pt}
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{llrrrrrrrr}
 \toprule
 \textbf{Model} & \textbf{Haystack} & \textbf{2K} & \textbf{4K} & \textbf{8K} & \textbf{16K} & \textbf{32K} & \textbf{64K} & \textbf{128K} & \textbf{256K} \\
 \midrule
-Polar & Synthetic & 98.2 & 92.3 & 93.2 & 86.0 & 76.0 & 65.7 & 26.3 & 18.0 \\
-& FinePDFs & 93.0 & 67.3 & 62.7 & 12.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-NoPE & Synthetic & 97.7 & 93.7 & 94.3 & 78.0 & 23.7 & 4.7 & 0.7 & 0.0 \\
-& FinePDFs & 96.7 & 18.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-RoPE & Synthetic & 42.0 & 4.3 & 0.3 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-& FinePDFs & 77.3 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-Atma-Raven-Titans & Synthetic & 20.7 & 5.7 & 1.7 & 2.0 & 0.7 & 0.3 & 0.0 & 0.0 \\
-& FinePDFs & 4.7 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-Raven Native & Synthetic & 1.0 & 1.0 & 0.2 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
-& FinePDFs & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+Polar & Synthetic & 96.3 & 92.3 & 86.3 & 86.0 & 76.0 & 65.7 & 26.3 & 18.0 \\
+ & FinePDFs & 93.0 & 67.3 & 62.7 & 12.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+NoPE & Synthetic & 95.3 & 93.7 & 88.7 & 78.0 & 23.7 & 4.7 & 0.7 & 0.0 \\
+ & FinePDFs & 96.7 & 18.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+RoPE & Synthetic & 42.3 & 4.3 & 0.7 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+ & FinePDFs & 77.3 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+Atma-Raven-Titans & Synthetic & 8.0 & 5.7 & 3.3 & 2.0 & 0.7 & 0.3 & 0.0 & 0.0 \\
+ & FinePDFs & 4.7 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+Raven Native & Synthetic & 2.0 & 1.0 & 0.3 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+ & FinePDFs & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
 \bottomrule
 \end{tabular}}
-\caption{Zero-shot exact five-token retrieval accuracy (\%) by haystack type and context length, averaged over needle depths. On FinePDFs, Raven Native remains at 0.0\% across all lengths, RoPE reaches 0.0\% at 4K, and NoPE reaches 0.0\% at 8K. Polar retains 67.3\% at 4K, 62.7\% at 8K, and 12.0\% at 16K before reaching 0.0\% at longer contexts.}
+\caption{Untouched teacher-forced exact five-token retrieval accuracy (\%). Each entry averages two tasks and three depths, with 50 trials per cell. Only full evaluations enter these means; smoke runs are excluded.}
 \label{table:retrieval_exact_breakdown}
 \end{table}
 
 Figure~\ref{fig:retrieval_depth_sweeps} shows variation by needle depth across all five models. Tables~\ref{table:retrieval_breakdown} and~\ref{table:retrieval_exact_breakdown} separate partial target-token signal from exact five-token recall. Every tested model eventually reaches 0.0\% exact retrieval on real-text haystacks under unadapted length extrapolation:
 \begin{itemize}
-\item \textbf{Raven Native and Atma-Raven-Titans:} Raven Native scores 0.0\% on FinePDFs at every tested length and no more than 1.0\% on synthetic haystacks. Atma-Raven-Titans scores 4.7\% at 2K on FinePDFs and 0.0\% from 4K onward.
+\item \textbf{Raven Native and Atma-Raven-Titans:} Raven Native scores 0.0\% on FinePDFs at every tested length and no more than 2.0\% on synthetic haystacks. Atma-Raven-Titans scores 4.7\% at 2K on FinePDFs and 0.0\% from 4K onward.
 \item \textbf{RoPE:} Exact FinePDFs retrieval falls from 77.3\% at 2K to 0.0\% at 4K and stays there through 256K.
 \item \textbf{NoPE:} Exact FinePDFs retrieval falls from 96.7\% at 2K to 18.0\% at 4K and 0.0\% from 8K onward.
 \item \textbf{Polar Attention:} Untouched Polar reaches 93.0\%, 67.3\%, 62.7\%, and 12.0\% on FinePDFs at 2K, 4K, 8K, and 16K. On synthetic haystacks, it retains 65.7\% exact retrieval at 64K and 18.0\% at 256K, with a 95\% Wilson interval of 14.1--22.7\% at 256K. The other models score 0.0\% there.
@@ -408,7 +415,7 @@ Raven/AdamW & Raven Native & \textbf{27.48} & 33.56 & 64.69 & 51.70 & \textbf{49
 \resizebox{\linewidth}{!}{%
 \begin{tabular}{llrrrrr}
 \toprule
-\textbf{Group} & \textbf{Model} & \textbf{Base mean} & \textbf{128K prefill} & \textbf{Decode} & \textbf{Peak alloc.} & \textbf{Train MFU} \\
+\textbf{Group} & \textbf{Model} & \textbf{Base mean} & \textbf{128K prefill} & \textbf{Decode} & \textbf{Engine alloc.} & \textbf{Train MFU} \\
 & & (\%) & (s) & (ms/token) & (GiB) & (\%, 2K) \\
 \midrule
 Matched & NoPE & 45.1 & 1.47 & 16.4 & 39.40 & 42.77 \\
@@ -418,7 +425,7 @@ Raven/AdamW & Atma-Raven-Titans & 43.1 & 1.00 & 2.27 & 8.62 & 30.92 \\
 Raven/AdamW & Raven Native & 43.0 & 1.36 & 3.27 & 6.46 & 21.53 \\
 \bottomrule
 \end{tabular}}
-\caption{Short-context quality and serving trade-offs. Serving uses one sequence and one timing sample; it is descriptive rather than an uncertainty estimate.}
+\caption{Short-context quality and serving trade-offs. Serving uses one sequence and one timing sample. Engine allocation includes the attention backend's preallocated KV pool; it is not occupied per-sequence cache size. See the memory-accounting discussion below.}
 \label{table:quality_systems_summary}
 \end{table}
 
@@ -446,6 +453,9 @@ Compiler boundary & Recurrent scan and custom kernels exposed as opaque operatio
 \caption{Implementation-level optimization breakdown. Complexity statements describe the sequence-mixing path and exclude shared MLP and embedding costs.}
 \label{table:kernel_breakdown}
 \end{table}
+
+\paragraph{Memory accounting.}
+Engine allocation includes weights, runtime buffers, and any preallocated KV pool. The attention runner sizes its pool against a 90\% device-memory budget, whereas Raven allocates recurrent state without a KV pool. The roughly 39.4 GiB attention values therefore reflect the configured engine's allocation policy and do not measure the minimum memory required for one 128K sequence. With four global layers, two KV heads, head dimension 128, and BF16 storage, the occupied key/value tensors for that sequence require $2\times4\times131{,}072\times2\times128\times2$ bytes, or 0.5 GiB, before weights, activations, recurrent state, and other buffers. This is an analytical KV-size calculation, not a new peak-memory measurement. The recurrent-state and KV-length complexity comparison remains separate from these allocated-pool measurements.
 
 \begin{landscape}
 \subsection{Single-sequence scaling}
@@ -527,7 +537,7 @@ Decode, context 512 & Batch 128 & 2,939 tok/s & 2,247 tok/s & 1.31$\times$ \\
 \section{Retention-Horizon Diagnostic}
 \label{appendix:retention_audit}
 
-This section records the post-hoc sequence from parameter inspection to a multi-clamp sweep and broad benchmark re-evaluation. It analyzes released checkpoints rather than a new trained architecture. The primary checkpoint results in Section 5 remain untouched. Every cap below is opt-in, applied only at inference, and removed after each condition.
+This section records the post-hoc sequence from parameter inspection to a multi-clamp sweep and broad benchmark re-evaluation. It analyzes released checkpoints rather than a new trained architecture. The primary checkpoint comparisons in Section 5 use untouched models. Every cap below is opt-in, applied only at inference, and removed after each condition.
 
 The diagnostic follows three systematic stages:
 \begin{enumerate}
@@ -535,6 +545,13 @@ The diagnostic follows three systematic stages:
   \item \textbf{Causal multi-clamping sweep:} Evaluating multiple clamp values (local percentiles \texttt{p90}, \texttt{p99} and absolute half-life ceilings \texttt{hl:256}, \texttt{hl:512}) across sequence lengths 2K--256K on clean text loss and needle retrieval.
   \item \textbf{Independent benchmark re-evaluation:} Re-benchmarking the selected intervention across short-context downstream tasks, retrieval (synthetic and FinePDFs real-text haystacks, passkey and NIAH), fixed-target long-document likelihood (FinePDFs, PG-19, Proof-Pile), and BABILong reasoning.
 \end{enumerate}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{fig_retention_results.pdf}
+\caption{Complete retention-intervention curves for the primary checkpoints. Dashed open curves are untouched; solid curves apply the one-head cap. Dotted filled Raven curves are untouched references. The broad re-evaluation uses pinned archived baselines; same-process sweeps and fresh paired replications are reported separately.}
+\label{fig:retention_results}
+\end{figure}
 
 \subsection{Parameter-only operating points}
 The memory gate has one learned row per query/memory head, rather than one scalar per attention KV head. For each row we decompose the logit as
@@ -569,9 +586,9 @@ After the pilot sweep, we evaluate the capped promoted checkpoints on all eight 
 
 Tables~\ref{table:gamma_parameters_full}--\ref{table:gamma_longdoc_dataset_breakdown} report the full numerical arrays:
 \begin{itemize}
-  \item \textbf{Downstream Controls (Table~\ref{table:gamma_downstream_full}):} Unweighted 2K task means change by at most $0.06$ points across all three models, verifying short-context preservation.
+  \item \textbf{Downstream Controls (Table~\ref{table:gamma_downstream_full}):} Unweighted 2K task means change by at most $0.06$ points across all three models, showing small changes in the aggregate downstream mean; this does not imply preservation of every short-context retrieval metric.
   \item \textbf{Retrieval curves (Tables~\ref{table:gamma_retrieval_token_full}, \ref{table:gamma_retrieval_exact_full}, \ref{table:gamma_haystack_retrieval_full}, \ref{table:gamma_haystack_retrieval_exact_full}):} Polar gains $+12.70$ points in target-token accuracy and $+7.33$ points in exact five-token accuracy at 256K. Its 8K FinePDFs exact accuracy rises from 62.7\% to 91.3\%, and capped exact recall remains nonzero through 128K. NoPE remains at 0.0\% exact real-text retrieval from 16K to 256K, and RoPE remains at 0.0\% at every extrapolation length.
-  \item \textbf{BABILong reasoning (Table~\ref{table:gamma_babilong_full}):} The cap raises NoPE to $35$--$57\%$ from 8K to 256K, compared with $0\%$ untouched, and raises Polar from $28\%$ to $42\%$ at 256K. RoPE decreases from $14\%$ to $11\%$.
+  \item \textbf{BABILong reasoning (Table~\ref{table:gamma_babilong_full}):} The cap raises NoPE to $35$--$57\%$ from 8K to 256K, compared with 39/21/6\% untouched at 8/16/32K and 0\% from 64K onward, and raises Polar from $28\%$ to $42\%$ at 256K. RoPE decreases from $14\%$ to $11\%$.
   \item \textbf{Long-document likelihood (Tables~\ref{table:gamma_bpb_full}, \ref{table:gamma_longdoc_dataset_breakdown}):} At 256K, the cap reduces NoPE BPB from $11.666$ to $1.180$ on FinePDFs, from $4.902$ to $1.224$ on PG-19, and from $7.723$ to $2.382$ on Proof-Pile. Polar's mean degradation drops from $1.26\times$ to $1.03\times$.
 \end{itemize}
 
@@ -601,7 +618,7 @@ The maximum sampled gain is a lower bound on the local operator norm along sampl
 \section{Checkpoint-Variability Diagnostic Journey}
 \label{appendix:environment}
 
-The variability finding emerged sequentially. Stage I used L4 GPUs, followed by the first 10B NoPE control on an L4. The difference became visible after primary training moved to L40S. Short-context convergence remained nearly identical ($<0.01\%$ loss difference), while 256K NLL differed (4.07 vs 10.77 nats). Table~\ref{table:environment_diagnostic_journey} records the seven-step diagnostic sequence and the retention-horizon intervention.
+The variability finding emerged sequentially. Stage I used L4 GPUs, followed by the first 10B NoPE control on an L4. The difference became visible after primary training moved to L40S. Short-context convergence remained close (2.8126 vs 2.8160 nats; approximately 0.12\% difference), while 256K NLL differed (4.07 vs 10.77 nats). Table~\ref{table:environment_diagnostic_journey} records the seven-step diagnostic sequence and the retention-horizon intervention.
 
 \begin{table}[!ht]
 \centering
@@ -614,13 +631,13 @@ The variability finding emerged sequentially. Stage I used L4 GPUs, followed by 
 1. L4 baseline & Stage I and first 10B NoPE control on L4 (mbs4); 256K NLL was 4.07. & Established baseline extrapolation, but lacked replicated device-class controls. \\
 2. L40S transition & Promoted NoPE run on L40S (mbs16); 2K validation matched (2.8126 vs 2.8160), but 256K NLL rose to 10.77. & Showed that the short-context pretraining curves did not predict long-context behavior. \\
 3. Evaluation replay & L4 and L40S checkpoints re-evaluated under PyTorch 2.12 and 2.13 with identical metrics. & Excluded evaluation software runtime mismatch as the source. \\
-4. Microbatch control & NoPE retrained on L40S with mbs4; 2K validation ended at 2.8128 and 256K NLL at 9.90. & Excluded microbatch size alone as the explanatory mechanism. \\
+4. Microbatch control & NoPE retrained on L40S with mbs4; 2K validation ended at 2.8128 and 256K NLL at 9.90. & Showed that microbatch size four did not reliably prevent collapse; initialization remained uncontrolled. \\
 5. Deterministic fixtures & Synthetic 2K stream fixtures across device classes showed zero gradient or loss divergence. & Confirmed short-context kernel execution consistency; left training trajectory unconstrained. \\
 6. Retention parameter inspection & Evaluated learned zero-input operating point $\gamma_0 = \sigma(b_\gamma)$ across all layers and heads. & \textbf{Identified an outlier:} L40S NoPE developed an isolated Block 2 head with $b_\gamma = +13.33$ ($H_{1/2} = 21.01$M tokens), whereas L4 NoPE had max $H_{1/2} = 185.3$ tokens. \\
 7. Single-head causal intervention & Installed a reversible inference cap ($H_{\max} = 256$ tok) on the single outlier head and re-evaluated 2K--256K. & \textbf{Tested the mechanism:} Capping the outlier head reduced 256K NLL from 12.00 to 1.14 nats and raised 256K BABILong to 39\%, supporting excessive retention as a mediator of the collapse. \\
 \bottomrule
 \end{tabular}
-\caption{Diagnostic sequence from the initial L4/L40S divergence to the retention-horizon intervention. Steps 1--5 ruled out evaluation artifacts and microbatch size. Steps 6--7 identified the isolated retention-gate outlier and tested its effect.}
+\caption{Diagnostic sequence from the initial L4/L40S divergence to the retention-horizon intervention. Steps 1--5 tested evaluation artifacts and showed that reducing microbatch size did not reliably prevent the failure. Steps 6--7 identified the isolated retention-gate outlier and tested its effect.}
 \label{table:environment_diagnostic_journey}
 \end{table}
 

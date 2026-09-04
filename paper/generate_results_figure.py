@@ -1,4 +1,4 @@
-"""Generate length-wise baseline-versus-cap recovery curves for the 10B models."""
+"""Generate separate primary-model and retention-intervention length curves."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def draw_axes(c, x0, y0, width, height, labels, ticks, project_y, title, ylabel,
     c.setLineWidth(0.55)
     c.line(x0, y0, x0, y0 + height)
     c.line(x0, y0, x0 + width, y0)
-    c.setFont("Helvetica", 5.7)
+    c.setFont("Helvetica", 7.0)
     for value, label in ticks:
         y = project_y(value)
         c.setStrokeColor(HexColor("#D8DEE5"))
@@ -92,7 +92,7 @@ def draw_axes(c, x0, y0, width, height, labels, ticks, project_y, title, ylabel,
     c.setFillColor(HexColor("#111111"))
     c.setFont("Helvetica-Bold", 7.5)
     c.drawCentredString(x0 + width / 2, y0 + height + 8, title)
-    c.setFont("Helvetica", 6.1)
+    c.setFont("Helvetica", 7.0)
     c.saveState()
     c.translate(x0 - 21, y0 + height / 2)
     c.rotate(90)
@@ -123,7 +123,7 @@ def draw_series(c, xs, values, project_y, model, *, capped=False, reference=Fals
         draw_marker(c, MARKERS[model], x, y, color, filled=capped or reference)
 
 
-def main():
+def generate_pdf(out_path, *, include_caps=False):
     baseline_r = baseline_retrieval(models=ALL_MODELS)
     retrieval = (baseline_r, capped_retrieval())
     baseline_b = baseline_babilong(models=ALL_MODELS)
@@ -132,7 +132,7 @@ def main():
     longdoc = (baseline_l, mean_longdoc(capped_longdoc()))
 
     page_w, page_h = 7.15 * 72, 3.1 * 72
-    c = canvas.Canvas(str(OUT), pagesize=(page_w, page_h))
+    c = canvas.Canvas(str(out_path), pagesize=(page_w, page_h))
 
     legend_y = page_h - 9
     c.setFont("Helvetica", 6.2)
@@ -146,7 +146,7 @@ def main():
         legend_x += item_width
     legend_y -= 13
     legend_x = 126
-    for label, capped, reference in (("Matched untouched", False, False), ("Matched one-head cap", True, False), ("Raven reference", False, True)):
+    for label, capped, reference in ((("Matched untouched", False, False), ("Matched one-head cap", True, False), ("Raven reference", False, True)) if include_caps else (("Matched attention", True, False), ("Raven reference", False, True))):
         c.setStrokeColor(HexColor("#444444"))
         c.setLineWidth(1.25 if capped else 0.9)
         if capped:
@@ -170,7 +170,7 @@ def main():
                    [(0, "0"), (25, "25"), (50, "50"), (75, "75"), (100, "100")], py,
                    "(a) Retrieval", "Token accuracy (%)")
     for model in MODELS:
-        for condition, capped in zip(retrieval, (False, True)):
+        for condition, capped in (zip(retrieval, (False, True)) if include_caps else [(baseline_r, True)]):
             draw_series(c, xs, [condition[model][length] for length in LENGTHS], py, model, capped=capped)
     for model in REFERENCE_MODELS:
         draw_series(c, xs, [baseline_r[model][length] for length in LENGTHS], py, model, reference=True)
@@ -185,11 +185,11 @@ def main():
     c.rect(bxs[0] - 4, y0, bxs[2] - bxs[0] + 8, height, stroke=0, fill=1)
     c.restoreState()
     for model in MODELS:
-        for condition, capped in zip(babilong, (False, True)):
+        for condition, capped in (zip(babilong, (False, True)) if include_caps else [(baseline_b, True)]):
             draw_series(c, bxs, [condition[model][length] for length in BABI_LENGTHS], bpy, model, capped=capped)
     for model in REFERENCE_MODELS:
         draw_series(c, bxs, [baseline_b[model][length] for length in BABI_LENGTHS], bpy, model, reference=True)
-    c.setFont("Helvetica", 5.3)
+    c.setFont("Helvetica", 6.5)
     c.setFillColor(HexColor("#555555"))
     c.drawString(x_positions[1] + 4, y0 + height - 8, "Shaded: adaptation lengths")
 
@@ -199,18 +199,19 @@ def main():
                     [(1, "1"), (2, "2"), (4, "4"), (8, "8")], lpy,
                     "(c) Long-document", "Mean bits per byte (log)")
     for model in MODELS:
-        for condition, capped in zip(longdoc, (False, True)):
+        for condition, capped in (zip(longdoc, (False, True)) if include_caps else [(baseline_l, True)]):
             draw_series(c, lxs, [condition[model][length] for length in LENGTHS], lpy, model, capped=capped)
     for model in REFERENCE_MODELS:
         draw_series(c, lxs, [baseline_l[model][length] for length in LENGTHS], lpy, model, reference=True)
-    c.setFont("Helvetica", 5.3)
+    c.setFont("Helvetica", 6.5)
     c.setFillColor(HexColor("#555555"))
     c.drawRightString(x_positions[2] + width, y0 + height - 8, "Lower is better")
 
     c.showPage()
     c.save()
-    print(f"wrote {OUT}")
+    print(f"wrote {out_path}")
 
 
 if __name__ == "__main__":
-    main()
+    generate_pdf(OUT)
+    generate_pdf(OUT.with_name("fig_retention_results.pdf"), include_caps=True)

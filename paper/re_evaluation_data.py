@@ -49,6 +49,35 @@ def baseline_rows():
     return json.loads(BASELINE_MATRIX.read_text(encoding="utf-8"))["rows"]
 
 
+def baseline_haystack_retrieval(metric="token_accuracy", models=ALL_MODELS):
+    """Full-run task/depth means; smoke measurements never enter paper tables."""
+    grouped = defaultdict(dict)
+    for row in baseline_rows():
+        if row.get("benchmark") != "retrieval" or row.get("metric") != metric:
+            continue
+        if "/smoke_" in row.get("source_log", "").replace("\\", "/"):
+            continue
+        if row.get("model") not in models or row.get("suite") not in ("synthetic", "real"):
+            continue
+        key = (row["model"], row["suite"], row["length"])
+        cell = (row["task"], str(row["depth"]))
+        if cell in grouped[key]:
+            raise ValueError(f"duplicate full retrieval cell: {key}, {cell}")
+        grouped[key][cell] = float(row["value"])
+    expected = {(task, depth) for task in ("niah", "passkey") for depth in DEPTHS}
+    result = {}
+    for model in models:
+        result[model] = {}
+        for suite in ("synthetic", "real"):
+            result[model][suite] = {}
+            for length in LENGTHS:
+                cells = grouped[(model, suite, length)]
+                if set(cells) != expected:
+                    raise ValueError(f"incomplete retrieval cells: {model}, {suite}, {length}")
+                result[model][suite][length] = _mean(cells.values())
+    return result
+
+
 def capped_jobs():
     jobs = json.loads(RE_EVALUATION.read_text(encoding="utf-8"))["results"]
     return {(job["family"], job["model"], job["suite"]): job["result"] for job in jobs}
