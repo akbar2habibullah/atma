@@ -1,0 +1,55 @@
+You are using version 1 of 'kernels-community/causal-conv1d', but version 2 is available.
+[run] benchmark=retrieval model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--repl_seed2_nope/snapshots/3196eac86d84759bb245b410da61eb8665bfdf05 tasks=['passkey', 'niah'] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=50 gamma_clamp=/home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/checkpoints/base/repl_seed2_nope/hl-256.gamma-clamp.json
+
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]
+Fetching 8 files: 100%|██████████| 8/8 [00:00<00:00, 1609.25it/s]
+Applied gamma clamp to 1 layer-head target(s): [{'layer': 2, 'head': 3, 'module': 'blocks.2.attn.mem', 'max_final_logit': 5.910336256510415, 'max_gamma': 0.9972960560854701, 'max_half_life_tokens': 256.00000000000006}]
+[retrieval] passkey len=  2k depth= 0.1: token_acc=99.6% exact=98.0% nll=0.1460
+[retrieval] passkey len=  2k depth= 0.5: token_acc=99.2% exact=96.0% nll=0.2134
+[retrieval] passkey len=  2k depth= 0.9: token_acc=99.2% exact=96.0% nll=0.1952
+[retrieval] passkey len=  4k depth= 0.1: token_acc=94.8% exact=78.0% nll=0.5927
+[retrieval] passkey len=  4k depth= 0.5: token_acc=99.2% exact=96.0% nll=0.2266
+[retrieval] passkey len=  4k depth= 0.9: token_acc=99.2% exact=96.0% nll=0.2291
+[retrieval] passkey len=  8k depth= 0.1: token_acc=46.8% exact=2.0% nll=2.4232
+[retrieval] passkey len=  8k depth= 0.5: token_acc=96.8% exact=84.0% nll=0.7636
+[retrieval] passkey len=  8k depth= 0.9: token_acc=97.2% exact=86.0% nll=0.6115
+[retrieval] passkey len= 16k depth= 0.1: token_acc=6.4% exact=0.0% nll=4.4679
+[retrieval] passkey len= 16k depth= 0.5: token_acc=54.4% exact=12.0% nll=2.0401
+[retrieval] passkey len= 16k depth= 0.9: token_acc=66.0% exact=12.0% nll=1.7868
+[retrieval] passkey len= 32k depth= 0.1: token_acc=1.2% exact=0.0% nll=4.7970
+[retrieval] passkey len= 32k depth= 0.5: token_acc=8.0% exact=0.0% nll=3.5714
+[retrieval] passkey len= 32k depth= 0.9: token_acc=27.2% exact=0.0% nll=2.6834
+[retrieval] passkey len= 64k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.1685
+[retrieval] passkey len= 64k depth= 0.5: token_acc=3.6% exact=0.0% nll=4.1988
+[retrieval] passkey len= 64k depth= 0.9: token_acc=6.0% exact=0.0% nll=3.8804
+[retrieval] passkey len=128k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.3195
+[retrieval] passkey len=128k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.4515
+[retrieval] passkey len=128k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.0938
+[retrieval] passkey len=256k depth= 0.1: token_acc=0.0% exact=0.0% nll=6.1890
+[retrieval] passkey len=256k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.9060
+[retrieval] passkey len=256k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.8989
+[retrieval]    niah len=  2k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.1913
+[retrieval]    niah len=  2k depth= 0.5: token_acc=99.6% exact=98.0% nll=0.2057
+[retrieval]    niah len=  2k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.2585
+[retrieval]    niah len=  4k depth= 0.1: token_acc=57.2% exact=0.0% nll=1.7529
+[retrieval]    niah len=  4k depth= 0.5: token_acc=96.8% exact=84.0% nll=0.6402
+[retrieval]    niah len=  4k depth= 0.9: token_acc=95.2% exact=76.0% nll=0.4686
+[retrieval]    niah len=  8k depth= 0.1: token_acc=9.6% exact=0.0% nll=4.1349
+[retrieval]    niah len=  8k depth= 0.5: token_acc=80.8% exact=46.0% nll=1.5364
+[retrieval]    niah len=  8k depth= 0.9: token_acc=89.2% exact=58.0% nll=1.0431
+[retrieval]    niah len= 16k depth= 0.1: token_acc=8.0% exact=0.0% nll=4.8138
+[retrieval]    niah len= 16k depth= 0.5: token_acc=47.2% exact=0.0% nll=2.0773
+[retrieval]    niah len= 16k depth= 0.9: token_acc=66.8% exact=8.0% nll=1.6108
+[retrieval]    niah len= 32k depth= 0.1: token_acc=2.4% exact=0.0% nll=4.7132
+[retrieval]    niah len= 32k depth= 0.5: token_acc=4.4% exact=0.0% nll=3.4405
+[retrieval]    niah len= 32k depth= 0.9: token_acc=32.0% exact=0.0% nll=2.4514
+[retrieval]    niah len= 64k depth= 0.1: token_acc=0.0% exact=0.0% nll=4.9960
+[retrieval]    niah len= 64k depth= 0.5: token_acc=0.0% exact=0.0% nll=4.6480
+[retrieval]    niah len= 64k depth= 0.9: token_acc=1.6% exact=0.0% nll=3.8391
+[retrieval]    niah len=128k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.5397
+[retrieval]    niah len=128k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.6931
+[retrieval]    niah len=128k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.3129
+[retrieval]    niah len=256k depth= 0.1: token_acc=0.0% exact=0.0% nll=6.5844
+[retrieval]    niah len=256k depth= 0.5: token_acc=0.0% exact=0.0% nll=6.2756
+[retrieval]    niah len=256k depth= 0.9: token_acc=0.0% exact=0.0% nll=6.1471
+[run] done in 2938.8s -> /home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/retrieval/repl_seed2_nope/retrieval.real.clamped.9c98e79aaf.log

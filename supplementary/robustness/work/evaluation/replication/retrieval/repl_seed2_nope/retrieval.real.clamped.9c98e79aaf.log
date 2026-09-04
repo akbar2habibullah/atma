@@ -1,0 +1,76 @@
+[run] benchmark=retrieval model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--repl_seed2_nope/snapshots/3196eac86d84759bb245b410da61eb8665bfdf05 tasks=['passkey', 'niah'] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=50 gamma_clamp=/home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/checkpoints/base/repl_seed2_nope/hl-256.gamma-clamp.json
+[retrieval] passkey len=  2k depth= 0.1: token_acc=99.6% exact=98.0% nll=0.1460
+[retrieval] passkey len=  2k depth= 0.5: token_acc=99.2% exact=96.0% nll=0.2134
+[retrieval] passkey len=  2k depth= 0.9: token_acc=99.2% exact=96.0% nll=0.1952
+[retrieval] passkey len=  4k depth= 0.1: token_acc=94.8% exact=78.0% nll=0.5927
+[retrieval] passkey len=  4k depth= 0.5: token_acc=99.2% exact=96.0% nll=0.2266
+[retrieval] passkey len=  4k depth= 0.9: token_acc=99.2% exact=96.0% nll=0.2291
+[retrieval] passkey len=  8k depth= 0.1: token_acc=46.8% exact=2.0% nll=2.4232
+[retrieval] passkey len=  8k depth= 0.5: token_acc=96.8% exact=84.0% nll=0.7636
+[retrieval] passkey len=  8k depth= 0.9: token_acc=97.2% exact=86.0% nll=0.6115
+[retrieval] passkey len= 16k depth= 0.1: token_acc=6.4% exact=0.0% nll=4.4679
+[retrieval] passkey len= 16k depth= 0.5: token_acc=54.4% exact=12.0% nll=2.0401
+[retrieval] passkey len= 16k depth= 0.9: token_acc=66.0% exact=12.0% nll=1.7868
+[retrieval] passkey len= 32k depth= 0.1: token_acc=1.2% exact=0.0% nll=4.7970
+[retrieval] passkey len= 32k depth= 0.5: token_acc=8.0% exact=0.0% nll=3.5714
+[retrieval] passkey len= 32k depth= 0.9: token_acc=27.2% exact=0.0% nll=2.6834
+[retrieval] passkey len= 64k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.1685
+[retrieval] passkey len= 64k depth= 0.5: token_acc=3.6% exact=0.0% nll=4.1988
+[retrieval] passkey len= 64k depth= 0.9: token_acc=6.0% exact=0.0% nll=3.8804
+[retrieval] passkey len=128k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.3195
+[retrieval] passkey len=128k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.4515
+[retrieval] passkey len=128k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.0938
+[retrieval] passkey len=256k depth= 0.1: token_acc=0.0% exact=0.0% nll=6.1890
+[retrieval] passkey len=256k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.9060
+[retrieval] passkey len=256k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.8989
+[retrieval]    niah len=  2k depth= 0.1: token_acc=100.0% exact=100.0% nll=0.1913
+[retrieval]    niah len=  2k depth= 0.5: token_acc=99.6% exact=98.0% nll=0.2057
+[retrieval]    niah len=  2k depth= 0.9: token_acc=100.0% exact=100.0% nll=0.2585
+[retrieval]    niah len=  4k depth= 0.1: token_acc=57.2% exact=0.0% nll=1.7529
+[retrieval]    niah len=  4k depth= 0.5: token_acc=96.8% exact=84.0% nll=0.6402
+[retrieval]    niah len=  4k depth= 0.9: token_acc=95.2% exact=76.0% nll=0.4686
+[retrieval]    niah len=  8k depth= 0.1: token_acc=9.6% exact=0.0% nll=4.1349
+[retrieval]    niah len=  8k depth= 0.5: token_acc=80.8% exact=46.0% nll=1.5364
+[retrieval]    niah len=  8k depth= 0.9: token_acc=89.2% exact=58.0% nll=1.0431
+[retrieval]    niah len= 16k depth= 0.1: token_acc=8.0% exact=0.0% nll=4.8138
+[retrieval]    niah len= 16k depth= 0.5: token_acc=47.2% exact=0.0% nll=2.0773
+[retrieval]    niah len= 16k depth= 0.9: token_acc=66.8% exact=8.0% nll=1.6108
+[retrieval]    niah len= 32k depth= 0.1: token_acc=2.4% exact=0.0% nll=4.7132
+[retrieval]    niah len= 32k depth= 0.5: token_acc=4.4% exact=0.0% nll=3.4405
+[retrieval]    niah len= 32k depth= 0.9: token_acc=32.0% exact=0.0% nll=2.4514
+[retrieval]    niah len= 64k depth= 0.1: token_acc=0.0% exact=0.0% nll=4.9960
+[retrieval]    niah len= 64k depth= 0.5: token_acc=0.0% exact=0.0% nll=4.6480
+[retrieval]    niah len= 64k depth= 0.9: token_acc=1.6% exact=0.0% nll=3.8391
+[retrieval]    niah len=128k depth= 0.1: token_acc=0.0% exact=0.0% nll=5.5397
+[retrieval]    niah len=128k depth= 0.5: token_acc=0.0% exact=0.0% nll=5.6931
+[retrieval]    niah len=128k depth= 0.9: token_acc=0.0% exact=0.0% nll=5.3129
+[retrieval]    niah len=256k depth= 0.1: token_acc=0.0% exact=0.0% nll=6.5844
+[retrieval]    niah len=256k depth= 0.5: token_acc=0.0% exact=0.0% nll=6.2756
+[retrieval]    niah len=256k depth= 0.9: token_acc=0.0% exact=0.0% nll=6.1471
+
+[retrieval] teacher-forced token accuracy %, per kind (rows=length, cols=depth):
+  passkey:
+    len     0.1    0.5    0.9
+      2k   99.6   99.2   99.2
+      4k   94.8   99.2   99.2
+      8k   46.8   96.8   97.2
+     16k    6.4   54.4   66.0
+     32k    1.2    8.0   27.2
+     64k    0.0    3.6    6.0
+    128k    0.0    0.0    0.0
+    256k    0.0    0.0    0.0
+  niah:
+    len     0.1    0.5    0.9
+      2k  100.0   99.6  100.0
+      4k   57.2   96.8   95.2
+      8k    9.6   80.8   89.2
+     16k    8.0   47.2   66.8
+     32k    2.4    4.4   32.0
+     64k    0.0    0.0    1.6
+    128k    0.0    0.0    0.0
+    256k    0.0    0.0    0.0
+
+===RETRIEVAL_RESULTS_JSON===
+{"benchmark": "retrieval", "protocol": "teacher-forced-needle-v2", "kinds": ["passkey", "niah"], "lengths": ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"], "depths": [0.1, 0.5, 0.9], "num_samples": 50, "value_tokens": 5, "seed": 1234, "paired_across_lengths_and_depths": true, "haystack": "codelion/finepdfs-1B", "haystack_revision": "6fbca6dd53e3e794f607cfe1f5a91c07e17b01ab", "results": {"passkey": {"2k": {"0.1": 99.6, "0.5": 99.2, "0.9": 99.2}, "4k": {"0.1": 94.8, "0.5": 99.2, "0.9": 99.2}, "8k": {"0.1": 46.8, "0.5": 96.8, "0.9": 97.2}, "16k": {"0.1": 6.4, "0.5": 54.4, "0.9": 66.0}, "32k": {"0.1": 1.2, "0.5": 8.0, "0.9": 27.2}, "64k": {"0.1": 0.0, "0.5": 3.6, "0.9": 6.0}, "128k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "256k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}, "niah": {"2k": {"0.1": 100.0, "0.5": 99.6, "0.9": 100.0}, "4k": {"0.1": 57.2, "0.5": 96.8, "0.9": 95.2}, "8k": {"0.1": 9.6, "0.5": 80.8, "0.9": 89.2}, "16k": {"0.1": 8.0, "0.5": 47.2, "0.9": 66.8}, "32k": {"0.1": 2.4, "0.5": 4.4, "0.9": 32.0}, "64k": {"0.1": 0.0, "0.5": 0.0, "0.9": 1.6}, "128k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "256k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}}, "exact_results": {"passkey": {"2k": {"0.1": 98.0, "0.5": 96.0, "0.9": 96.0}, "4k": {"0.1": 78.0, "0.5": 96.0, "0.9": 96.0}, "8k": {"0.1": 2.0, "0.5": 84.0, "0.9": 86.0}, "16k": {"0.1": 0.0, "0.5": 12.0, "0.9": 12.0}, "32k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "64k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "128k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "256k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}, "niah": {"2k": {"0.1": 100.0, "0.5": 98.0, "0.9": 100.0}, "4k": {"0.1": 0.0, "0.5": 84.0, "0.9": 76.0}, "8k": {"0.1": 0.0, "0.5": 46.0, "0.9": 58.0}, "16k": {"0.1": 0.0, "0.5": 0.0, "0.9": 8.0}, "32k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "64k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "128k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}, "256k": {"0.1": 0.0, "0.5": 0.0, "0.9": 0.0}}}, "nll_results": {"passkey": {"2k": {"0.1": 0.14600622999668122, "0.5": 0.2133844790458679, "0.9": 0.19518002200126647}, "4k": {"0.1": 0.5927087864875793, "0.5": 0.2265905542373657, "0.9": 0.22906600642204283}, "8k": {"0.1": 2.4232265434265137, "0.5": 0.7635592203140259, "0.9": 0.6115476207733155}, "16k": {"0.1": 4.46790641784668, "0.5": 2.0401352939605712, "0.9": 1.786830093383789}, "32k": {"0.1": 4.797020164489746, "0.5": 3.5714241371154785, "0.9": 2.683440765380859}, "64k": {"0.1": 5.168546104431153, "0.5": 4.198823600769043, "0.9": 3.880444778442383}, "128k": {"0.1": 5.319541625976562, "0.5": 5.451489936828613, "0.9": 5.093754638671875}, "256k": {"0.1": 6.18902027130127, "0.5": 5.906014488220215, "0.9": 5.898878562927246}}, "niah": {"2k": {"0.1": 0.19126338076591493, "0.5": 0.20573000288009644, "0.9": 0.25852225399017337}, "4k": {"0.1": 1.7528715343475343, "0.5": 0.6402486009597779, "0.9": 0.4686141576766968}, "8k": {"0.1": 4.134923461914062, "0.5": 1.5364203786849975, "0.9": 1.0430781545639038}, "16k": {"0.1": 4.813779670715332, "0.5": 2.0772847118377684, "0.9": 1.6108129196166991}, "32k": {"0.1": 4.713234245300293, "0.5": 3.440510990142822, "0.9": 2.4513513412475585}, "64k": {"0.1": 4.995980743408203, "0.5": 4.648010749816894, "0.9": 3.8390850601196287}, "128k": {"0.1": 5.539724143981934, "0.5": 5.6930683212280275, "0.9": 5.3128588638305665}, "256k": {"0.1": 6.584425064086914, "0.5": 6.275613487243652, "0.9": 6.147058563232422}}}, "oom_cells": [], "elapsed_s": 2938.8, "unsupported_checkpoint": false, "model_config": {"vocab_size": 50304, "num_hidden_layers": 16, "hidden_size": 1024, "head_dim": 128, "attn_kernel_size": 4, "conv_kernel_size": 3, "max_position_embeddings": 2048, "rms_norm_eps": 1e-06, "dtype": "bfloat16", "tie_word_embeddings": false, "num_random_keys": 0, "attn_online": false, "attn_k_block": 512, "attn_kernel": "triton", "attn_type": "nope", "polar_variant": "full", "wall_gate_bias": null, "attn_window": null, "mem_enabled": true, "mem_chunk": 128, "mem_gamma_bias": 3.9, "mem_beta_bias": 0.0, "mem_kernel": "auto"}, "model_unsupported": [], "serving_metrics": null}
+===END===
+[run] done in 2938.8s -> /home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/retrieval/repl_seed2_nope/retrieval.real.clamped.9c98e79aaf.log

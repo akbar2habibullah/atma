@@ -1,0 +1,49 @@
+You are using version 1 of 'kernels-community/causal-conv1d', but version 2 is available.
+[run] benchmark=longdoc model=/home/sagemaker-user/.cache/huggingface/hub/models--ChavyvAkvar--repl_seed2_polar/snapshots/50a3790bd3fcb55b3a4d69921df2725b21863fa5 tasks=[] lengths=['2k', '4k', '8k', '16k', '32k', '64k', '128k', '256k'] samples=100 gamma_clamp=None
+
+Fetching 8 files:   0%|          | 0/8 [00:00<?, ?it/s]
+Fetching 8 files: 100%|██████████| 8/8 [00:00<00:00, 1654.56it/s]
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (627620 > 262400). Running this sequence through the model will result in indexing errors
+[longdoc] selected 1/8 from emozilla/pg19 after scanning 22 rows
+[longdoc] selected 2/8 from emozilla/pg19 after scanning 38 rows
+[longdoc] selected 3/8 from emozilla/pg19 after scanning 62 rows
+[longdoc] selected 4/8 from emozilla/pg19 after scanning 81 rows
+[longdoc] selected 5/8 from emozilla/pg19 after scanning 92 rows
+[longdoc]       pg19 context=   2k docs=5 nll=3.3214 bpb=1.2172
+[longdoc]       pg19 context=   4k docs=5 nll=3.3163 bpb=1.2153
+[longdoc]       pg19 context=   8k docs=5 nll=3.3202 bpb=1.2168
+[longdoc]       pg19 context=  16k docs=5 nll=3.3557 bpb=1.2298
+[longdoc]       pg19 context=  32k docs=5 nll=3.4555 bpb=1.2664
+[longdoc]       pg19 context=  64k docs=5 nll=3.5671 bpb=1.3072
+[longdoc]       pg19 context= 128k docs=5 nll=3.7303 bpb=1.3670
+[longdoc]       pg19 context= 256k docs=5 nll=3.9930 bpb=1.4633
+[longdoc] selected 1/8 from hoskinson-center/proof-pile after scanning 20081 rows
+[longdoc] selected 2/8 from hoskinson-center/proof-pile after scanning 22803 rows
+[longdoc] selected 3/8 from hoskinson-center/proof-pile after scanning 32629 rows
+[longdoc] selected 4/8 from hoskinson-center/proof-pile after scanning 41384 rows
+[longdoc] selected 5/8 from hoskinson-center/proof-pile after scanning 44492 rows
+[longdoc] proof_pile context=   2k docs=5 nll=3.7982 bpb=2.1662
+[longdoc] proof_pile context=   4k docs=5 nll=3.8353 bpb=2.1873
+[longdoc] proof_pile context=   8k docs=5 nll=3.9458 bpb=2.2503
+[longdoc] proof_pile context=  16k docs=5 nll=3.9352 bpb=2.2442
+[longdoc] proof_pile context=  32k docs=5 nll=4.0863 bpb=2.3305
+[longdoc] proof_pile context=  64k docs=5 nll=4.0526 bpb=2.3112
+[longdoc] proof_pile context= 128k docs=5 nll=4.1867 bpb=2.3877
+[longdoc] proof_pile context= 256k docs=5 nll=4.4545 bpb=2.5404
+[longdoc] selected 1/8 from codelion/finepdfs-1B after scanning 1798 rows
+[longdoc] selected 2/8 from codelion/finepdfs-1B after scanning 5936 rows
+[longdoc] selected 3/8 from codelion/finepdfs-1B after scanning 8638 rows
+[longdoc] selected 4/8 from codelion/finepdfs-1B after scanning 16812 rows
+[longdoc] selected 5/8 from codelion/finepdfs-1B after scanning 17777 rows
+[longdoc] selected 6/8 from codelion/finepdfs-1B after scanning 20727 rows
+[longdoc] selected 7/8 from codelion/finepdfs-1B after scanning 24585 rows
+[longdoc] selected 8/8 from codelion/finepdfs-1B after scanning 24626 rows
+[longdoc]   finepdfs context=   2k docs=8 nll=1.2306 bpb=1.0000
+[longdoc]   finepdfs context=   4k docs=8 nll=1.1840 bpb=0.9621
+[longdoc]   finepdfs context=   8k docs=8 nll=1.1895 bpb=0.9666
+[longdoc]   finepdfs context=  16k docs=8 nll=1.1919 bpb=0.9686
+[longdoc]   finepdfs context=  32k docs=8 nll=1.2635 bpb=1.0268
+[longdoc]   finepdfs context=  64k docs=8 nll=1.3741 bpb=1.1166
+[longdoc]   finepdfs context= 128k docs=8 nll=1.4807 bpb=1.2032
+[longdoc]   finepdfs context= 256k docs=8 nll=1.5724 bpb=1.2777
+[run] done in 292.9s -> /home/sagemaker-user/atma/supplementary/robustness/work/evaluation/replication/longdoc/repl_seed2_polar/longdoc.fixed-target.baseline.f108777336.log
