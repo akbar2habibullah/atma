@@ -5,13 +5,13 @@ paper revision. Commands below are run from the repository root. Training worker
 the single operational tree at `supplementary/robustness/configs`; do not create a second
 config tree under `work/`.
 
-## Current status (2026-08-23)
+## Current status (2026-09-04)
 
 | Experiment group | Runs | Status |
 |---|---:|---|
 | Polar component attribution, 1B | 5 | **Complete**; logs are committed |
 | TDA, Mamba-3, GDN-2 screening, 1B | 3 | **Complete**; logs are committed |
-| Paired Polar/NoPE seeds, 10B | 4 | **Not run** |
+| Paired Polar/NoPE seeds, 10B | 4 | **Complete**; logs are committed and checkpoints are pinned for evaluation |
 | Promoted TDA plus one of Mamba-3/GDN-2, 10B | 2 | **Not run**; promotion decision is not yet recorded |
 
 The six final 10B jobs are the four Polar/NoPE replications, promoted TDA, and exactly
@@ -317,6 +317,45 @@ python -m supplementary.robustness.run_worker \
 
 Run only the selected GPU-6 block. A disabled scaled config is skipped; if that happens,
 the machine is not on the coordinator's dispatch commit.
+
+## Evaluate the completed replications
+
+The replication follow-up is intentionally limited to paired untouched/capped BPB and
+retrieval evaluation. It does not schedule downstream base tasks or BABILong. The four
+Hub checkpoints and the three evaluation datasets are pinned to immutable revisions in
+[`replication_benchmark_manifest.json`](replication_benchmark_manifest.json).
+
+On a machine with the pinned GPU environment, first inspect the generated 24-job plan:
+
+```bash
+python -m supplementary.robustness.evaluate_replications --gpu 0
+```
+
+The plan contains, for each of the four checkpoints, both the untouched and the
+inference-only 256-token gamma-half-life-capped conditions for:
+
+- synthetic passkey and NIAH retrieval;
+- FinePDFs passkey and NIAH retrieval;
+- fixed-target BPB on FinePDFs, PG-19, and Proof-Pile.
+
+The retrieval grid uses 2K--256K contexts, depths 10/50/90%, 50 paired samples per
+cell, five-token values, and evaluation seed 1234. BPB uses the same eight context
+lengths, eight requested documents per dataset, and a fixed 256-token target. The cap
+is checkpoint-local: the runner scans each checkpoint and caps only its largest
+parameter-only zero-input gamma layer-head. Checkpoint tensors are not rewritten.
+
+After reviewing the plan, execute it with:
+
+```bash
+python -m supplementary.robustness.evaluate_replications --gpu 0 --execute
+```
+
+The command is resumable. It skips a job only when its fingerprinted log contains a
+complete result block. Plans, console logs, result logs, gamma scans, clamp specs, and
+the rolling summary are written to
+`supplementary/robustness/work/evaluation/replication/`. Use `--models RUN_ID ...` to
+run or resume only selected checkpoints. Concurrent machines must use distinct
+`--output-dir` values so their rolling plan and summary files do not race.
 
 ## Return and summarize artifacts
 

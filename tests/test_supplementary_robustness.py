@@ -1,7 +1,14 @@
 import json
 import subprocess
 import sys
+from argparse import Namespace
+from pathlib import Path
 
+from supplementary.robustness.evaluate_replications import (
+    MANIFEST,
+    MODELS,
+    _rebenchmark_args,
+)
 from supplementary.robustness.generate_configs import generate
 from supplementary.robustness.validate_plan import validate
 from raven_baseline.train import _fill_runtime_defaults
@@ -89,3 +96,43 @@ def test_worker_rejects_enabled_unapproved_external_config(tmp_path):
     )
     assert result.returncode != 0
     assert "not parameter-count approved" in result.stderr
+
+
+def test_replication_evaluation_scope_is_paired_bpb_and_retrieval_only(tmp_path):
+    args = Namespace(
+        models=MODELS,
+        gpu="1",
+        hf_cache=Path("/tmp/hf-cache"),
+        output_dir=tmp_path,
+        offline=True,
+        execute=True,
+    )
+    command = _rebenchmark_args(args)
+    assert command[command.index("--benchmarks") + 1:command.index("--base-manifest")] == [
+        "retrieval", "longdoc",
+    ]
+    assert "base" not in command
+    assert "babilong" not in command
+    assert "--paired" in command
+    assert command[command.index("--max-half-life") + 1] == "256"
+    assert command[command.index("--base-manifest") + 1] == str(MANIFEST)
+    assert "--execute" in command
+
+
+def test_replication_benchmark_manifest_matches_training_configs():
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    config_dir = MANIFEST.parent / "configs" / "replication"
+    configs = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in config_dir.glob("*.json")
+    }
+    assert set(manifest["models"]) == set(configs) == set(MODELS)
+    for run_id, record in manifest["models"].items():
+        assert record["architecture"] == configs[run_id]["attn_type"]
+        assert record["seed"] == configs[run_id]["seed"]
+        assert len(record["resolved_revision"]) == 40
+    assert manifest["protocol"]["benchmarks"] == ["retrieval", "longdoc"]
+    assert manifest["protocol"]["conditions"] == [
+        "baseline", "gamma_half_life_256",
+    ]
+    assert manifest["protocol"]["gamma_cap"]["max_half_life_tokens"] == 256
